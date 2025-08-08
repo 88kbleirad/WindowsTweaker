@@ -650,8 +650,167 @@ public static extern bool SetForegroundWindow(IntPtr hWnd);
 
 	     exit
 	}
+	$Signature = @{
+	       Namespace    = "WinAPI"
+	       Name         = "Winbrand"
+	       Language     = "CSharp"
+	       CompilierOptions = $CompilerOptions
+	       MemberDefinition = @"
+[DllImport("Winbrand.dll", CharSet = CharSet.Unicode)]
+public extern static string BrandingFormatString(string sFormat);
+"@
+	}
+	if (-not ("WinAPI.Winbrand" -as [type]))
+	{
+	      Add-Type @Signature
+	}
 
+	if ([WinAPI.Winbrand]::BrandingFormatString("%WINDOWS_LONG%") -notmatch "Windows 11")
+	{
+	      Write-Information -MessageData "" -InformationAction Continue
+
+	      #Windows 11 Pro
+	      $Windows_Long = [WinAPI.Winbrand]::BrandingFormatString("%WINDOWS_LONG%")
+	      $Windows_Long_First_Item = $Windows_Long.split(" ")[0]
+	      $Windows_Long_Second_Item = $Windows.Long.split(" ")[1]
+	      #Windows 11
+	      $Windows_Long = ($Windows_Long_First_Item, $Windows_Long_Second_Item) -join " "
+
+	      #24h2
+	      $DisplayVersion = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows nt\CurrentVersion" -Name DisplayVersion
+
+	      Write-Warning -Message ($Localization.UnsupportedOSBuild -f $Windows_Long, $DisplayVersion)
+	      Write-Information -MessageData "" -InformationAction Continue
+
+	      #Receive update for other Microsoft products when you update Windows
+	      New-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings -Name AllowMUUpdateService -PropertyType DWord -Value 1 -Force
+
+	      #Check for update 
+	      Start-Process -FilePath "$env:SystemRoot\System32\UsoClient.exe" -ArgumentList StartInteractiveScan
+
+	      exit
+	}
+	if ($env:WT_SESSION)
+	{
+	     $ParentProcessID = (Get-CimInstance -ClassName Win32_Process -Filter ProcessID=$PID).ParentProcessID
+	     $WindowTerminalVersion = (Get-Process -Id $ParentProcessID).FileVersion
+	     $WindowsTerminalVersion = "{0}.{1}.{2}" -f $WindowsTerminalVersion.Split(".")
+
+	     if ([System.Version]$WindowsTerminalVersion -lt [System.Version]"1.22.0")
+	     {
+	         Write-Information -MessageData "" -InformationAction Continue
+		 Write-Warning -Message $Localization.UnsupportedWindowsTerminal
+		 Write-Information -MessageData "" -InformationAction Continue
+
+		 Start-Process -FilePath "ms-windows-store://pdp/?productid=9NODX20HK701"
+
+		 #Check for UWP app updates
+		 Get-CimInstance -ClassName MDM_EnterpriseModernAppManagement_AppManagement01 -Namespace root/CIMV2/ndm/dmmap | Invoke-CimMethod -MethodName UpdateScanMethod
+		 
+		 exit
+	     }
+	}
 	
+	#Detect Windows Build version
+	switch ((Get-CimInstance -ClassName CIM_OperatingSystem).BuildNumber)
+	{
+	     {$_ -lt 26100}
+	     {
+	          Write-Information -MessageData "" -InformationAction Continue
+		  Write-Warning -Message ($Localization.UnsupportOSBuild -f [WinAPI.Winbrand]::BrandingFormatString("%WINDOWS_LONG%"))
+		  Write-Information -MessageData "" -InformationAction Continue
 
+		  New-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings -Name AllowMUUpdateService -PropertyType DWord -Value 1 -Force
+
+		  #Check for UWP app updates
+		  Get-CimInstance -ClassName MDM_EnterpriseModernAppManagement_AppManagement01 -Namespace root/CIMV2/mdm/dmmap | Invoke-CimMethod -MethodName UpdateScanMethod
+
+		  #Check for updates
+		  Start-Process -FilePath "$env:SystemRoot\System32\UsoClient.exe" -ArgumentList StartInteractiveScan
+
+		  #Open the "Windows Update" page
+		  Start-Process -FilePath "ms-settings:windowsupdate"
+
+		  exit
+	     }
+	     "26100"
+	     {
+	          if((Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows nt\CurrentVersion" -Name UBR) -lt $LatestSupportedBuild)
+		  {
+		       $CurrentBuild = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows nt\CurrentVersion" -Name CurrentBuild
+		       $UBR = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows nt\CurrentVersion" -Name UBR
+
+		       Write-Information -MessageData "" -InformationAction Continue
+		       Write-Warning -Message ($Localization.UpdateWarning -f $CurrentBuild, $UBR, $LatestSupportedBuild)
+		       Write-Information -MessageData "" -InformationAction Continue
+			# Receive updates for other Microsoft products when you update Windows
+			New-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings -Name AllowMUUpdateService -PropertyType DWord -Value 1 -Force
+
+			# Check for UWP apps updates
+			Get-CimInstance -ClassName MDM_EnterpriseModernAppManagement_AppManagement01 -Namespace root/CIMV2/mdm/dmmap | Invoke-CimMethod -MethodName UpdateScanMethod
+
+			# Check for updates
+			Start-Process -FilePath "$env:SystemRoot\System32\UsoClient.exe" -ArgumentList StartInteractiveScan
+
+			# Open the "Windows Update" page
+			Start-Process -FilePath "ms-settings:windowsupdate"
+
+			exit
+		  }
+	     }
+	}
+
+	#Enable back the SysMain service if it was disable by harmful tweakers
+	if ((Get-Service -Name SysMain).Status -eq "Stopped")
+	{
+	     Get-Service -Name SysMain | Set-Service -StartupType Automatic
+	     Get-Service -Name SysMain | Start-Service
+
+	     Start-Process -FilePath "https://www.outsitethebox.ms/19318"
+	}
+
+	#Automatically manage paging file size for all drives
+	if (-not (Get-CimInstance -ClassName CIM_ComputerSystem).AutomaticManagedPageFile)
+	{
+	     Get-CimInstance -ClassName CIM_ComputerSystem | Set-CimInstance -Property @{AutomaticManagedPageFile = $true}
+	}
+
+	Get-ChildItem -Path "$env:TEMP\LGPO.txt" -Force -ErrorAction Ignore | Remove-Item -Force -ErrorAction Ignore
+
+	#Save all opened folders in order to restore them after File Explorer restrart
+	try 
+	{
+	     $Script:OpeneFolders = {(New-Object -ComObject Shell.Application).Windows() | ForEach-Object -Process {$_.Document.Folder.Self.Path}}.Invoke()
+	}
+	catch [System.Management.Automation.PropertyNotFoundException]
+	{}
+
+	if($Warning)
+	{
+	     Write-Information -MessageData "" -InformationAction Continue
+	     [string]$PresetName = ((Get-PSCallStack).Position | Where-Object -FilterScript {$_.File}).File | Where-Object -FilterScript {$_.EndsWith(".ps1")}
+	     Write-Verbose -Message ($Localization.CustomizationWarning -f "`"$PresetName`"") -Verbose
+
+	     do
+	     {
+	           $Choice = Show-Menu -Menu @($Yes, $No) -Default 2
+
+		   switch ($Choice)
+		   {
+		        $Yes
+			{
+			    continue
+			}
+			$No
+			{
+			    Invoke-Item -Path $PresetName
+
+			    exit
+			}
+			$KeyboardArrows {}
+		   }
+	     }
+	     until ($Choice -ne $KeyboardArrows)
+	}
 }
 

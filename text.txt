@@ -1114,3 +1114,487 @@ public extern static string BrandingFormatString(string sFormat);
 	}
 }
 #endregion InitialActions
+
+
+function ErrorReporting
+{
+	param
+	(
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Disable"
+		)]
+		[switch]
+		$Disable,
+
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Enable"
+		)]
+		[switch]
+		$Enable
+	)
+
+	# Remove all policies in order to make changes visible in UI
+	Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting", "HKCU:\Software\Policies\Microsoft\Windows\Windows Error Reporting" -Name Disabled -Force -ErrorAction Ignore
+	Set-Policy -Scope Computer -Path "SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting" -Name Disabled -Type DELETE
+	Set-Policy -Scope User -Path "Software\Policies\Microsoft\Windows\Windows Error Reporting" -Name Disabled -Type DELETE
+
+	switch ($PSCmdlet.ParameterSetName)
+	{
+		"Disable"
+		{
+			Get-ScheduledTask -TaskName QueueReporting -ErrorAction Ignore | Disable-ScheduledTask
+			New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Windows Error Reporting" -Name Disabled -PropertyType DWord -Value 1 -Force
+
+			Get-Service -Name WerSvc | Stop-Service -Force
+			Get-Service -Name WerSvc | Set-Service -StartupType Disabled
+		}
+		"Enable"
+		{
+			Get-ScheduledTask -TaskName QueueReporting -ErrorAction Ignore | Enable-ScheduledTask
+			Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Windows Error Reporting" -Name Disabled -Force -ErrorAction Ignore
+
+			Get-Service -Name WerSvc | Set-Service -StartupType Manual
+			Get-Service -Name WerSvc | Start-Service
+		}
+	}
+}
+
+<#
+	.SYNOPSIS
+	The feedback frequency
+
+	.PARAMETER Never
+	Change the feedback frequency to "Never"
+
+	.PARAMETER Automatically
+	Change feedback frequency to "Automatically"
+
+	.EXAMPLE
+	FeedbackFrequency -Never
+
+	.EXAMPLE
+	FeedbackFrequency -Automatically
+
+	.NOTES
+	Current user
+#>
+function FeedbackFrequency
+{
+	param
+	(
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Never"
+		)]
+		[switch]
+		$Never,
+
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Automatically"
+		)]
+		[switch]
+		$Automatically
+	)
+
+	# Remove all policies in order to make changes visible in UI
+	Remove-ItemProperty -Path HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection -Name DoNotShowFeedbackNotifications -Force -ErrorAction Ignore
+	Set-Policy -Scope Computer -Path SOFTWARE\Policies\Microsoft\Windows\DataCollection -Name DoNotShowFeedbackNotifications -Type DELETE
+
+	switch ($PSCmdlet.ParameterSetName)
+	{
+		"Never"
+		{
+			if (-not (Test-Path -Path HKCU:\Software\Microsoft\Siuf\Rules))
+			{
+				New-Item -Path HKCU:\Software\Microsoft\Siuf\Rules -Force
+			}
+			New-ItemProperty -Path HKCU:\Software\Microsoft\Siuf\Rules -Name NumberOfSIUFInPeriod -PropertyType DWord -Value 0 -Force
+
+			Remove-ItemProperty -Path HKCU:\Software\Microsoft\Siuf\Rules -Name PeriodInNanoSeconds -Force -ErrorAction Ignore
+		}
+		"Automatically"
+		{
+			Remove-ItemProperty -Path HKCU:\Software\Microsoft\Siuf\Rules -Name PeriodInNanoSeconds, NumberOfSIUFInPeriod -Force -ErrorAction Ignore
+		}
+	}
+}
+
+<#
+	.SYNOPSIS
+	The diagnostics tracking scheduled tasks
+
+	.PARAMETER Disable
+	Turn off the diagnostics tracking scheduled tasks
+
+	.PARAMETER Enable
+	Turn on the diagnostics tracking scheduled tasks
+
+	.EXAMPLE
+	ScheduledTasks -Disable
+
+	.EXAMPLE
+	ScheduledTasks -Enable
+
+	.NOTES
+	A pop-up dialog box lets a user select tasks
+
+	.NOTES
+	Current user
+#>
+function ScheduledTasks
+{
+	param
+	(
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Disable"
+		)]
+		[switch]
+		$Disable,
+
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Enable"
+		)]
+		[switch]
+		$Enable
+	)
+
+	Add-Type -AssemblyName PresentationCore, PresentationFramework
+
+	#region Variables
+	# Initialize an array list to store the selected scheduled tasks
+	$SelectedTasks = New-Object -TypeName System.Collections.ArrayList($null)
+
+	# The following tasks will have their checkboxes checked
+	[string[]]$CheckedScheduledTasks = @(
+		# Collects program telemetry information if opted-in to the Microsoft Customer Experience Improvement Program
+		"MareBackup",
+
+		# Collects program telemetry information if opted-in to the Microsoft Customer Experience Improvement Program
+		"Microsoft Compatibility Appraiser",
+
+		# Updates compatibility database
+		"StartupAppTask",
+
+		# This task collects and uploads autochk SQM data if opted-in to the Microsoft Customer Experience Improvement Program
+		"Proxy",
+
+		# If the user has consented to participate in the Windows Customer Experience Improvement Program, this job collects and sends usage data to Microsoft
+		"Consolidator",
+
+		# The USB CEIP (Customer Experience Improvement Program) task collects Universal Serial Bus related statistics and information about your machine and sends it to the Windows Device Connectivity engineering group at Microsoft
+		"UsbCeip",
+
+		# The Windows Disk Diagnostic reports general disk and system information to Microsoft for users participating in the Customer Experience Program
+		"Microsoft-Windows-DiskDiagnosticDataCollector",
+
+		# This task shows various Map related toasts
+		"MapsToastTask",
+
+		# This task checks for updates to maps which you have downloaded for offline use
+		"MapsUpdateTask",
+
+		# Initializes Family Safety monitoring and enforcement
+		"FamilySafetyMonitor",
+
+		# Synchronizes the latest settings with the Microsoft family features service
+		"FamilySafetyRefreshTask",
+
+		# XblGameSave Standby Task
+		"XblGameSaveTask"
+	)
+	#endregion Variables
+
+	#region XAML Markup
+	# The section defines the design of the upcoming dialog box
+	[xml]$XAML = @"
+	<Window
+		xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+		xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+		Name="Window"
+		MinHeight="450" MinWidth="400"
+		SizeToContent="WidthAndHeight" WindowStartupLocation="CenterScreen"
+		TextOptions.TextFormattingMode="Display" SnapsToDevicePixels="True"
+		FontFamily="Candara" FontSize="16" ShowInTaskbar="True"
+		Background="#F1F1F1" Foreground="#262626">
+		<Window.Resources>
+			<Style TargetType="StackPanel">
+				<Setter Property="Orientation" Value="Horizontal"/>
+				<Setter Property="VerticalAlignment" Value="Top"/>
+			</Style>
+			<Style TargetType="CheckBox">
+				<Setter Property="Margin" Value="10, 10, 5, 10"/>
+				<Setter Property="IsChecked" Value="True"/>
+			</Style>
+			<Style TargetType="TextBlock">
+				<Setter Property="Margin" Value="5, 10, 10, 10"/>
+			</Style>
+			<Style TargetType="Button">
+				<Setter Property="Margin" Value="20"/>
+				<Setter Property="Padding" Value="10"/>
+			</Style>
+			<Style TargetType="Border">
+				<Setter Property="Grid.Row" Value="1"/>
+				<Setter Property="CornerRadius" Value="0"/>
+				<Setter Property="BorderThickness" Value="0, 1, 0, 1"/>
+				<Setter Property="BorderBrush" Value="#000000"/>
+			</Style>
+			<Style TargetType="ScrollViewer">
+				<Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+				<Setter Property="BorderBrush" Value="#000000"/>
+				<Setter Property="BorderThickness" Value="0, 1, 0, 1"/>
+			</Style>
+		</Window.Resources>
+		<Grid>
+			<Grid.RowDefinitions>
+				<RowDefinition Height="Auto"/>
+				<RowDefinition Height="*"/>
+				<RowDefinition Height="Auto"/>
+			</Grid.RowDefinitions>
+			<ScrollViewer Name="Scroll" Grid.Row="0"
+				HorizontalScrollBarVisibility="Disabled"
+				VerticalScrollBarVisibility="Auto">
+				<StackPanel Name="PanelContainer" Orientation="Vertical"/>
+			</ScrollViewer>
+			<Button Name="Button" Grid.Row="2"/>
+		</Grid>
+	</Window>
+"@
+	#endregion XAML Markup
+
+	$Form = [Windows.Markup.XamlReader]::Load((New-Object -TypeName System.Xml.XmlNodeReader -ArgumentList $XAML))
+	$XAML.SelectNodes("//*[@*[contains(translate(name(.),'n','N'),'Name')]]") | ForEach-Object -Process {
+		Set-Variable -Name ($_.Name) -Value $Form.FindName($_.Name)
+	}
+
+	#region Functions
+	function Get-CheckboxClicked
+	{
+		[CmdletBinding()]
+		param
+		(
+			[Parameter(
+				Mandatory = $true,
+				ValueFromPipeline = $true
+			)]
+			[ValidateNotNull()]
+			$CheckBox
+		)
+
+		$Task = $Tasks | Where-Object -FilterScript {$_.TaskName -eq $CheckBox.Parent.Children[1].Text}
+
+		if ($CheckBox.IsChecked)
+		{
+			[void]$SelectedTasks.Add($Task)
+		}
+		else
+		{
+			[void]$SelectedTasks.Remove($Task)
+		}
+
+		if ($SelectedTasks.Count -gt 0)
+		{
+			$Button.IsEnabled = $true
+		}
+		else
+		{
+			$Button.IsEnabled = $false
+		}
+	}
+
+	function DisableButton
+	{
+		Write-Information -MessageData "" -InformationAction Continue
+		# Extract the localized "Please wait..." string from shell32.dll
+		Write-Verbose -Message ([WinAPI.GetStrings]::GetString(12612)) -Verbose
+
+		[void]$Window.Close()
+
+		$SelectedTasks | ForEach-Object -Process {Write-Verbose -Message $_.TaskName -Verbose}
+		$SelectedTasks | Disable-ScheduledTask
+	}
+
+	function EnableButton
+	{
+		Write-Information -MessageData "" -InformationAction Continue
+		# Extract the localized "Please wait..." string from shell32.dll
+		Write-Verbose -Message ([WinAPI.GetStrings]::GetString(12612)) -Verbose
+
+		[void]$Window.Close()
+
+		$SelectedTasks | ForEach-Object -Process {Write-Verbose -Message $_.TaskName -Verbose}
+		$SelectedTasks | Enable-ScheduledTask
+	}
+
+	function Add-TaskControl
+	{
+		[CmdletBinding()]
+		param
+		(
+			[Parameter(
+				Mandatory = $true,
+				ValueFromPipeline = $true
+			)]
+			[ValidateNotNull()]
+			$Task
+		)
+
+		process
+		{
+			$CheckBox = New-Object -TypeName System.Windows.Controls.CheckBox
+			$CheckBox.Add_Click({Get-CheckboxClicked -CheckBox $_.Source})
+
+			$TextBlock = New-Object -TypeName System.Windows.Controls.TextBlock
+			$TextBlock.Text = $Task.TaskName
+
+			$StackPanel = New-Object -TypeName System.Windows.Controls.StackPanel
+			[void]$StackPanel.Children.Add($CheckBox)
+			[void]$StackPanel.Children.Add($TextBlock)
+			[void]$PanelContainer.Children.Add($StackPanel)
+
+			# If task checked add to the array list
+			if ($CheckedScheduledTasks | Where-Object -FilterScript {$Task.TaskName -match $_})
+			{
+				[void]$SelectedTasks.Add($Task)
+			}
+			else
+			{
+				$CheckBox.IsChecked = $false
+			}
+		}
+	}
+	#endregion Functions
+
+	switch ($PSCmdlet.ParameterSetName)
+	{
+		"Enable"
+		{
+			$State           = "Disabled"
+			# Extract the localized "Enable" string from shell32.dll
+			$ButtonContent   = [WinAPI.GetStrings]::GetString(51472)
+			$ButtonAdd_Click = {EnableButton}
+		}
+		"Disable"
+		{
+			$State           = "Ready"
+			$ButtonContent   = $Localization.Disable
+			$ButtonAdd_Click = {DisableButton}
+		}
+	}
+
+	Write-Information -MessageData "" -InformationAction Continue
+	# Extract the localized "Please wait..." string from shell32.dll
+	Write-Verbose -Message ([WinAPI.GetStrings]::GetString(12612)) -Verbose
+
+	# Getting list of all scheduled tasks according to the conditions
+	$Tasks = Get-ScheduledTask | Where-Object -FilterScript {($_.State -eq $State) -and ($_.TaskName -in $CheckedScheduledTasks)}
+
+	if (-not $Tasks)
+	{
+		Write-Information -MessageData "" -InformationAction Continue
+		Write-Verbose -Message $Localization.NoData -Verbose
+
+		return
+	}
+
+	Write-Information -MessageData "" -InformationAction Continue
+	Write-Verbose -Message $Localization.DialogBoxOpening -Verbose
+
+	#region Sendkey function
+	# Emulate the Backspace key sending to prevent the console window to freeze
+	Start-Sleep -Milliseconds 500
+
+	Add-Type -AssemblyName System.Windows.Forms
+
+	# We cannot use Get-Process -Id $PID as script might be invoked via Terminal with different $PID
+	Get-Process -Name powershell, WindowsTerminal -ErrorAction Ignore | Where-Object -FilterScript {$_.MainWindowTitle -match "Sophia Script for Windows 11"} | ForEach-Object -Process {
+		# Show window, if minimized
+		[WinAPI.ForegroundWindow]::ShowWindowAsync($_.MainWindowHandle, 10)
+
+		Start-Sleep -Seconds 1
+
+		# Force move the console window to the foreground
+		[WinAPI.ForegroundWindow]::SetForegroundWindow($_.MainWindowHandle)
+
+		Start-Sleep -Seconds 1
+
+		# Emulate the Backspace key sending
+		[System.Windows.Forms.SendKeys]::SendWait("{BACKSPACE 1}")
+	}
+	#endregion Sendkey function
+
+	$Window.Add_Loaded({$Tasks | Add-TaskControl})
+	$Button.Content = $ButtonContent
+	$Button.Add_Click({& $ButtonAdd_Click})
+
+	$Window.Title = $Localization.ScheduledTasks
+
+	# Force move the WPF form to the foreground
+	$Window.Add_Loaded({$Window.Activate()})
+	$Form.ShowDialog() | Out-Null
+}
+
+<#
+	.SYNOPSIS
+	The sign-in info to automatically finish setting up device after an update
+
+	.PARAMETER Disable
+	Do not use sign-in info to automatically finish setting up device after an update
+
+	.PARAMETER Enable
+	Use sign-in info to automatically finish setting up device after an update
+
+	.EXAMPLE
+	SigninInfo -Disable
+
+	.EXAMPLE
+	SigninInfo -Enable
+
+	.NOTES
+	Current user
+#>
+function SigninInfo
+{
+	param
+	(
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Disable"
+		)]
+		[switch]
+		$Disable,
+
+		[Parameter(
+			Mandatory = $true,
+			ParameterSetName = "Enable"
+		)]
+		[switch]
+		$Enable
+	)
+
+	# Remove all policies in order to make changes visible in UI
+	Remove-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name DisableAutomaticRestartSignOn -Force -ErrorAction Ignore
+	Set-Policy -Scope Computer -Path SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name DisableAutomaticRestartSignOn -Type DELETE
+
+	switch ($PSCmdlet.ParameterSetName)
+	{
+		"Disable"
+		{
+			$SID = (Get-CimInstance -ClassName Win32_UserAccount | Where-Object -FilterScript {$_.Name -eq $env:USERNAME}).SID
+			if (-not (Test-Path -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\UserARSO\$SID"))
+			{
+				New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\UserARSO\$SID" -Force
+			}
+			New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\UserARSO\$SID" -Name OptOut -PropertyType DWord -Value 1 -Force
+		}
+		"Enable"
+		{
+			$SID = (Get-CimInstance -ClassName Win32_UserAccount | Where-Object -FilterScript {$_.Name -eq $env:USERNAME}).SID
+			Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\UserARSO\$SID" -Name OptOut -Force -ErrorAction Ignore
+		}
+	}
+}
