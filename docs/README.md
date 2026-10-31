@@ -1,8 +1,9 @@
 # Documentation
 
-Start with the [README](../README.md) for what the tool is and how to run it. Each document below
-is self-contained and states what was verified on Linux and what was never executed on Windows;
-[docs/VALIDATION.md](VALIDATION.md) holds the evidence and the list of unexecuted checks.
+Start with the [README](../README.md) (Tiếng Việt) or [README.en.md](../README.en.md) (English) for
+what the tool is and how to run it. Each document below is self-contained and states what was
+verified on Linux and what was never executed on Windows; [docs/VALIDATION.md](VALIDATION.md) holds
+the evidence and the list of unexecuted checks.
 
 ## Run, configure and automate
 

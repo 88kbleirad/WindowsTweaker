@@ -1,123 +1,124 @@
 # WindowsTweaker
 
-Reviewable, reversible Windows customization, driven from the terminal.
+Tùy biến Windows có thể xem lại và hoàn tác, điều khiển từ terminal.
 
-**English** · [Tiếng Việt](README.vi.md)
+**Tiếng Việt** | [English](README.en.md)
 
-Every change is a **tweak**: metadata (scope, required privileges, supported OS conditions,
-impact, restart requirement, rollback fidelity), a read-only detector, and an apply step that
-captures the previous state before it writes. A change can be dry-run, reviewed, applied and
-rolled back to the state that actually existed before - not to a hard-coded default.
+Mỗi thay đổi là một **tinh chỉnh (tweak)**: có siêu dữ liệu (phạm vi, quyền cần thiết, điều kiện
+hệ điều hành, mức ảnh hưởng, yêu cầu khởi động lại, khả năng hoàn tác), một bộ dò chỉ đọc, và một
+bước áp dụng luôn chụp lại trạng thái cũ trước khi ghi. Bạn có thể chạy thử, xem lại, áp dụng, rồi
+hoàn tác về đúng trạng thái đã tồn tại - không phải về một giá trị mặc định cứng.
 
-## What it does
+## Công cụ làm được gì
 
-- **Windows customization with preview and per-operation recovery.** 113 tweaks across 10
-  categories (privacy, security, Explorer, taskbar, apps, updates, system, network,
-  personalization, maintenance). `W` dry-runs the pending selection, `A` reviews it target by
-  target, and the journal keeps the captured state so `R` can restore it. Irreversible tweaks
-  are labelled as such and never applied automatically.
-- **Keyboard-driven terminal interface, plus a scriptable CLI.** Standalone `pwsh` - no
-  installation or background service. The same backend also drives an optional WPF window
-  (Windows 10/11 only).
-- **Diagnostics and configuration drift inspection.** Read-only sanity scan (`S`),
-  recommendations for one objective with the reason for every decision (`M`), verification and
-  recovery (`V`), capability-loss disclosure for anything a change may stop from working, and a
-  per-operation journal with drift between applied and live values.
-- **Storage analysis and quarantine.** In-terminal directory explorer with size aggregation
-  (PowerShell backend, or the optional Go worker for speed), and a journaled quarantine workflow
-  with evidence, same-volume moves and a durable manifest.
-- **Local monitoring, with optional Prometheus and Grafana integration.** Keyboard-driven
-  dashboards over a bounded in-memory history, declarative alert rules, opt-in SQLite metric
-  recording, comparison of two time ranges, and early fleet / incident / playbook / support-bundle
-  views. The status of each part is uneven and documented: the Prometheus exporter that ships in
-  the worker is not yet fed by the collector, and the fleet/incident/playbook/bundle views are the
-  least exercised - see [docs/MONITORING.md](docs/MONITORING.md) and
+- **Tùy biến Windows kèm xem trước và hoàn tác theo từng thao tác.** 113 tinh chỉnh trong 10 nhóm
+  (riêng tư, bảo mật, Explorer, taskbar, ứng dụng, cập nhật, hệ thống, mạng, cá nhân hóa, bảo trì).
+  `W` chạy thử danh sách đang chờ, `A` xem lại từng đích, và nhật ký giữ trạng thái đã chụp để `R`
+  khôi phục. Các tinh chỉnh không thể hoàn tác đều được ghi rõ và không bao giờ tự động áp dụng.
+- **Giao diện terminal điều khiển bằng bàn phím, kèm dòng lệnh tự động hóa.** Chạy bằng `pwsh`,
+  không cần cài đặt và không có dịch vụ nền. Cùng backend đó cũng chạy một cửa sổ WPF tùy chọn
+  (chỉ trên Windows 10/11).
+- **Chẩn đoán và kiểm tra lệch cấu hình.** Quét kiểm tra chỉ đọc (`S`), đề xuất theo một mục tiêu
+  kèm lý do cho từng quyết định (`M`), xác minh và khôi phục (`V`), công bố mất năng lực cho những
+  thứ có thể ngừng hoạt động sau một thay đổi, và nhật ký theo từng thao tác kèm so sánh giá trị đã
+  áp dụng với giá trị hiện tại.
+- **Phân tích dung lượng và cách ly.** Trình duyệt thư mục ngay trong terminal có tổng hợp dung
+  lượng (backend PowerShell, hoặc worker Go tùy chọn để nhanh hơn), và quy trình cách ly có nhật
+  ký với bằng chứng, chỉ di chuyển trong cùng ổ đĩa và manifest bền vững.
+- **Giám sát cục bộ, kèm tích hợp Prometheus và Grafana tùy chọn.** Bảng điều khiển dùng bàn phím
+  trên lịch sử trong bộ nhớ có giới hạn, quy tắc cảnh báo khai báo, ghi SQLite tùy chọn, so sánh
+  hai khoảng thời gian, và các khung đội máy / sự cố / playbook / gói hỗ trợ ở mức sớm. Tình trạng
+  từng phần không đồng đều và đã được ghi rõ: exporter Prometheus có trong worker nhưng chưa được
+  bộ thu thập đưa dữ liệu vào, và các khung đội máy/sự cố/playbook/gói hỗ trợ là phần ít được chạy
+  thử nhất - xem [docs/MONITORING.md](docs/MONITORING.md) và
   [docs/MULTI-HOST.md](docs/MULTI-HOST.md).
-- **Declarative catalogs and local packs.** Tweaks can be data (JSON) instead of PowerShell, and a
-  local **tweak pack** can add definitions in its own namespace without being able to redefine a
-  built-in tweak.
+- **Danh mục khai báo và gói tinh chỉnh cục bộ.** Tinh chỉnh có thể là dữ liệu (JSON) thay vì mã
+  PowerShell, và một **gói tinh chỉnh** cục bộ có thể thêm định nghĩa trong không gian tên riêng
+  nhưng không thể định nghĩa lại một tinh chỉnh có sẵn.
 
-## Status and requirements
+## Tình trạng và yêu cầu
 
-| Requirement | Detail |
+| Yêu cầu | Chi tiết |
 |---|---|
-| Operating system | **Windows 10 22H2 or Windows 11** (the target platform). Every tweak declares `-SupportedOS`/`-MinBuild`; on any other build it reports `unsupported` with the reason instead of guessing |
-| PowerShell | **7.4 or newer** - enforced by `#Requires -Version 7.4` and by the module manifest. Windows PowerShell 5.1 is neither supported nor tested |
-| Elevation | Only for tweaks that declare `-Privilege Admin`; browsing, previewing and the dry run never need it |
-| On Linux | The module loads and the read-only surfaces work (this is where the test suite runs), but every machine-level tweak reports `unsupported`: treat Linux as a place to review and develop, not to apply changes |
-| Windows integration checks | **Not executed.** No Windows host was available for validation: real registry, service, scheduled-task, firewall, DNS, Appx, Defender and DISM behaviour, and the WPF interface, were never run. See [docs/VALIDATION.md](docs/VALIDATION.md) |
+| Hệ điều hành | **Windows 10 22H2 hoặc Windows 11** (nền tảng mục tiêu). Mọi tinh chỉnh đều khai báo `-SupportedOS`/`-MinBuild`; trên bản dựng khác nó báo `unsupported` kèm lý do thay vì đoán |
+| PowerShell | **7.4 trở lên** - được ép bởi `#Requires -Version 7.4` và bởi manifest của mô-đun. Windows PowerShell 5.1 không được hỗ trợ và chưa từng được kiểm thử |
+| Quyền quản trị | Chỉ cần cho các tinh chỉnh khai báo `-Privilege Admin`; việc duyệt, xem trước và chạy thử không bao giờ cần |
+| Trên Linux | Mô-đun nạp được và các bề mặt chỉ đọc chạy được (đây cũng là nơi bộ kiểm thử chạy), nhưng mọi tinh chỉnh mức hệ thống đều báo `unsupported`: hãy coi Linux là nơi xem lại và phát triển, không phải nơi áp dụng thay đổi |
+| Kiểm chứng tích hợp trên Windows | **Chưa chạy.** Không có máy Windows nào để kiểm chứng: hành vi thật của registry, dịch vụ, tác vụ định kỳ, tường lửa, DNS, Appx, Defender, DISM và giao diện WPF đều chưa từng được chạy. Xem [docs/VALIDATION.md](docs/VALIDATION.md) |
 
-Things to know before you apply something:
+Vài điều cần biết trước khi áp dụng:
 
-- **Recovery is per operation, not a system snapshot.** Registry values and keys, service start
-  type and state, scheduled-task state, firewall-group state, per-adapter DNS lists and Defender
-  preferences are captured before a change and restored afterwards. Targets without a read-back
-  reader are recorded as *unverifiable*, never as verified. System Restore points are never created
-  implicitly; ask for one with `-IncludeRestorePoint`.
-- **Some actions cannot be undone.** Package removal, OneDrive uninstall, installer downloads and
-  data deletion are separate tweaks marked `-Irreversible`/`-DataDeletion` with `Rollback = None`;
-  the shipped presets exclude them.
-- **Monitoring measures, it does not promise.** The workspace reports observations with their
-  quality and evidence class; no performance gain is claimed or guaranteed.
-- **The project has no licence of its own yet** - see the last section.
+- **Hoàn tác theo từng thao tác, không phải ảnh chụp toàn hệ thống.** Giá trị và khóa registry,
+  loại khởi động và trạng thái dịch vụ, trạng thái tác vụ định kỳ, trạng thái nhóm tường lửa, danh
+  sách DNS theo từng card mạng và tùy chọn Defender được chụp trước khi thay đổi và khôi phục lại
+  sau đó. Những đích không có bộ đọc để đối chiếu được ghi là *không xác minh được*, không bao giờ
+  ghi là đã xác minh. Điểm khôi phục hệ thống không bao giờ được tạo ngầm; muốn có thì dùng
+  `-IncludeRestorePoint`.
+- **Có những thao tác không thể hoàn tác.** Gỡ gói ứng dụng, gỡ OneDrive, tải và cài trình cài đặt,
+  và xóa dữ liệu là những tinh chỉnh riêng, được đánh dấu `-Irreversible`/`-DataDeletion` với
+  `Rollback = None`; các bộ cài có sẵn đều loại chúng ra.
+- **Giám sát chỉ đo, không hứa.** Không gian giám sát báo cáo quan sát kèm chất lượng và loại bằng
+  chứng; không có cam kết nào về việc tăng hiệu năng.
+- **Dự án chưa có giấy phép riêng** - xem mục cuối.
 
-## Quick start
+## Bắt đầu nhanh
 
-Run from the repository root; no installed launcher is shipped today.
+Chạy từ thư mục gốc của kho; hiện chưa có trình cài đặt nào được phát hành.
 
 ```powershell
-pwsh -File WindowsTweaker.ps1                  # terminal interface: browse, review, apply
-pwsh -File WindowsTweaker.ps1 -Language vi     # the same interface in Vietnamese
-pwsh -File WindowsTweaker.ps1 -Status          # read-only: what can this machine do?
+pwsh -File WindowsTweaker.ps1                  # giao diện terminal: duyệt, xem lại, áp dụng
+pwsh -File WindowsTweaker.ps1 -Language vi     # chính giao diện đó bằng tiếng Việt
+pwsh -File WindowsTweaker.ps1 -Status          # chỉ đọc: máy này làm được gì?
 pwsh -File WindowsTweaker.ps1 -Id Privacy.AdvertisingId -State Disabled -WhatIf
 ```
 
-The first two commands open the interface. The dry run prints every operation it would perform
-and writes nothing; drop `-WhatIf` to apply the change and keep the previous state for rollback.
+Hai lệnh đầu mở giao diện. Lệnh chạy thử in ra mọi thao tác sẽ thực hiện và không ghi gì; bỏ
+`-WhatIf` để áp dụng thay đổi và giữ lại trạng thái cũ cho việc hoàn tác.
 
-`irm | iex` installation exists as a script, but it is **not hosted**: the defaults still point at
-placeholder repository values, so there is no working public URL today. See
+Cách cài bằng `irm | iex` đã có script, nhưng **chưa được triển khai**: giá trị mặc định vẫn trỏ
+tới repository mẫu, nên hiện không có URL công khai nào dùng được. Xem
 [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
 
-## Essential keys
+## Phím thiết yếu
 
-| Key | Action |
+| Phím | Tác dụng |
 |---|---|
-| `Up`/`Down`, `PageUp`/`PageDown` | move through the list |
-| `Left`/`Right` or `Tab` | move between the panes |
-| `Space` | add or remove the current row in the pending set |
-| `Enter` | open details and actions (choose the state, collect arguments) |
-| `A` | review the pending changes - the only place a selection is applied |
-| `W` | dry-run preview of the pending changes (writes nothing) |
-| `/` | search; a query starting with `@` filters definitions (`@risk:High`, `@scope:Machine`, ...) |
-| `S` / `M` / `C` | sanity scan / recommendations / settings with several alternatives |
-| `V` | verification and recovery: drift, interrupted operations, restore, export |
-| `B` | monitoring workspace |
-| `L` / `I` | switch language / choose the icon mode |
-| `?` | the full keyboard reference and the safety rules |
-| `Q` (`Ctrl+C`) | quit - pending changes and a running operation are raised explicitly |
+| `Lên`/`Xuống`, `PageUp`/`PageDown` | di chuyển trong danh sách |
+| `Trái`/`Phải` hoặc `Tab` | đổi giữa các khung |
+| `Space` | thêm hoặc bỏ dòng hiện tại khỏi danh sách đang chờ |
+| `Enter` | mở chi tiết và các hành động (chọn trạng thái, nhập tham số) |
+| `A` | xem lại các thay đổi đang chờ - nơi duy nhất lựa chọn được áp dụng |
+| `W` | xem trước (chạy thử) các thay đổi đang chờ, không ghi gì |
+| `/` | tìm kiếm; truy vấn bắt đầu bằng `@` để lọc định nghĩa (`@risk:High`, `@scope:Machine`, ...) |
+| `S` / `M` / `C` | quét kiểm tra / đề xuất / các cài đặt có nhiều lựa chọn |
+| `V` | xác minh và khôi phục: lệch cấu hình, thao tác bị ngắt, khôi phục, xuất |
+| `B` | không gian giám sát |
+| `L` / `I` | đổi ngôn ngữ / chọn chế độ biểu tượng |
+| `?` | toàn bộ bảng phím và các nguyên tắc an toàn |
+| `Q` (`Ctrl+C`) | thoát - thay đổi đang chờ và thao tác đang chạy luôn được nêu rõ |
 
-Everything, including the monitoring and dialog keys, is in [docs/KEYBOARD.md](docs/KEYBOARD.md).
+Toàn bộ phím, kể cả phím của không gian giám sát và các hộp thoại, nằm ở
+[docs/KEYBOARD.md](docs/KEYBOARD.md).
 
-## Where to go next
+## Đọc tiếp ở đâu
 
-| Area | Documents |
+| Mảng | Tài liệu |
 |---|---|
-| Install, launch, CLI and module API | [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md), [docs/CLI.md](docs/CLI.md), [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) |
-| Interface and keys | [docs/KEYBOARD.md](docs/KEYBOARD.md) |
-| Catalog, packs and every tweak | [docs/CATALOG.md](docs/CATALOG.md), [docs/PACKS.md](docs/PACKS.md), [docs/FEATURE-INVENTORY.md](docs/FEATURE-INVENTORY.md) |
-| Journal, recovery and safety limits | [docs/STATE-JOURNAL.md](docs/STATE-JOURNAL.md), [docs/LIMITATIONS.md](docs/LIMITATIONS.md) |
-| Monitoring, exporter and multi-host views | [docs/MONITORING.md](docs/MONITORING.md), [docs/MULTI-HOST.md](docs/MULTI-HOST.md) |
-| Architecture, worker and validation | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKER.md](docs/WORKER.md), [docs/VALIDATION.md](docs/VALIDATION.md) |
+| Cài đặt, khởi chạy, dòng lệnh và API mô-đun | [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md), [docs/CLI.md](docs/CLI.md), [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) |
+| Giao diện và phím | [docs/KEYBOARD.md](docs/KEYBOARD.md) |
+| Danh mục, gói tinh chỉnh và từng tinh chỉnh | [docs/CATALOG.md](docs/CATALOG.md), [docs/PACKS.md](docs/PACKS.md), [docs/FEATURE-INVENTORY.md](docs/FEATURE-INVENTORY.md) |
+| Nhật ký, hoàn tác và giới hạn an toàn | [docs/STATE-JOURNAL.md](docs/STATE-JOURNAL.md), [docs/LIMITATIONS.md](docs/LIMITATIONS.md) |
+| Giám sát, exporter và nhiều máy | [docs/MONITORING.md](docs/MONITORING.md), [docs/MULTI-HOST.md](docs/MULTI-HOST.md) |
+| Kiến trúc, worker và kiểm chứng | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/WORKER.md](docs/WORKER.md), [docs/VALIDATION.md](docs/VALIDATION.md) |
 
-The complete list is in the [documentation index](docs/README.md). Diagnostic detail lives in
-[docs/SANITY-SCAN.md](docs/SANITY-SCAN.md), [docs/RECOMMENDATIONS.md](docs/RECOMMENDATIONS.md) and
+Danh sách đầy đủ nằm ở [mục lục tài liệu](docs/README.md). Chi tiết chẩn đoán ở
+[docs/SANITY-SCAN.md](docs/SANITY-SCAN.md), [docs/RECOMMENDATIONS.md](docs/RECOMMENDATIONS.md) và
 [docs/STATE-DIMENSIONS.md](docs/STATE-DIMENSIONS.md).
 
-## Licence and attribution
+## Giấy phép và ghi công
 
-This project derives from **Sophia Script for Windows** (MIT, (c) 2023 farag2); that notice is kept
-in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) together with the licence texts of the Go
-modules the optional worker links. The repository still ships **no licence of its own**: choosing
-one is the owner's decision and is unresolved. No code-signing status, release channel or support
-commitment is claimed.
+Dự án này dựa trên **Sophia Script for Windows** (MIT, (c) 2023 farag2); thông báo đó được giữ
+nguyên trong [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) cùng với nguyên văn giấy phép của các
+mô-đun Go mà worker tùy chọn liên kết. Kho vẫn **không kèm giấy phép riêng**: việc chọn giấy phép là
+quyết định của chủ sở hữu và vẫn còn bỏ ngỏ. Không có tuyên bố nào về chữ ký số, kênh phát hành hay
+cam kết hỗ trợ.
