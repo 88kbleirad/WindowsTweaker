@@ -1,7 +1,8 @@
-# Compiled Go worker binaries. They are build output, not sources: rebuild them with the
-# commands in docs/WORKER.md (`go build -o bin/<os>-<arch>/wt-worker ./cmd/wt-worker`).
-# tools/New-ReleasePackage.ps1 does not build anything; it refuses to package a platform
-# whose binary is missing, so an ignored binary is the one you built yourself.
+# Compiled Go worker binaries. They are build output, not sources: tools/New-ReleasePackage.ps1
+# builds them for every selected platform with `go build -o bin/<goos>-<goarch>/wt-worker
+# ./cmd/wt-worker` before it packages, and -SkipWorkerBuild reuses whatever is here. The path is
+# the canonical one (see docs/WORKER.md and bootstrap/bootstrap.ps1 Get-WtBootstrapPlatforms);
+# an ignored binary is a build artifact, never a source file.
 worker/bin/
 
 # Release archives, checksums and manifest written by tools/New-ReleasePackage.ps1.

@@ -1,4 +1,4 @@
-# WindowsTweaker - Network category tweaks.
+﻿# WindowsTweaker - Network category tweaks.
 #
 # DNS changes only ever target adapters the caller selected explicitly. VPN and
 # virtual adapters are reported and skipped unless -Arguments.AllowVirtualAdapter is

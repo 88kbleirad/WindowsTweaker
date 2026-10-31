@@ -1,4 +1,4 @@
-# WindowsTweaker - Taskbar and Start menu tweaks.
+﻿# WindowsTweaker - Taskbar and Start menu tweaks.
 #
 # Note on the widgets tweak: the legacy modules/TaskbarWidgets.ps1 copied
 # powershell.exe to powershell_temp.exe in System32 and invoked it to work around the

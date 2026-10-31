@@ -44,13 +44,13 @@ function Get-WtSettingsFileVersionInternal
 
     try
     {
-        $Raw = Get-Content -LiteralPath $Path -Raw -Encoding utf8 -ErrorAction Stop
+        $Raw = Read-WtTextFile -Path $Path
         if ([string]::IsNullOrWhiteSpace($Raw))
         {
             return 0
         }
 
-        $Parsed = $Raw | ConvertFrom-Json -Depth 8 -ErrorAction Stop
+        $Parsed = ConvertFrom-WtJson -Text $Raw -Depth 8
         if (@($Parsed.PSObject.Properties.Name) -contains 'version')
         {
             return [int]$Parsed.version
@@ -101,13 +101,13 @@ function Read-WtSettings
 
     try
     {
-        $Raw = Get-Content -LiteralPath $Settings.Path -Raw -Encoding utf8 -ErrorAction Stop
+        $Raw = Read-WtTextFile -Path $Settings.Path
         if ([string]::IsNullOrWhiteSpace($Raw))
         {
             return $Settings
         }
 
-        $Parsed = $Raw | ConvertFrom-Json -Depth 8 -ErrorAction Stop
+        $Parsed = ConvertFrom-WtJson -Text $Raw -Depth 8
         $Names = @($Parsed.PSObject.Properties.Name)
 
         # A file without a version field is the first schema, exactly as Read-WtStateStore reads one.
@@ -179,10 +179,10 @@ function Write-WtSettings
         backend  = [string]$Settings.Backend
     }
 
-    $Json = $Payload | ConvertTo-Json -Depth 8
+    $Json = ConvertTo-WtJson -InputObject $Payload -Depth 8
     $Temp = "$Path.tmp"
 
-    Set-Content -LiteralPath $Temp -Value $Json -Encoding utf8NoBOM -Force
+    Write-WtTextFile -Path $Temp -Value $Json
     Move-Item -LiteralPath $Temp -Destination $Path -Force
 }
 
@@ -224,7 +224,7 @@ function Read-WtStateStore
 
     try
     {
-        $Raw = Get-Content -LiteralPath $Result.Path -Raw -Encoding utf8 -ErrorAction Stop
+        $Raw = Read-WtTextFile -Path $Result.Path
         if ([string]::IsNullOrWhiteSpace($Raw))
         {
             # An empty file is not a valid store: it means a write was interrupted before a
@@ -236,7 +236,7 @@ function Read-WtStateStore
             return $Result
         }
 
-        $Parsed = $Raw | ConvertFrom-Json -Depth 32 -ErrorAction Stop
+        $Parsed = ConvertFrom-WtJson -Text $Raw -Depth 32
         $Names = @($Parsed.PSObject.Properties.Name)
 
         $FileVersion = if ($Names -contains 'version') { [int]$Parsed.version } else { 1 }
@@ -430,7 +430,7 @@ function Write-WtStateStore
         $Payload.quarantineMeta = $Store.QuarantineMeta
     }
 
-    $Json = $Payload | ConvertTo-Json -Depth 32
+    $Json = ConvertTo-WtJson -InputObject $Payload -Depth 32
     $Temp = "$Path.tmp"
 
     $Token = $null
@@ -452,7 +452,7 @@ function Write-WtStateStore
             $Stream.Dispose()
         }
 
-        if ($IsWindows -and (Test-Path -LiteralPath $Path))
+        if ((Get-WtRuntimeProfile).IsWindows -and (Test-Path -LiteralPath $Path))
         {
             [System.IO.File]::Replace($Temp, $Path, $null, $true)
         }

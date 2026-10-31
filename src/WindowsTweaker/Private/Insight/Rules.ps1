@@ -373,8 +373,7 @@ function Import-WtSanityRuleRegistry
         return @{ Path = $Path; Rules = @(); Errors = @($Read.Errors); Present = $true }
     }
 
-    $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-    $Read.Document.Dispose()
+    $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
     $Tested = Test-WtRuleDocument -Document $Document
     if ($Tested.Errors.Count -gt 0)

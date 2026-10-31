@@ -63,7 +63,7 @@ function New-WtRestorePoint
 
     $Operation = 'RestorePoint'
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return New-WtOperationResult -Status 'unsupported' -Operation $Operation -Message 'Restore points are only available on Windows.'
     }
@@ -137,7 +137,7 @@ function Export-WtReport
 
     if ($Format -eq 'Json')
     {
-        ($Report | ConvertTo-Json -Depth 12) | Set-Content -LiteralPath $Path -Encoding utf8NoBOM -Force
+        Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Report -Depth 12)
     }
     else
     {
@@ -164,7 +164,7 @@ function Export-WtReport
             $Lines.Add(('- {0} {1} {2} -> {3}{4}' -f $Entry.Timestamp, $Entry.TweakId, $Entry.State, $Entry.Outcome, $(if ($Entry.RolledBack) { ' (rolled back)' } else { '' })))
         }
 
-        $Lines | Set-Content -LiteralPath $Path -Encoding utf8NoBOM -Force
+        Write-WtTextFile -Path $Path -Value ($Lines -join [System.Environment]::NewLine)
     }
 
     return $Path

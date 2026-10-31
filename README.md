@@ -1,4 +1,4 @@
-# WindowsTweaker
+﻿# WindowsTweaker
 
 Tùy biến Windows có thể xem lại và hoàn tác, điều khiển từ terminal.
 
@@ -41,7 +41,7 @@ hoàn tác về đúng trạng thái đã tồn tại - không phải về một
 | Yêu cầu | Chi tiết |
 |---|---|
 | Hệ điều hành | **Windows 10 22H2 hoặc Windows 11** (nền tảng mục tiêu). Mọi tinh chỉnh đều khai báo `-SupportedOS`/`-MinBuild`; trên bản dựng khác nó báo `unsupported` kèm lý do thay vì đoán |
-| PowerShell | **7.4 trở lên** - được ép bởi `#Requires -Version 7.4` và bởi manifest của mô-đun. Windows PowerShell 5.1 không được hỗ trợ và chưa từng được kiểm thử |
+| PowerShell | **Windows PowerShell 5.1 (có sẵn trong Windows) và PowerShell 7.4-7.6.** `#Requires -Version 5.1` chặn các bản cũ hơn; PowerShell 7.4-7.6 là bản được dự án xác nhận đầy đủ. Chi tiết theo từng runtime: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
 | Quyền quản trị | Chỉ cần cho các tinh chỉnh khai báo `-Privilege Admin`; việc duyệt, xem trước và chạy thử không bao giờ cần |
 | Trên Linux | Mô-đun nạp được và các bề mặt chỉ đọc chạy được (đây cũng là nơi bộ kiểm thử chạy), nhưng mọi tinh chỉnh mức hệ thống đều báo `unsupported`: hãy coi Linux là nơi xem lại và phát triển, không phải nơi áp dụng thay đổi |
 | Kiểm chứng tích hợp trên Windows | **Chưa chạy.** Không có máy Windows nào để kiểm chứng: hành vi thật của registry, dịch vụ, tác vụ định kỳ, tường lửa, DNS, Appx, Defender, DISM và giao diện WPF đều chưa từng được chạy. Xem [docs/VALIDATION.md](docs/VALIDATION.md) |
@@ -62,21 +62,45 @@ Vài điều cần biết trước khi áp dụng:
 
 ## Bắt đầu nhanh
 
-Chạy từ thư mục gốc của kho; hiện chưa có trình cài đặt nào được phát hành.
+Chạy từ thư mục gốc của kho. **Cả Windows PowerShell 5.1 lẫn PowerShell 7 đều khởi động được**;
+cùng một giao diện, cùng một nhật ký, cùng khả năng hoàn tác.
 
 ```powershell
-pwsh -File WindowsTweaker.ps1                  # giao diện terminal: duyệt, xem lại, áp dụng
-pwsh -File WindowsTweaker.ps1 -Language vi     # chính giao diện đó bằng tiếng Việt
-pwsh -File WindowsTweaker.ps1 -Status          # chỉ đọc: máy này làm được gì?
-pwsh -File WindowsTweaker.ps1 -Id Privacy.AdvertisingId -State Disabled -WhatIf
+# Windows PowerShell 5.1 (console có sẵn trong Windows) - chạy trực tiếp
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\WindowsTweaker.ps1
+
+# PowerShell 7.4-7.6 - cùng giao diện, đủ tính năng đã kiểm chứng
+pwsh -NoProfile -File .\WindowsTweaker.ps1
+pwsh -NoProfile -File .\WindowsTweaker.ps1 -Language vi     # giao diện tiếng Việt
+pwsh -NoProfile -File .\WindowsTweaker.ps1 -Status          # chỉ đọc: máy này làm được gì?
+pwsh -NoProfile -File .\WindowsTweaker.ps1 -Id Privacy.AdvertisingId -State Disabled -WhatIf
 ```
 
-Hai lệnh đầu mở giao diện. Lệnh chạy thử in ra mọi thao tác sẽ thực hiện và không ghi gì; bỏ
-`-WhatIf` để áp dụng thay đổi và giữ lại trạng thái cũ cho việc hoàn tác.
+Lệnh đầu tiên và hai lệnh `pwsh` đầu tiên mở giao diện. Lệnh chạy thử in ra mọi thao tác sẽ thực
+hiện và không ghi gì; bỏ `-WhatIf` để áp dụng thay đổi và giữ lại trạng thái cũ cho việc hoàn tác.
 
-Cách cài bằng `irm | iex` đã có script, nhưng **chưa được triển khai**: giá trị mặc định vẫn trỏ
-tới repository mẫu, nên hiện không có URL công khai nào dùng được. Xem
-[docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
+`-ExecutionPolicy Bypass` ở trên chỉ áp dụng cho **tiến trình đó** (không đổi chính sách của máy,
+không ghi gì vào registry). Nếu chính sách đã cho phép chạy script, bỏ cờ này đi.
+
+Không có PowerShell 7? Bootstrap sẽ tự tìm, và chỉ hỏi một lần trước khi cài bằng `winget` (nguồn
+chính thức của Microsoft). Từ chối vẫn chạy được trên 5.1. Cài thủ công:
+<https://aka.ms/powershell-release?tag=stable> (chọn gói đúng kiến trúc x64/ARM64).
+
+Muốn biết runtime hiện tại có gì:
+`powershell.exe -NoProfile -File .\WindowsTweaker.ps1 -RuntimeReport` (chỉ đọc, in cả hai thứ
+tiếng Việt và tiếng Anh).
+
+Cách cài bằng `irm | iex` đã có script và giá trị mặc định nay trỏ tới repository thật
+(`88kbleirad/WindowsTweaker`), nhưng **chưa có bản release nào được công bố**: bootstrap gọi
+`releases/latest`, nhận `HTTP 404` và báo lỗi thay vì cài thứ chưa được kiểm chứng. Hãy công bố
+các tệp mô tả trong [docs/RELEASE.md](docs/RELEASE.md), sau đó lệnh một dòng mới chạy được:
+
+```powershell
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
+
+Xem [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) để biết script kiểm chứng những gì, và
+[docs/RELEASE.md](docs/RELEASE.md) để biết cần tải lên những tệp nào.
 
 ## Phím thiết yếu
 

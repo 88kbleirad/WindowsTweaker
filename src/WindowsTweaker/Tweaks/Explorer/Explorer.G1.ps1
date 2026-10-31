@@ -1,4 +1,4 @@
-# WindowsTweaker - Explorer category tweaks (batch G1: general File Explorer options).
+﻿# WindowsTweaker - Explorer category tweaks (batch G1: general File Explorer options).
 #
 # Derived from Sophia Script for Windows (MIT, (c) 2023 farag2) modules (see
 # THIRD-PARTY-NOTICES.md). The legacy modules contained LGPO policy transcripts
@@ -687,7 +687,7 @@ New-WtScriptTweak -Id 'Explorer.CopyPathCommand' -Category 'Explorer' `
 
         $VerbPath = 'HKCU:\Software\Classes\Directory\shell\WindowsTweakerCopyPath\command'
         $TagPath = 'HKCU:\Software\Classes\*\shell\WindowsTweakerCopyPath\command'
-        $Present = Test-Path -LiteralPath $VerbPath -and (Test-Path -LiteralPath $TagPath)
+        $Present = (Test-Path -LiteralPath $VerbPath) -and (Test-Path -LiteralPath $TagPath)
         if ($Present)
         {
             return @{ State = 'Enabled'; Reason = 'Both context-menu registrations are present.' }

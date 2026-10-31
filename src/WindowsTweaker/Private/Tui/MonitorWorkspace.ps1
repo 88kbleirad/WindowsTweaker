@@ -1,4 +1,4 @@
-# WindowsTweaker - monitoring workspace (TUI).
+﻿# WindowsTweaker - monitoring workspace (TUI).
 #
 # The workspace is a full-screen mode reached from Overview (or the B key). It uses the
 # existing screen grid and dialogs; it never opens listeners and never mutates state. It
@@ -815,7 +815,7 @@ function Show-WtMonitorComparison
                     comparison = @{ fromMs = $ComparisonFrom; toMs = $ComparisonTo }
                     rows = @($Result.Rows)
                 }
-                $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+                Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Payload -Depth 8)
                 Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mon.Compare.Title') -Lines @((Get-WtString -Key 'Mon.Compare.Exported') -f $Path) -Tone 'Success'
             }
         }

@@ -1,4 +1,4 @@
-# WindowsTweaker - privacy-preserving support bundles.
+﻿# WindowsTweaker - privacy-preserving support bundles.
 #
 # Export is an explicit preview-and-export workflow. Selected diagnostic artifacts are
 # sanitized (identifier redaction), assembled into a bounded archive, and accompanied by
@@ -78,13 +78,13 @@ function New-WtSupportBundleContents {
     }
 
     # Version metadata.
-    & $Add 'metadata.json' (@{
+    & $Add 'metadata.json' (ConvertTo-WtJson -InputObject @{
         schemaVersion = $Script:WtBundleSchemaVersion
         createdUtc = (Get-Date).ToUniversalTime().ToString('o')
         appVersion = [string](Get-WtJournalContext).appVersion
         protocolVersion = $Script:WtWorkerProtocolVersion
-        platform = @{ os = [string](Get-WtPlatformDescription); ps = $PSVersionTable.PSVersion.ToString(); isWindows = [bool]$IsWindows }
-    } | ConvertTo-Json -Depth 6)
+        platform = @{ os = [string](Get-WtPlatformDescription); ps = $PSVersionTable.PSVersion.ToString(); isWindows = [bool](Get-WtRuntimeProfile).IsWindows }
+    } -Depth 6)
 
     # Sanitized operations summary.
     if ($Options.includeJournal) {
@@ -98,7 +98,7 @@ function New-WtSupportBundleContents {
                 sequence = [int]$Entry.sequence
             }
         }
-        & $Add 'operations-summary.json' ($Rows | ConvertTo-Json -Depth 6)
+        & $Add 'operations-summary.json' (ConvertTo-WtJson -InputObject $Rows -Depth 6)
     }
 
     # Alert history (from persisted transitions or current state).
@@ -114,7 +114,7 @@ function New-WtSupportBundleContents {
                 missing = $Alert.missing
             }
         }
-        & $Add 'alerts-summary.json' ($Rows | ConvertTo-Json -Depth 6)
+        & $Add 'alerts-summary.json' (ConvertTo-WtJson -InputObject $Rows -Depth 6)
     }
 
     # Bounded metrics for the chosen interval (local history only).
@@ -130,21 +130,21 @@ function New-WtSupportBundleContents {
                 samples = @($Samples | ForEach-Object { [ordered]@{ tsMs = [long]$_.tsMs; quality = $_.quality; value = if ($null -ne $_.value) { [double]$_.value } else { $null } } })
             }
         }
-        & $Add 'metrics-interval.json' ($Rows | ConvertTo-Json -Depth 8)
+        & $Add 'metrics-interval.json' (ConvertTo-WtJson -InputObject $Rows -Depth 8)
     }
 
     # Dashboard / rule / playbook revisions.
     if ($Options.dashboards) {
         foreach ($Id in $Options.dashboards) {
             $Dashboard = Read-WtDashboardInternal -Id $Id
-            if ($Dashboard) { & $Add "dashboard-$Id.json" ($Dashboard | ConvertTo-Json -Depth 10) }
+            if ($Dashboard) { & $Add "dashboard-$Id.json" (ConvertTo-WtJson -InputObject $Dashboard -Depth 10) }
         }
     }
     if ($Options.rules) {
-        & $Add 'alert-rules.json' (Get-WtDefaultAlertRules | ConvertTo-Json -Depth 6)
+        & $Add 'alert-rules.json' (ConvertTo-WtJson -InputObject (Get-WtDefaultAlertRules) -Depth 6)
     }
     if ($Options.playbooks) {
-        & $Add 'playbooks.json' (Get-WtBuiltinPlaybooks | ConvertTo-Json -Depth 10)
+        & $Add 'playbooks.json' (ConvertTo-WtJson -InputObject (Get-WtBuiltinPlaybooks) -Depth 10)
     }
 
     # Fleet overview (sanitized) when available.
@@ -158,7 +158,7 @@ function New-WtSupportBundleContents {
                 freshnessMs = [long]$H.FreshnessMs
             }
         }
-        & $Add 'fleet-overview.json' ($Rows | ConvertTo-Json -Depth 6)
+        & $Add 'fleet-overview.json' (ConvertTo-WtJson -InputObject $Rows -Depth 6)
     }
 
     return @{ Entries = @($Entries.ToArray()); TotalBytes = $TotalBytes; Omitted = $Script:WtBundleMaxEntries - $Entries.Count }
@@ -208,7 +208,7 @@ function Export-WtSupportBundle {
             }
             $ManifestEntry = $Archive.CreateEntry('manifest.json')
             $Stream = $ManifestEntry.Open()
-            $ManifestBytes = [System.Text.Encoding]::UTF8.GetBytes(($Manifest | ConvertTo-Json -Depth 8))
+            $ManifestBytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-WtJson -InputObject $Manifest -Depth 8))
             $Stream.Write($ManifestBytes, 0, $ManifestBytes.Length)
             $Stream.Dispose()
         }
@@ -278,7 +278,7 @@ function Import-WtSupportBundle {
             $Target = Join-Path $ExtractTo $Entry.Name
             $Dir = Split-Path $Target -Parent
             if ($Dir -and -not (Test-Path -LiteralPath $Dir)) { New-WtDirectory -Path $Dir }
-            Set-Content -LiteralPath $Target -Value $Entry.Content -Encoding utf8NoBOM
+            Write-WtTextFile -Path $Target -Value $Entry.Content
         }
     }
 

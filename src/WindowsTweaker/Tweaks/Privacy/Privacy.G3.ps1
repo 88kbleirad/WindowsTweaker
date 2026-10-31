@@ -1,4 +1,4 @@
-# WindowsTweaker - Privacy category tweaks (batch G3).
+﻿# WindowsTweaker - Privacy category tweaks (batch G3).
 #
 # Replaces the legacy modules modules/AppsSilentInstalling.ps1 and
 # modules/PUAppsDetection.ps1. The legacy LGPO transcript ("Set-Policy ... -Type

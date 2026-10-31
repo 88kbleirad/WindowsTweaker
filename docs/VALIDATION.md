@@ -28,7 +28,7 @@ pwsh -NoProfile -File tools/Parse-All.ps1
 ```
 
 ```
-Files parsed : 141
+Files parsed : 146
 Skipped dirs : reference
 Parse errors : 0
 ```
@@ -71,7 +71,7 @@ and two helper names used unapproved verbs (`Toggle-WtTuiPending` -> `Switch-WtT
 pwsh -NoProfile -Command "Invoke-Pester -Path tests"
 ```
 
-The counts below are the ones Pester reports per file; the same command is phase 5 of
+The counts below are the ones Pester reports per file; the same command is phase 6 of
 `tools/Invoke-Validation.ps1`.
 
 | Test file | Tests | Failed | Covers |
@@ -86,7 +86,9 @@ The counts below are the ones Pester reports per file; the same command is phase
 | `Diagnostics.Tests.ps1` | 14 | 0 | bounded ring, no typed character recorded, home-path and token sanitization, sensitive data keys dropped, bounded/truncated values, export header contents, overwrite refusal, record and size bounds, JSONL re-parsing, summary counts, clear |
 | `Measurements.Tests.ps1` | 14 | 0 | sample and timeout bounds, failed samples retained with their error, raw samples with unit/adapter/target/conditions/timestamps, Min/Max/Median over successful samples, improved/regressed/inconclusive/insufficient per the documented criteria, target/kind/unit mismatch, inputs never mutated, no apply path touched |
 | `Worker.Tests.ps1` | 17 | 0 | worker discovery from the application-controlled path only; `Go` refusing to fall back; `Auto` falling back with a reason; backend preference round-trip; protocol handshake (version, capabilities, limits); incompatible version reported; crashed worker reported; garbage on stdout reported; PowerShell/Go aggregate equivalence (with the documented hard-link difference); Vietnamese file names; access-denied partial results in both backends; cooperative cancellation with the worker still usable afterwards; bounded shutdown without a kill; startup and round-trip overhead |
-| `Bootstrap.Tests.ps1` | 12 | 0 | the installer launcher executed as text (no `$PSScriptRoot`, no `$PSCommandPath`, no `exit()`); exact platform-asset selection and ambiguity refusal; OS-architecture mapping including ARM64 and the refusal of a 32-bit host; the PowerShell 7.4 runtime guard; HTTPS-only and allow-listed-host redirects; refusal without a checksum; hash mismatch; traversal-safe extraction; paths with spaces and Unicode; manifest/key requirements; no app state written |
+| `Bootstrap.Tests.ps1` | 39 | 0 | the installer launcher executed as text (no `$PSScriptRoot`, no `$PSCommandPath`, no `exit()`, and the functions it defines removed again); the session surviving a failed run with `$LASTEXITCODE` at 1; exact platform-asset selection, ambiguity refusal and a declared platform that disagrees; the canonical platform-to-worker-path table; OS-architecture mapping including ARM64 and the refusal of a 32-bit host; the 5.1 runtime floor and the refusal of anything older; HTTPS-only and allow-listed-host redirects on every hop, including the real GitHub asset host and the refusal of a cross-host or `http://` hop; checksum-text parsing; refusal without a checksum; hash mismatch; traversal-safe extraction; paths with spaces and Unicode; manifest validation (schema, platform, entry point, worker protocol, canonical worker path, per-file size and hash); the no-bypass staging marker and cache rule; the launch step passing no arguments and propagating the exit code; no app state written; runtime policy (5.1 accepted, 4.0 refused, 7.4-<7.7 as the handoff target); probe-not-filename discovery with preview/untested rejection; PATH-first selection; handoff loop prevention; winget absent/consent/decline/failure with re-discovery; argument quoting and option/cwd/env preservation; classified errors. Three further tests are the opt-in live run (`WT_BOOTSTRAP_LIVE_TEST=1`, skipped by default) |
+| `Compatibility.Tests.ps1` | 19 | 0 | the runtime layer: profile and tier, the tested range and the capability table with reasons; BOM-less UTF-8 read/write and append; cross-runtime JSON escaping (`\uXXXX`, surrogate pairs, escaped backslashes) and the `-AsHashtable` shape; the handoff command; the module manifest and entry-point floor; the UTF-8 BOM policy over every source file; EN/VI runtime strings; and bootstrap/module discovery classification parity over fake runtimes (stable, old, future, preview, garbage) |
+| `ReleasePackage.Tests.ps1` | 12 | 0 | a real generated archive for the host platform taken through the bootstrap's own code: checksum agreement between `checksums.txt`, the release manifest and the bytes; safe extraction; internal manifest present, complete and free of archive hashes; every declared file hash and size; the executable bit on the worker; manifest validation; worker-path resolution and the real worker handshake from the staged client; and refusal of a byte-flipped archive, a same-length replaced worker, a manifest whose protocol/platform/worker path disagree, and a missing worker |
 | `CapabilityLoss.Tests.ps1` | 11 | 0 | the per-definition capability-loss disclosure: parsing and load-time validation (catalog and PowerShell definitions), attachment to the definition, aggregation across a selection by stable capability id, and the refusal of malformed declarations - read-only throughout |
 | `Catalog.Tests.ps1` | 46 | 0 | declarative documents (schema, duplicate property, operation kinds, hive prefixes, size limit, namespace rules, detection maps); the derived privilege/risk floor; no side effects from validating; the five `builtin.json` definitions; the definition view and its filters; planning (order, satisfied prerequisites, unreadable prerequisites, cycles, conflicts); migrations (rename, retirement, broken registry, old ids in the journal); packs (hash-stable storage, `-WhatIf`, re-import refusal, enable/disable, and a change restoring after its pack was removed) |
 | `Devices.Tests.ps1` | 5 | 0 | the read-only device/driver inventory over a doubled CIM query: states, hardware ids, correlation confidence, the Driver Store split, and an unavailable-but-not-empty report off Windows |
@@ -96,7 +98,12 @@ The counts below are the ones Pester reports per file; the same command is phase
 | `MultiHost.Tests.ps1` | 10 | 0 | fleet targets and conditions, incident timelines and evidence kinds, read-only playbooks, support-bundle preview/export with redaction and traversal-safe import, and versioned monitoring configuration |
 | `PrivacyPowerTools.Tests.ps1` | 6 | 0 | the privacy summary/activity report shapes, power settings, SRUM history and the Explorer copy-path tweak |
 | `SetupPlans.Tests.ps1` | 10 | 0 | checkpointed setup plans: data-only import, identity-bound resume registrations, refusal on tampering, a failed step stopping the plan, no automatic retry of uncertain steps and bounded reboot counts |
-| **Total** | **471** | **0** | |
+| **Total** | **529** | **0** | 526 passed, 3 skipped (the opt-in live GitHub tests) |
+
+`tools/Invoke-Validation.ps1` phase 5 on this tree reported `Tests passed: 491 | failed: 0 |
+skipped: 3` and ended with `ALL EXECUTED CHECKS PASSED`. The three skipped tests are the live
+GitHub checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access; they were run separately
+and are recorded in section 12.
 
 Destructive operations are mocked: the registry, service, scheduled-task, firewall, DNS,
 Appx and Defender seams are replaced by in-memory doubles, so no real system state is
@@ -306,23 +313,204 @@ process exactly as a user does.
 ## 11. Release packaging (executed)
 
 ```bash
-pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.0 -OutDir /tmp/wt-dist
+pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.0 -OutDir ./dist
 ```
 
 ```
-Packaged WindowsTweaker-win-x64-v1.0.0.zip (62a8e1bb...)
-Packaged WindowsTweaker-win-arm64-v1.0.0.zip (42338731...)
-Packaged WindowsTweaker-linux-x64-v1.0.0.zip (ab3d1116...)
-Packaged WindowsTweaker-linux-arm64-v1.0.0.zip (e40eb972...)
-Release package set written to /tmp/wt-dist
+Files parsed : 146
+Skipped dirs : reference
+Parse errors : 0
+Building worker for win-x64 (windows/amd64)
+Building worker for win-arm64 (windows/arm64)
+Building worker for linux-x64 (linux/amd64)
+Building worker for linux-arm64 (linux/arm64)
+Packaged WindowsTweaker-win-x64-v1.0.0.zip (eb8256c21cfb114e0147e0c97feb9d902d31638a3e8c93c8663f7d584a19616a, 6164819 bytes)
+Packaged WindowsTweaker-win-arm64-v1.0.0.zip (ed325f060f41a34cfc3640409e5e6ef2beb301fba8221ae4782937a01341b7e3, 5641247 bytes)
+Packaged WindowsTweaker-linux-x64-v1.0.0.zip (786e7a69eb991223830177ba7edcd8aed8a801d7e5428a3b38ed79a49f44ffdf, 6081462 bytes)
+Packaged WindowsTweaker-linux-arm64-v1.0.0.zip (b287f67bbdbca2345034ea7c9ac395d0bdebffe5137b6e754af14bf1a2dd07f6, 5608225 bytes)
+Validated WindowsTweaker-win-x64-v1.0.0.zip: checksum, safe extraction, manifest, 146 file hashes, worker path
+Validated WindowsTweaker-win-arm64-v1.0.0.zip: checksum, safe extraction, manifest, 146 file hashes, worker path
+  worker handshake: 0.1.0, protocol 1, 3 capabilities
+Validated WindowsTweaker-linux-x64-v1.0.0.zip: checksum, safe extraction, manifest, 146 file hashes, worker path
+Validated WindowsTweaker-linux-arm64-v1.0.0.zip: checksum, safe extraction, manifest, 146 file hashes, worker path
+Release package set written to /home/dariel/WindowsTweaker/dist
 ```
 
-Each archive holds 143 entries: the entry point, the module tree, the compatible worker
-binary, `THIRD-PARTY-NOTICES.md`, and the verbatim licence texts under `licenses/` (the
-worker statically links the modules listed there). `manifest.json` and `checksums.txt` are
-written next to the archives. The workflow refuses to package a tree that does not parse,
-verifies the module version against `-Version`, and re-opens every archive to assert the
-required entries and traversal safety. Publishing is not part of it.
+The exact assets of that run (independent `sha256sum` and `unzip -tq` agree with every line):
+
+| Asset | Bytes | SHA-256 |
+|---|---|---|
+| `WindowsTweaker-win-x64-v1.0.0.zip` | 6164819 | `eb8256c21cfb114e0147e0c97feb9d902d31638a3e8c93c8663f7d584a19616a` |
+| `WindowsTweaker-win-arm64-v1.0.0.zip` | 5641247 | `ed325f060f41a34cfc3640409e5e6ef2beb301fba8221ae4782937a01341b7e3` |
+| `WindowsTweaker-linux-x64-v1.0.0.zip` | 6081462 | `786e7a69eb991223830177ba7edcd8aed8a801d7e5428a3b38ed79a49f44ffdf` |
+| `WindowsTweaker-linux-arm64-v1.0.0.zip` | 5608225 | `b287f67bbdbca2345034ea7c9ac395d0bdebffe5137b6e754af14bf1a2dd07f6` |
+
+`checksums.txt` (408 bytes) carries these four lines; the external `manifest.json` (2461 bytes)
+carries the same sizes and hashes with the download URLs. A later run produces different bytes
+because the manifest records `createdUtc`; the published release is whatever one run produced, and
+the workflow packages once and uploads what it validated.
+
+Each archive holds 147 entries: the entry point, the module tree, the compatible worker binary
+(`worker/bin/<goos>-<goarch>/`, stored with the executable bit), `THIRD-PARTY-NOTICES.md`, the
+verbatim licence texts under `licenses/` (the worker statically links the modules listed there),
+and the internal package `manifest.json` - written before the archive was closed, carrying every
+file's size and SHA-256 and no archive hash of its own. `checksums.txt` and the external release
+`manifest.json` are written next to the archives and are inside neither.
+
+The tool refuses to package a tree that does not parse, refuses a `-Version` that is not the
+module's `ModuleVersion`, builds the worker for every selected platform before packaging, and then
+validates each archive it wrote with the bootstrap's own code: `Test-WtBootstrapHash` against the
+`checksums.txt` line, `Expand-WtBootstrapArchive`, and `Test-WtBootstrapRelease` (manifest schema,
+platform identity, entry point, worker protocol, canonical worker path, every declared file's size
+and SHA-256). On the host platform it additionally imports the staged client and runs the worker
+handshake - the line above, `0.1.0, protocol 1, 3 capabilities`. Publishing is not part of the
+tool.
+
+`tests/ReleasePackage.Tests.ps1` repeats this on a generated archive and then tampers with it:
+same-length replacement of the worker binary, a manifest whose protocol/platform/worker path
+disagree, a removed worker, and a byte-flipped archive. Every case is refused.
+
+## 12. Bootstrap transport against real GitHub (executed)
+
+```bash
+WT_BOOTSTRAP_LIVE_TEST=1 pwsh -NoProfile -Command "Invoke-Pester -Path tests/Bootstrap.Tests.ps1 -Output Detailed"
+```
+
+```
+[+] downloads a real release asset through the github.com -> release-assets redirect 734ms
+[+] reads real release metadata from the GitHub API 521ms
+[+] refuses the project metadata URL while no release is published 448ms
+```
+
+What the redirect check establishes, measured with `curl -sSI` against a public release before the
+test was written:
+
+| Request | Response |
+|---|---|
+| `github.com/cli/cli/releases/download/v2.0.0/gh_2.0.0_checksums.txt` | `302` to `release-assets.githubusercontent.com/...` |
+| that URL | `200`, `content-length: 1495` |
+
+`release-assets.githubusercontent.com` is therefore in `Get-WtBootstrapAllowedHosts`; without it
+every real asset download was refused as a disallowed host. The two historical asset hosts are
+kept as well. The bootstrap follows redirects manually with `HttpClient` and
+`AllowAutoRedirect = $false`, re-validating scheme and host on every hop, so a `302` to another
+host or a downgrade to `http://` is refused (asserted in `tests/Bootstrap.Tests.ps1`).
+
+The third test above is the honest record of the current public state: the project's own
+`releases/latest` answers `404`, and the bootstrap reports it instead of resolving anything.
+
+### Bootstrap staging, cache and launch (executed)
+
+```bash
+# the generated linux-x64 archive, through the bootstrap's own functions on this host
+.
+bootstrap/bootstrap.ps1            # WT_BOOTSTRAP_TEST_ONLY=1
+$Bytes = [System.IO.File]::ReadAllBytes("dist/WindowsTweaker-$Key-v1.0.0.zip")
+Test-WtBootstrapHash -Bytes $Bytes -ExpectedHash $Checksums[$Asset.name]   # verified
+Expand-WtBootstrapArchive -Bytes $Bytes -Staging $State/release-v1.0.0
+Test-WtBootstrapRelease -Staging $State/release-v1.0.0 -PlatformKey $Key  # platform, worker, 143 hashes
+Set-WtBootstrapStagingComplete ...
+Find-WtBootstrapCache -State $State -PlatformKey $Key                     # -> tag v1.0.0
+Invoke-WtBootstrapLaunch -EntryPoint <stub>                                # -> exit code 0, no arguments
+```
+
+```
+selected asset      : WindowsTweaker-linux-x64-v1.0.0.zip [linux-x64] size=6081462
+checksum            : verified (786e7a69eb991223830177ba7edcd8aed8a801d7e5428a3b38ed79a49f44ffdf)
+staged + validated  : /tmp/wt-e2e/state/release-v1.0.0 (platform linux-x64, worker worker/bin/linux-amd64/wt-worker)
+cache lookup        : tag=v1.0.0 staging=/tmp/wt-e2e/state/release-v1.0.0
+STUB-ENTRY args=0
+launch exit code    : 0
+```
+
+And the entry block itself, executed as text through `iex` in a child `pwsh` (the `irm | iex`
+path), against the real GitHub API:
+
+```
+=== A. no release published yet: metadata 404 must fail loudly, nothing launched ===
+Write-Error: Could not resolve release metadata: HTTP 404 for https://api.github.com/repos/88kbleirad/WindowsTweaker/releases/latest.
+LASTEXITCODE=1
+SESSION-ALIVE
+
+=== B. validated cache + unreachable metadata: explicit offline launch ===
+STUB-ENTRY args=0
+LASTEXITCODE=0
+SESSION-ALIVE
+```
+
+Case A is what a user running the documented one-liner gets today: a named failure and an intact
+session. Case B shows the offline branch launching only the staged, validated release, with the
+entry point started bare (no `-WhatIf`, no `-Id`, no preset): opening the interface applies no
+tweak. The transport hop in this rehearsal was replaced by a local read of the generated archive;
+the HTTP transport is covered by section 12's live redirect test, and the combination has **not**
+been run end to end, because that needs a published release.
+
+The launch step itself was also driven inside a real pty (`python3` + `pty.openpty()`, the same
+harness section 6 uses), with an entry point that reports what it inherited and then reads one key:
+
+```powershell
+'ENTRY-INPUT-REDIRECTED=' + [Console]::IsInputRedirected
+'ENTRY-ARG-COUNT=' + $Args.Count
+'ENTRY-KEY=' + [Console]::ReadKey($true).KeyChar
+```
+
+```
+ENTRY-INPUT-REDIRECTED=False
+ENTRY-ARG-COUNT=0
+ENTRY-KEY=q
+```
+
+The launched interface therefore inherits the caller's terminal standard input (not redirected, so
+the child did not get a pipe) and can read keys, while receiving no arguments at all.
+
+## 13. Multi-runtime compatibility (executed statically; 5.1 host not available)
+
+```bash
+pwsh -NoProfile -File tools/Test-Compatibility.ps1
+```
+
+```
+5.1 syntax (src, bootstrap, tools, tests)      0 finding(s)
+5.1 commands/parameters and .NET types         0 finding(s)
+Non-ASCII files with a UTF-8 BOM               55 of 55
+Entry point requirement                        #Requires -Version 5.1
+Module manifest floor                          PowerShellVersion 5.1, editions Desktop/Core
+Bootstrap runtime policy                       runtime profile present
+
+COMPATIBILITY GATE PASSED
+```
+
+The gate is phase 5 of `tools/Invoke-Validation.ps1`. It runs PSScriptAnalyzer's own Windows
+PowerShell 5.1 compatibility rules (`PSUseCompatibleSyntax` with `TargetVersions 5.1`,
+`PSUseCompatibleCommands` and `PSUseCompatibleTypes` against the published profile
+`win-48_x64_10.0.17763.0_5.1.17763.316_x64_4.0.30319.42000_framework`) over every shipped script,
+and separately asserts that each source file containing non-ASCII text carries a UTF-8 BOM
+(5.1 decodes a BOM-less file with the ANSI code page). Development tooling and the test suite are
+gated for syntax only, because they run on the validated PowerShell 7 runtime.
+
+Before the port, the same gate reported 14 command/parameter findings (twelve
+`ConvertFrom-Json -Depth`, one `-AsHashtable`, one parameter-binding defect) and 18 .NET type
+findings (`System.Text.Json` x13, `RuntimeInformation.OSArchitecture`/`OSDescription` x4,
+`File.SetUnixFileMode`); the audit table in [COMPATIBILITY.md](COMPATIBILITY.md) lists every
+finding and its resolution, including the differences the rules cannot see (BOM handling, console
+APIs, process plumbing).
+
+Executed alongside it:
+
+| Area | Evidence |
+|---|---|
+| Compatibility layer unit tests | `tests/Compatibility.Tests.ps1`: profile and tier, capability list with reasons, BOM-less UTF-8 read/write, JSON escaping normalisation (`\uXXXX`, surrogate pairs, escaped backslashes), `-AsHashtable` shape, handoff-command quoting, manifest/entry-point floor, BOM policy over the tree, EN/VI runtime strings |
+| Bootstrap runtime policy | `tests/Bootstrap.Tests.ps1`: 5.1 accepted, 4.0 refused, tested range 7.4-<7.7 only, preview never selected, probe-not-filename discovery, PATH-first selection, loop prevention (handoff marker, depth, native mode), `pwsh`-mode refusal with manual instructions, winget-absent/consent/decline/failure paths, re-discovery after install, argument quoting with spaces/quotes/trailing backslashes, working directory and environment inheritance, error classification |
+| Catalogue strictness without `System.Text.Json` | `tests/Catalog.Tests.ps1`, `tests/Insight.Tests.ps1`, `tests/Loading.Tests.ps1`, `tools/Test-Catalog.ps1` |
+| Worker protocol on the 5.1 path | `tests/Worker.Tests.ps1` (handshake, round trip, Vietnamese path, garbage line, cooperative shutdown) with the client's own UTF-8 `StreamWriter` |
+| Terminal interface regression | `tests/Tui.Tests.ps1`, `tests/InsightTui.Tests.ps1` after the VT/encoding changes |
+| Release archive still valid after the port | Section 11: four archives, 146 file hashes each, worker handshake |
+
+**Executed on PowerShell 7.6.9 (Linux) only.** Nothing in this section was executed on a Windows
+PowerShell 5.1 host, and the bootstrap was not run against a published release. The rows that
+therefore remain unproven are listed in [COMPATIBILITY.md](COMPATIBILITY.md) ("What remains
+unverified"): 5.1 console/VT/code-page behaviour, 7.4/7.5, Windows-only providers, the WPF window,
+`winget` itself, and the end-to-end public one-liner.
 
 ## Not executed here (Windows-only integration checks)
 

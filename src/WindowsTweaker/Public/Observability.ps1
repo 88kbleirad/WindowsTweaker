@@ -97,8 +97,8 @@ function Export-WtDashboard
 
     if ($PSCmdlet.ShouldProcess("$Id -> $Path", 'export dashboard'))
     {
-        $Json = $Dashboard | ConvertTo-Json -Depth 12
-        Set-Content -LiteralPath $Path -Value $Json -Encoding utf8NoBOM
+        $Json = ConvertTo-WtJson -InputObject $Dashboard -Depth 12
+        Write-WtTextFile -Path $Path -Value $Json
         return $Path
     }
     return ''
@@ -183,7 +183,7 @@ function Measure-WtMonitorCycle
         Conditions = @{
             OS = [string](Get-WtPlatformDescription)
             PowerShell = $PSVersionTable.PSVersion.ToString()
-            IsWindows = [bool]$IsWindows
+            IsWindows = [bool](Get-WtRuntimeProfile).IsWindows
         }
     }
 }

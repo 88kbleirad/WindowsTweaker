@@ -1,4 +1,4 @@
-# WindowsTweaker - Personalization category tweaks (batch G9).
+﻿# WindowsTweaker - Personalization category tweaks (batch G9).
 #
 # Replaces the legacy modules modules/WindowsColorMode.ps1, modules/AppColorMode.ps1,
 # modules/AeroShaking.ps1, modules/StickyShift.ps1, modules/InputMethod.ps1,

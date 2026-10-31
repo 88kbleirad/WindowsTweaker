@@ -1,4 +1,4 @@
-@{
+﻿@{
     RootModule           = 'WindowsTweaker.psm1'
     ModuleVersion        = '1.0.0'
     GUID                 = 'a491059b-22d0-45ce-b952-302cce0b5a00'
@@ -6,9 +6,13 @@
     CompanyName          = 'WindowsTweaker'
     Copyright            = '(c) WindowsTweaker contributors. Portions derived from Sophia Script for Windows (MIT, (c) 2023 farag2) - see THIRD-PARTY-NOTICES.md.'
     Description          = 'Reviewable, reversible Windows customization: metadata-driven tweaks, dry-run support, exact state capture and rollback, a keyboard-driven terminal interface, a scriptable CLI and an optional WPF front end.'
-    PowerShellVersion    = '7.4'
-    CompatiblePSEditions = @('Core')
+    # Correctness, not decoration: this value is what lets Windows PowerShell 5.1 import
+    # the module at all. Every runtime difference is handled in Private/Compatibility.ps1,
+    # and features that need a newer runtime are capability-gated (docs/COMPATIBILITY.md).
+    PowerShellVersion    = '5.1'
+    CompatiblePSEditions = @('Desktop', 'Core')
     FunctionsToExport    = @(
+        'Get-WtRuntimeInfo'
         'Get-WtEnvironment'
         'Get-WtTweak'
         'Get-WtCategory'

@@ -1,4 +1,4 @@
-# WindowsTweaker - en strings for the journaled quarantine.
+﻿# WindowsTweaker - en strings for the journaled quarantine.
 # Note file read with Import-PowerShellDataFile, which never executes code.
 @{
     'Quar.Title'             = 'Quarantine'

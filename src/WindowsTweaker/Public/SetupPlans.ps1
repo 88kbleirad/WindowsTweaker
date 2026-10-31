@@ -21,7 +21,7 @@ function Get-WtSetupPlan
     {
         try
         {
-            $Plan = Get-Content -LiteralPath $File.FullName -Raw | ConvertFrom-Json -Depth 16
+            $Plan = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $File.FullName) -Depth 16
             $Plan | Add-Member -NotePropertyName Path -NotePropertyValue $File.FullName -Force
             $Plans.Add($Plan)
         }
@@ -92,8 +92,8 @@ function Export-WtSetupPlan
         throw "The export path already exists: $Path"
     }
 
-    $Json = $Plan | ConvertTo-Json -Depth 16
-    Set-Content -LiteralPath $Path -Value $Json -Encoding utf8NoBOM
+    $Json = ConvertTo-WtJson -InputObject $Plan -Depth 16
+    Write-WtTextFile -Path $Path -Value $Json
     return $Path
 }
 
@@ -115,7 +115,7 @@ function Import-WtSetupPlan
         [Parameter(Mandatory = $false)][switch]$Force
     )
 
-    $Document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 16
+    $Document = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 16
     $Validation = Test-WtSetupPlanDocument -Document $Document
     if (-not $Validation.Valid)
     {

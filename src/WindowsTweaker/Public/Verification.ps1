@@ -287,11 +287,11 @@ function Export-WtHistory
 
         if ($Rows.Count -eq 0)
         {
-            Set-Content -LiteralPath $Path -Value 'operationId,sessionId,parentOperationId,sequence,origin,stage,tweakId,state,outcome,dryRun,timestamp,targets,captured,verified,mismatched,compensated,rolledBack' -Encoding utf8NoBOM
+            Write-WtTextFile -Path $Path -Value 'operationId,sessionId,parentOperationId,sequence,origin,stage,tweakId,state,outcome,dryRun,timestamp,targets,captured,verified,mismatched,compensated,rolledBack'
             return $Path
         }
 
-        ($Rows | ConvertTo-Csv -NoTypeInformation) | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+        Write-WtTextFile -Path $Path -Value (($Rows | ConvertTo-Csv -NoTypeInformation) -join [System.Environment]::NewLine)
         return $Path
     }
 
@@ -303,7 +303,7 @@ function Export-WtHistory
         operations = $Operations
     }
 
-    ($Payload | ConvertTo-Json -Depth 32) | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+    Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Payload -Depth 32)
     return $Path
 }
 

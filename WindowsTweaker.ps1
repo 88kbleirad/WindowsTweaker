@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     WindowsTweaker entry point: reviewable, reversible Windows customization.
 
@@ -11,8 +11,10 @@
     Starting it without arguments opens the keyboard-driven terminal interface. Every
     other switch is non-interactive and prints machine-readable status.
 
-    Supported: Windows 10 22H2 / Windows 11 with PowerShell 7.4 or newer.
-    Windows PowerShell 5.1 is NOT supported.
+    Supported hosts: Windows 10 22H2 / Windows 11. The interface starts on the Windows
+    PowerShell 5.1 that ships with Windows and on PowerShell 7.4-7.6 (the validated stable
+    range); 5.1 is a reduced-but-native runtime, and -RuntimeReport shows exactly which
+    capabilities it has. Anything older than 5.1 is refused. See docs/COMPATIBILITY.md.
 
 .PARAMETER List
     List the catalog with the current state of every tweak (read-only).
@@ -252,13 +254,20 @@
 .EXAMPLE
     pwsh -File WindowsTweaker.ps1 -Recommend Privacy -RecommendManual
 
+.PARAMETER RuntimeReport
+    Print the runtime profile, every capability with its reason, and the command that runs
+    this same entry point on the validated runtime. Read-only, identical on both runtimes.
+
 .EXAMPLE
     pwsh -File WindowsTweaker.ps1 -Choices
 
 .EXAMPLE
     pwsh -File WindowsTweaker.ps1 -CatalogInspect Privacy.WindowsTips -CatalogDimensions
+
+.EXAMPLE
+    pwsh -File WindowsTweaker.ps1 -RuntimeReport
 #>
-#Requires -Version 7.4
+#Requires -Version 5.1
 [CmdletBinding(SupportsShouldProcess)]
 param
 (
@@ -308,8 +317,11 @@ param
     [Parameter(Mandatory = $false)][switch]$RecommendPreferences,
     [Parameter(Mandatory = $false)][string[]]$RecommendFinding,
     [Parameter(Mandatory = $false)][switch]$Choices,
-    [Parameter(Mandatory = $false)][switch]$CatalogDimensions
+    [Parameter(Mandatory = $false)][switch]$CatalogDimensions,
+    # --- runtime compatibility ---
+    [Parameter(Mandatory = $false)][switch]$RuntimeReport
 )
+
 
 Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
@@ -379,11 +391,24 @@ function Write-WtEntryPointUsageError
     Exit-WtEntryPoint -Code 2
 }
 
-$Required = (Get-WtEnvironment).RequiredPowerShell
-if ($PSVersionTable.PSVersion -lt $Required)
+# One runtime policy, shared with the bootstrap and the module. Windows PowerShell 5.1 is a
+# supported starting point, not an error: it runs the same engine through the compatibility
+# layer, and this notice names the validated runtime and the exact command that gets there.
+# Get-WtRuntimeInfo is the exported, read-only view of the profile and the capabilities; the
+# module's helpers themselves stay private.
+$RuntimeInfo = Get-WtRuntimeInfo -EntryPoint $PSCommandPath
+$RuntimeProfile = $RuntimeInfo.Profile
+if ($RuntimeProfile.Version -lt $RuntimeProfile.MinimumVersion)
 {
-    Write-Error -Message (Get-WtString -Key 'Error.PowerShellVersion' -Arguments @($Required, $PSVersionTable.PSVersion))
+    foreach ($Line in @($RuntimeInfo.Notice -split "`r?`n"))
+    {
+        if ($Line) { $Host.UI.WriteErrorLine($Line) }
+    }
     Exit-WtEntryPoint -Code 2
+}
+if ($RuntimeInfo.Notice)
+{
+    Write-Host $RuntimeInfo.Notice
 }
 
 # The whole invocation is a dry run when -WhatIf is used. Under
@@ -1135,6 +1160,14 @@ switch ($true)
     { $Gui }
     {
         Start-WtGui -Language (Get-WtLanguage)
+        Exit-WtEntryPoint -Code 0
+    }
+    { $RuntimeReport }
+    {
+        # Read-only: the profile, every capability and the command that runs on the
+        # validated runtime. The same text on both runtimes, so it can be pasted into a
+        # report from a Windows PowerShell 5.1 session.
+        Write-Host $RuntimeInfo.Report
         Exit-WtEntryPoint -Code 0
     }
     default

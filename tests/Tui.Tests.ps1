@@ -1,4 +1,4 @@
-# WindowsTweaker - terminal interface (TUI) tests.
+﻿# WindowsTweaker - terminal interface (TUI) tests.
 #
 # The interface is driven head-lessly: its state carries an injectable key source and an
 # injectable terminal size, so keyboard focus, filtering, selection, dialogs, resize

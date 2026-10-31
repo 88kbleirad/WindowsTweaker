@@ -72,7 +72,20 @@ else
     $Failures.Add("PSScriptAnalyzer reported $($AnalyzerFindings.Count) finding(s)")
 }
 
-Write-Phase '5. Pester test suite'
+Write-Phase '5. Windows PowerShell 5.1 compatibility gate'
+
+# Static proof of the two properties this project claims for 5.1: the shipped code only uses
+# APIs that exist there (PSScriptAnalyzer's 5.1 syntax/command/type rules), and every
+# non-ASCII source file carries the UTF-8 BOM that 5.1 needs to decode it. Runtime behaviour
+# on a real 5.1 host is not provable here; docs/COMPATIBILITY.md lists those rows.
+$CompatibilityOutput = & (Join-Path $PSScriptRoot 'Test-Compatibility.ps1') 2>&1
+$CompatibilityOutput | ForEach-Object { Write-Host $_ }
+if ($LASTEXITCODE -ne 0)
+{
+    $Failures.Add('The Windows PowerShell 5.1 compatibility gate failed')
+}
+
+Write-Phase '6. Pester test suite'
 
 $Pester = Invoke-Pester -Path (Join-Path $Root 'tests') -Output Detailed -PassThru
 Write-Host ("Tests passed: {0} | failed: {1} | skipped: {2}" -f $Pester.PassedCount, $Pester.FailedCount, $Pester.SkippedCount)
@@ -81,7 +94,7 @@ if ($Pester.FailedCount -gt 0)
     $Failures.Add("Pester reported $($Pester.FailedCount) failing test(s)")
 }
 
-Write-Phase '6. Dry-run proof (no state written)'
+Write-Phase '7. Dry-run proof (no state written)'
 
 $Sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ("wt-validate-{0}" -f ([guid]::NewGuid().ToString('n')))
 $env:WT_DATA_ROOT = $Sandbox

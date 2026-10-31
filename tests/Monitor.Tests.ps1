@@ -1,4 +1,4 @@
-# WindowsTweaker - monitoring workspace tests (metric model, history, alerts, dashboards,
+﻿# WindowsTweaker - monitoring workspace tests (metric model, history, alerts, dashboards,
 # charts, collector lifecycle).
 
 BeforeAll {

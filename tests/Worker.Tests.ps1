@@ -1,4 +1,4 @@
-# WindowsTweaker - optional background worker integration tests.
+﻿# WindowsTweaker - optional background worker integration tests.
 #
 # These drive the real protocol: the PowerShell adapter (client) against the built worker,
 # plus canned "fake worker" scripts for the failure modes that a working worker cannot

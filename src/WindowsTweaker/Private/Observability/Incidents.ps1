@@ -1,4 +1,4 @@
-# WindowsTweaker - incident workspace.
+﻿# WindowsTweaker - incident workspace.
 #
 # An incident is built around one alert (or a user-selected time interval). It collects
 # evidence from local + remote sources into a single timeline:
@@ -185,7 +185,7 @@ function Save-WtIncident {
         notes = @($Incident.Notes)
         events = @($Incident.Events)
     }
-    $Payload | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
+    Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Payload -Depth 10)
     return $Path
 }
 
@@ -194,7 +194,7 @@ function Read-WtIncident {
     [CmdletBinding()]
     param ([Parameter(Mandatory = $true)][string]$Path)
 
-    $Doc = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 10
+    $Doc = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 10
     if ([int]$Doc.schemaVersion -ne $Script:WtIncidentSchemaVersion) {
         throw "Unsupported incident schema version: $($Doc.schemaVersion)"
     }

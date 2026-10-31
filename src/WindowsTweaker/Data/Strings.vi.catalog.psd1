@@ -1,4 +1,4 @@
-# WindowsTweaker - declarative catalog and pack strings (vi).
+﻿# WindowsTweaker - declarative catalog and pack strings (vi).
 #
 # Kept separate from Strings.vi.psd1 because Import-PowerShellDataFile refuses a
 # hashtable with more than 500 entries: the table is one hashtable literal, so its

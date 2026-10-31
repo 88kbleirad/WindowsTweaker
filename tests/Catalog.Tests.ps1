@@ -1,4 +1,4 @@
-# WindowsTweaker - declarative catalog, packs, planning and migration tests.
+﻿# WindowsTweaker - declarative catalog, packs, planning and migration tests.
 #
 # Everything here runs on any platform: the documents are files in a temporary directory, the
 # registry is an in-memory double, and the only Windows-facing claim any of these tests makes is
@@ -378,8 +378,7 @@ Describe 'Catalog document validation' {
             $Body = & $PackBody -Id 'WtTest.Register' -TweakId 'WtTest.Register.Item'
             $Path = & $NewDoc -Name 'register.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
             $Import = Import-WtCatalogDocument -Document $Document -Source 'Pack' -PackId 'WtTest.Register'
             @($Import.Errors).Count | Should -Be 0
@@ -401,8 +400,7 @@ Describe 'Catalog document validation' {
             $Body = & $PackBody -Id 'WtTest.Shadow' -TweakId 'WtTest.Shadow.Privacy.DismissMSAccount'
             $Path = & $NewDoc -Name 'shadow.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
             $Import = Import-WtCatalogDocument -Document $Document -Source 'Pack' -PackId 'WtTest.Shadow'
             @($Import.Errors).Count | Should -Be 0
@@ -717,8 +715,7 @@ Describe 'Definition view and filters' {
             $Body = (& $PackBody -Id 'WtTest.Support' -TweakId 'WtTest.Support.Item').Replace('"structural": "Structural"', '"structural": "Structural", "providerTests": "WindowsValidated", "windowsIntegration": { "result": "WindowsValidated", "build": "26100" }')
             $Path = & $NewDoc -Name 'support.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             [void](Import-WtCatalogDocument -Document $Document -Source 'Pack' -PackId 'WtTest.Support')
 
             # The pack claims Windows validation; the engine records the claim and refuses to
@@ -732,8 +729,7 @@ Describe 'Definition view and filters' {
             $Plain = & $PackBody -Id 'WtTest.Plain' -TweakId 'WtTest.Plain.Item'
             $PlainPath = & $NewDoc -Name 'plain.json' -Content $Plain
             $PlainRead = Read-WtCatalogJson -Path $PlainPath
-            $PlainDocument = ConvertFrom-WtCatalogElement -Element $PlainRead.Document.RootElement
-            $PlainRead.Document.Dispose()
+            $PlainDocument = ConvertFrom-WtCatalogNode -Node $PlainRead.Document.Root
             [void](Import-WtCatalogDocument -Document $PlainDocument -Source 'Pack' -PackId 'WtTest.Plain')
             Get-WtSupportStatusInternal -Tweak (Get-WtTweakInternal -Id 'WtTest.Plain.Item') | Should -Be 'Unverified'
         }
@@ -771,8 +767,7 @@ Describe 'Dependency planner' {
             $Body = & $PackBody -Id 'WtTest.Plan' -TweakId 'WtTest.Plan.Dependent' -Extra ', "requires": ["Test.PlanBase"]'
             $Path = & $NewDoc -Name 'plan.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             [void](Import-WtCatalogDocument -Document $Document -Source 'Pack' -PackId 'WtTest.Plan')
 
             $Plan = Get-WtDependencyPlanInternal -Ids @('WtTest.Plan.Dependent')
@@ -790,8 +785,7 @@ Describe 'Dependency planner' {
             $Body = & $PackBody -Id 'WtTest.Plan2' -TweakId 'WtTest.Plan2.Dependent' -Extra ', "requires": ["Test.PlanBase"]'
             $Path = & $NewDoc -Name 'plan2.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             [void](Import-WtCatalogDocument -Document $Document -Source 'Pack' -PackId 'WtTest.Plan2')
 
             $Plan = Get-WtDependencyPlanInternal -Ids @('WtTest.Plan2.Dependent')
@@ -810,8 +804,7 @@ Describe 'Dependency planner' {
             $Body = & $PackBody -Id 'WtTest.Plan3' -TweakId 'WtTest.Plan3.Dependent' -Extra ', "requires": ["Test.PlanBase"]'
             $Path = & $NewDoc -Name 'plan3.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             [void](Import-WtCatalogDocument -Document $Document -Source 'Pack' -PackId 'WtTest.Plan3')
 
             $Plan = Get-WtDependencyPlanInternal -Ids @('WtTest.Plan3.Dependent')
@@ -829,15 +822,13 @@ Describe 'Dependency planner' {
             $Body = & $PackBody -Id 'WtTest.Plan4' -TweakId 'WtTest.Plan4.A' -Extra ', "requires": ["WtTest.Plan4.B"], "conflictsWith": ["Test.PlanBase"]'
             $Path = & $NewDoc -Name 'plan4a.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $DocumentA = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $DocumentA = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             [void](Import-WtCatalogDocument -Document $DocumentA -Source 'Pack' -PackId 'WtTest.Plan4')
 
             $Body = & $PackBody -Id 'WtTest.Plan4' -TweakId 'WtTest.Plan4.B' -Extra ', "requires": ["WtTest.Plan4.A"]'
             $Path = & $NewDoc -Name 'plan4b.json' -Content $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $DocumentB = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $DocumentB = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             [void](Import-WtCatalogDocument -Document $DocumentB -Source 'Pack' -PackId 'WtTest.Plan4' -AllowExisting)
 
             $Plan = Get-WtDependencyPlanInternal -Ids @('WtTest.Plan4.A')

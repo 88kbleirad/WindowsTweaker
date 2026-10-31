@@ -1,6 +1,13 @@
-# WindowsTweaker - Vietnamese strings.
+﻿# WindowsTweaker - Vietnamese strings.
 # Keys must match Strings.en.psd1 exactly; a Pester test enforces parity.
 @{
+    # Runtime policy (Private/Compatibility.ps1, WindowsTweaker.ps1, bootstrap).
+    'Runtime.Notice.WindowsPowerShell' = 'Đang chạy trực tiếp trên Windows PowerShell {0}. Muốn đủ tính năng, hãy dùng PowerShell {1} - chạy: {2}'
+    'Runtime.Notice.Untested'   = 'PowerShell {0} nằm ngoài dải ổn định đã kiểm thử ({1}-{2}). Chương trình vẫn chạy, nhưng dự án chỉ xác nhận PowerShell {1}-{2}.'
+    'Runtime.Notice.Preview'    = 'PowerShell {0} là bản xem trước. Bản xem trước không bao giờ được tự động chọn; dải ổn định đã kiểm thử là {1}-{2}.'
+    'Runtime.Report.Title'      = 'Báo cáo môi trường chạy WindowsTweaker'
+    'Runtime.Report.Capability' = '{0} = {1} ({2})'
+
     'Common.Yes'                = 'Có'
     'Common.No'                 = 'Không'
     'Common.Cancel'             = 'Hủy'
@@ -39,7 +46,6 @@
     'Msg.RestoreVerificationFailed' = 'Xác minh thất bại với {0} đối tượng: giá trị khôi phục không khớp với trạng thái đã lưu.'
 
     'Error.WindowsOnly'         = 'WindowsTweaker chỉ chạy trên Windows. Nền tảng hiện tại: {0}.'
-    'Error.PowerShellVersion'   = 'Cần PowerShell {0} trở lên. Hiện tại: {1}.'
     'Error.AdminRequired'       = 'Cần quyền quản trị cho: {0}'
     'Error.CmdletMissing'       = 'Không tìm thấy lệnh bắt buộc: {0}'
     'Error.ModuleMissing'       = 'Không tìm thấy mô-đun bắt buộc: {0}'

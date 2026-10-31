@@ -1,4 +1,4 @@
-# WindowsTweaker - privacy profile metadata and activity views (all read-only).
+﻿# WindowsTweaker - privacy profile metadata and activity views (all read-only).
 #
 # The privacy profile is descriptive metadata about selected tweaks: whether the value is
 # a user preference or policy-shaped, whether Windows Settings remains editable for it,
@@ -38,7 +38,7 @@ function Get-WtPrivacyProfile
     {
         try
         {
-            $Document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 8
+            $Document = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 8
             $Entries = @($Document.entries)
         }
         catch

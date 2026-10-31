@@ -54,7 +54,7 @@ function ConvertTo-WtStoredMetricRow {
 
     $DimsJson = '{}'
     if ($Sample.dims -and $Sample.dims.Count -gt 0) {
-        $DimsJson = $Sample.dims | ConvertTo-Json -Compress
+        $DimsJson = ConvertTo-WtJson -InputObject $Sample.dims -Compress
     }
 
     return @{

@@ -301,7 +301,7 @@ function Start-WtGui
     [CmdletBinding()]
     param ([Parameter(Mandatory = $false)][object]$Language)
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         Write-Warning -Message (Get-WtString -Key 'Error.WindowsOnly' -Arguments @(Get-WtPlatformDescription))
         return

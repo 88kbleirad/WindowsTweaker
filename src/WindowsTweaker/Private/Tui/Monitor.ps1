@@ -1,4 +1,4 @@
-# WindowsTweaker - terminal monitoring workspace.
+﻿# WindowsTweaker - terminal monitoring workspace.
 #
 # A local, keyboard-driven observability mode: dashboards, time-series charts, time-range
 # and target filters, panel inspection, change annotations, and local alert evaluation.

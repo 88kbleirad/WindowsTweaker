@@ -1,4 +1,4 @@
-# WindowsTweaker - bounded, local diagnostics for the terminal interface.
+﻿# WindowsTweaker - bounded, local diagnostics for the terminal interface.
 #
 # The interface must be able to answer "which key was dispatched where, and what went
 # wrong" after a failure. This file holds that one facility: a bounded in-memory ring of
@@ -17,7 +17,7 @@
 #   * nothing is written to disk unless Export-WtDiagnostics is called explicitly.
 #
 # A record is a plain ordered hashtable of strings, numbers, booleans and $null values, so
-# it survives ConvertTo-Json without a conversion step and cannot smuggle an object graph
+# it survives ConvertTo-WtJson without a conversion step and cannot smuggle an object graph
 # (and with it the environment) into an export.
 
 $Script:WtDiagnosticLimit = 200
@@ -328,7 +328,7 @@ function Clear-WtDiagnosticRecord
 .DESCRIPTION
     The one place the diagnostics facility reads machine facts, and the whitelist is fixed:
     the module manifest's version from $Script:WtModuleRoot, the PowerShell version from
-    $PSVersionTable, the platform from $IsWindows/$IsLinux/$IsMacOS, and the OS
+    $PSVersionTable, the platform from the cached runtime profile, and the OS
     build/version/culture from the runtime. No environment variable is read or reported.
     Values that cannot be determined are empty strings rather than failures.
 .OUTPUTS
@@ -351,25 +351,26 @@ function Get-WtAppVersion
     }
 
     $OsVersion = [System.Environment]::OSVersion
+    $RuntimeProfile = Get-WtRuntimeProfile
 
     # A friendly platform name first; the raw .NET platform only as a fallback.
     $Platform = [string]$OsVersion.Platform
-    if ($IsWindows)
+    if ($RuntimeProfile.IsWindows)
     {
         $Platform = 'Windows'
     }
-    elseif ($IsMacOS)
+    elseif ($RuntimeProfile.IsMacOS)
     {
         $Platform = 'macOS'
     }
-    elseif ($IsLinux)
+    elseif ($RuntimeProfile.IsLinux)
     {
         $Platform = 'Linux'
     }
 
     # On Windows the OS build is the number tweaks are keyed on; elsewhere the kernel
     # version is the equivalent machine fact.
-    $OsBuild = if ($IsWindows) { [string]$OsVersion.Version.Build } else { [string]$OsVersion.Version }
+    $OsBuild = if ($RuntimeProfile.IsWindows) { [string]$OsVersion.Version.Build } else { [string]$OsVersion.Version }
 
     return @{
         ModuleVersion = $ModuleVersion
@@ -469,7 +470,7 @@ function Export-WtDiagnostics
     }
 
     $Lines = [System.Collections.Generic.List[string]]::new()
-    $HeaderLine = $Header | ConvertTo-Json -Compress -Depth 4
+    $HeaderLine = ConvertTo-WtJson -InputObject $Header -Compress -Depth 4
     $Lines.Add($HeaderLine)
 
     # Two bytes per line: the longest newline PowerShell writes (CRLF) plus a margin, so
@@ -478,7 +479,7 @@ function Export-WtDiagnostics
 
     foreach ($Record in $Script:WtDiagnosticRecords)
     {
-        $Line = ([ordered]@{
+        $Line = ConvertTo-WtJson -InputObject ([ordered]@{
                 type    = 'record'
                 kind    = [string]$Record.Kind
                 utc     = [string]$Record.Utc
@@ -487,7 +488,7 @@ function Export-WtDiagnostics
                 target  = [string]$Record.Target
                 message = [string]$Record.Message
                 data    = $Record.Data
-            }) | ConvertTo-Json -Compress -Depth 4
+            }) -Compress -Depth 4
 
         $LineBytes = [System.Text.Encoding]::UTF8.GetByteCount($Line) + 2
         if (($Bytes + $LineBytes) -gt $Script:WtDiagnosticMaxExportBytes)

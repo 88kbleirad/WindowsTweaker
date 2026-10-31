@@ -1,4 +1,4 @@
-# WindowsTweaker - Taskbar batch G10.
+﻿# WindowsTweaker - Taskbar batch G10.
 #
 # Converts the legacy modules TaskbarCombine.ps1, TaskbarEndTask.ps1 and
 # SecondsInSystemClock.ps1 into declarative registry tweaks.

@@ -295,14 +295,21 @@ function Get-WtTuiCapability
         return $Script:WtTuiCapabilityCache
     }
 
-    $VirtualTerminal = $false
-    try
+    # Windows PowerShell 5.1 never enables ENABLE_VIRTUAL_TERMINAL_PROCESSING, so the host
+    # property below reports no virtual terminal even on a console that renders the
+    # sequences. The compatibility layer probes the console first (and enables the mode on
+    # Windows), and its answer is the initial value: the host can only confirm it.
+    $VirtualTerminal = Test-WtConsoleVirtualTerminalAvailable
+    if (-not $VirtualTerminal)
     {
-        $VirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal
-    }
-    catch
-    {
-        $VirtualTerminal = $false
+        try
+        {
+            $VirtualTerminal = [bool]$Host.UI.SupportsVirtualTerminal
+        }
+        catch
+        {
+            $VirtualTerminal = $false
+        }
     }
 
     if (-not $VirtualTerminal -and $env:TERM -and $env:TERM -ne 'dumb')
@@ -345,7 +352,7 @@ function Get-WtTuiCapability
         {
             $Resolved = 'Ansi256'
         }
-        elseif ($IsWindows)
+        elseif ((Get-WtRuntimeProfile).IsWindows)
         {
             # Windows Terminal and modern conhost both render 24-bit colour.
             $Resolved = 'TrueColor'

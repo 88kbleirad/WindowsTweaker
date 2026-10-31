@@ -1,4 +1,4 @@
-# WindowsTweaker - Apps batch G8: Windows optional features/capabilities, the Start
+﻿# WindowsTweaker - Apps batch G8: Windows optional features/capabilities, the Start
 # menu layout and the OneDrive settings plus the official OneDrive uninstaller.
 #
 # Derived from Sophia Script for Windows (MIT, (c) 2023 farag2) where noted. The

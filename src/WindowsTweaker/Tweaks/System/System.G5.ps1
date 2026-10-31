@@ -1,4 +1,4 @@
-# WindowsTweaker - System category tweaks, batch G5.
+﻿# WindowsTweaker - System category tweaks, batch G5.
 #
 # Converted from the legacy modules AdminApprovalMode, LocalSecurityAuthority,
 # WindowsManageDefaultPrinter, BSoDStopError, Win32LongPathLimit, Hiberation,

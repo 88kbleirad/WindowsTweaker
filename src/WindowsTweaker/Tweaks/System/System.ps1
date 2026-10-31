@@ -1,4 +1,4 @@
-# WindowsTweaker - System category tweaks.
+﻿# WindowsTweaker - System category tweaks.
 #
 # Reference implementation of the scripted-tweak pattern: Detect is read-only,
 # Apply performs every change through the provider functions (so -WhatIf, state

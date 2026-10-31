@@ -170,10 +170,11 @@ function Write-WtLog
             New-WtDirectory -Path $Directory
         }
 
-        $Json = $Record | ConvertTo-Json -Depth 8 -Compress
-        # Logging is never suppressed by -WhatIf: the log lives in our own data
-        # directory and is the record of what a dry run *would* have done.
-        Add-Content -LiteralPath $Script:WtLogState.Path -Value $Json -Encoding utf8NoBOM -ErrorAction Stop -WhatIf:$false -Confirm:$false
+        $Json = ConvertTo-WtJson -InputObject $Record -Depth 8 -Compress
+        # Logging is never suppressed by -WhatIf (Write-WtTextFile implements no
+        # ShouldProcess): the log lives in our own data directory and is the record of what
+        # a dry run *would* have done.
+        Write-WtTextFile -Path $Script:WtLogState.Path -Value $Json -Append -ErrorAction Stop
     }
     catch
     {

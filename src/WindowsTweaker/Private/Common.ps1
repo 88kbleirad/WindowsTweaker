@@ -26,7 +26,7 @@ function Get-WtDataRoot
         return [System.IO.Path]::GetFullPath($env:WT_DATA_ROOT)
     }
 
-    if ($IsWindows)
+    if ((Get-WtRuntimeProfile).IsWindows)
     {
         $Base = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }
     }

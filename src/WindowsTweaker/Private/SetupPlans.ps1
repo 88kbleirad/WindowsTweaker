@@ -73,7 +73,7 @@ function Get-WtSetupPlanHash
         steps = @($Plan.steps)
     }
 
-    $Json = $Payload | ConvertTo-Json -Depth 16
+    $Json = ConvertTo-WtJson -InputObject $Payload -Depth 16
     $Sha = [System.Security.Cryptography.SHA256]::Create()
     try
     {
@@ -184,8 +184,8 @@ function Write-WtSetupPlan
 
     $Name = [string]$Plan.planId -replace '[^A-Za-z0-9_-]', '_'
     $Path = Join-Path $Dir "$Name.json"
-    $Json = $Plan | ConvertTo-Json -Depth 16
-    Set-Content -LiteralPath $Path -Value $Json -Encoding utf8NoBOM
+    $Json = ConvertTo-WtJson -InputObject $Plan -Depth 16
+    Write-WtTextFile -Path $Path -Value $Json
     return $Path
 }
 
@@ -208,7 +208,7 @@ function Read-WtSetupPlan
 
     try
     {
-        $Plan = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 16
+        $Plan = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 16
         $Plan | Add-Member -NotePropertyName Path -NotePropertyValue $Path -Force
         return $Plan
     }
@@ -402,7 +402,7 @@ function Read-WtSetupResume
 
     try
     {
-        $Resume = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 8
+        $Resume = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 8
         $Resume | Add-Member -NotePropertyName Path -NotePropertyValue $Path -Force
         return $Resume
     }
@@ -422,8 +422,8 @@ function Write-WtSetupResume
     param ([Parameter(Mandatory = $true)][object]$Resume)
 
     $Path = Get-WtSetupResumePath
-    $Json = $Resume | ConvertTo-Json -Depth 8
-    Set-Content -LiteralPath $Path -Value $Json -Encoding utf8NoBOM
+    $Json = ConvertTo-WtJson -InputObject $Resume -Depth 8
+    Write-WtTextFile -Path $Path -Value $Json
 }
 
 <#

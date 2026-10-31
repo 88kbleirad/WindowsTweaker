@@ -1,4 +1,4 @@
-# WindowsTweaker - bounded, local network measurements.
+﻿# WindowsTweaker - bounded, local network measurements.
 #
 # Measure-WtNetworkDiagnostics runs a small, bounded series of latency probes (a DNS
 # resolution or a TCP connect) and returns every raw sample plus a summary.
@@ -84,9 +84,11 @@ function Get-WtMeasurementPlatform
     [OutputType([string])]
     param ()
 
-    if ($IsWindows) { return 'Windows' }
-    if ($IsLinux) { return 'Linux' }
-    if ($IsMacOS) { return 'macOS' }
+    $RuntimeProfile = Get-WtRuntimeProfile
+
+    if ($RuntimeProfile.IsWindows) { return 'Windows' }
+    if ($RuntimeProfile.IsLinux) { return 'Linux' }
+    if ($RuntimeProfile.IsMacOS) { return 'macOS' }
 
     return 'Unknown'
 }

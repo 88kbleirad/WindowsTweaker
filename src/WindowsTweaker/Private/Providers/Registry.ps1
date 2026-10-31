@@ -22,7 +22,7 @@ function Test-WtRegistryAvailable
     [OutputType([bool])]
     param ()
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return $false
     }
@@ -69,7 +69,7 @@ function Get-WtRegistryDotNetKey
         [Parameter(Mandatory = $false)][switch]$Writable
     )
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return $null
     }

@@ -1,4 +1,4 @@
-# WindowsTweaker - declarative diagnostic playbooks.
+﻿# WindowsTweaker - declarative diagnostic playbooks.
 #
 # A playbook is data: stable id + revision, supported platforms, prerequisites, read-only
 # checks (allowlisted probes), expected evidence and limitations, branching conditions,

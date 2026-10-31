@@ -1,4 +1,4 @@
-# WindowsTweaker - Maintenance batch G6: registry backup, thumbnail cache cleanup,
+﻿# WindowsTweaker - Maintenance batch G6: registry backup, thumbnail cache cleanup,
 # restartable apps, .NET Framework CLR selection, .NET runtime installation, network
 # discovery and adapter power management.
 #

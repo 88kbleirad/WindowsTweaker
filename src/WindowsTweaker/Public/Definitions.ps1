@@ -67,8 +67,7 @@ function Test-WtCatalogFile
         }
     }
 
-    $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-    $Read.Document.Dispose()
+    $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
     $Kind = [string]$Document['kind']
     $Source = if ($AsPack -or $Kind -eq 'Pack') { 'Pack' } else { 'BuiltIn' }

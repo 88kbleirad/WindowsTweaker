@@ -22,7 +22,7 @@ function Test-WtAdapterPowerAvailable
     [OutputType([bool])]
     param ()
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return $false
     }

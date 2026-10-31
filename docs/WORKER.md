@@ -47,6 +47,11 @@ tests/Worker.Tests.ps1          PowerShell-side integration tests
   (`wt-worker: <message>`); the client keeps at most the last 64 of them.
 * One writer goroutine serialises stdout, so two concurrent tasks can never interleave
   messages inside a line.
+* Both streams are **UTF-8 on every runtime**: the client writes the request line through its
+  own `StreamWriter` (`UTF8Encoding($false)`, LF) because `ProcessStartInfo.StandardInputEncoding`
+  does not exist on .NET Framework, and it sets `StandardOutputEncoding`/`StandardErrorEncoding`
+  explicitly. A Vietnamese path in a request therefore reaches the worker intact from Windows
+  PowerShell 5.1 and from PowerShell 7 alike.
 * Request lines are capped at **1 MiB**; a longer line is rejected with
   `E_MESSAGE_TOO_LARGE` and the remainder of that line is discarded so the stream stays
   usable. Emitted messages are capped at 4 MiB (the result caps make that unreachable in
@@ -202,6 +207,13 @@ Binary locations the client looks at (in order):
 1. `$env:WT_WORKER_PATH`
 2. `<repository>/worker/bin/<windows|linux>-<amd64|arm64>/wt-worker[.exe]`
 3. `<repository>/worker/bin/wt-worker[.exe]` (a development build)
+
+That second path is the **canonical** one: it is what the build commands above write, what
+`bootstrap/bootstrap.ps1` declares in `Get-WtBootstrapPlatforms` and requires of a staged release
+(`worker/bin/<goos>-<goarch>/`), and where `tools/New-ReleasePackage.ps1` places the binary inside
+each archive - stored with the executable bit, so extraction on Linux keeps it runnable. A release
+archive that puts the worker anywhere else is refused by the bootstrap's validator and by the
+packaging tool, which share the same table.
 
 Packaging: ship the binary for the target architecture next to the module; **users do not need
 Go installed**. The worker is a single static binary built with `CGO_ENABLED=0` for Windows, so

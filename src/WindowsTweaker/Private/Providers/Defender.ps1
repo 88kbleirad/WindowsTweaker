@@ -11,7 +11,7 @@ function Test-WtDefenderAvailable
     [OutputType([bool])]
     param ()
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return $false
     }

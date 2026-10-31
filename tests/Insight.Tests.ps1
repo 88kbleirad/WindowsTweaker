@@ -1,4 +1,4 @@
-# WindowsTweaker - sanity scan, recommendation policy, state dimensions and choice groups.
+﻿# WindowsTweaker - sanity scan, recommendation policy, state dimensions and choice groups.
 #
 # Everything here runs on any platform: the registry is an in-memory double, rule documents and
 # packs are files in a temporary directory, and the boot-entry probe is doubled. The claims that
@@ -326,8 +326,7 @@ Describe 'Sanity scan' {
             # 'never Clean after a failed required probe' guarantee. It is now a document error.
             $Body = (& $RuleBody -Id 'Test.NoRequired').Replace('"required": true,', '')
             $Read = Read-WtCatalogJson -Path (& $NewRules -Name 'rules-noreq.json' -Body $Body)
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             $Tested = Test-WtRuleDocument -Document $Document
             ($Tested.Errors -join ' ') | Should -Match 'required'
 
@@ -341,8 +340,7 @@ Describe 'Sanity scan' {
                 $Body = (& $RuleBody -Id 'Test.Shape').Replace($Case.From, $Case.To)
                 $Read = Read-WtCatalogJson -Path (& $NewRules -Name $Case.Name -Body $Body)
                 $Read.Ok | Should -BeTrue -Because "$($Case.Name) must still be readable JSON"
-                $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-                $Read.Document.Dispose()
+                $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
                 # A shape problem is a diagnostic, never an exception.
                 $Tested = Test-WtRuleDocument -Document $Document
@@ -357,8 +355,7 @@ Describe 'Sanity scan' {
             $Body = (& $RuleBody -Id 'Test.NoSource' -Source '{}')
             $Path = & $NewRules -Name 'rules-nosource.json' -Body $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
             $Tested = Test-WtRuleDocument -Document $Document
             @($Tested.Errors).Count | Should -BeGreaterThan 0
@@ -367,8 +364,7 @@ Describe 'Sanity scan' {
             $Body = (& $RuleBody -Id 'Test.NoKind' -Source '{"url": "https://example.invalid/", "title": "x", "claim": "y"}').Replace('"kind": "RegistryValue"', '"kind": "RunCommand"')
             $Path = & $NewRules -Name 'rules-badkind.json' -Body $Body
             $Read = Read-WtCatalogJson -Path $Path
-            $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-            $Read.Document.Dispose()
+            $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
             $Tested = Test-WtRuleDocument -Document $Document
             ($Tested.Errors -join ' ') | Should -Match 'probe kind'
         }

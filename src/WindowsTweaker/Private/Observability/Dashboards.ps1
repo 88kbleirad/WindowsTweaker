@@ -1,4 +1,4 @@
-# WindowsTweaker - dashboard configuration (versioned JSON schema, local import/export).
+﻿# WindowsTweaker - dashboard configuration (versioned JSON schema, local import/export).
 #
 # Dashboards are data with a hard allowlist: panel types, metric references, operators,
 # aggregations and units. Nothing in a dashboard document is executed. Validation enforces
@@ -90,7 +90,7 @@ function Test-WtDashboardDocument {
         }
     }
 
-    $Json = $Document | ConvertTo-Json -Depth 12 -Compress
+    $Json = ConvertTo-WtJson -InputObject $Document -Depth 12 -Compress
     if ($Json.Length -gt 65536) { $Errors.Add('dashboard document exceeds 64 KiB.') }
 
     return @{ Valid = ($Errors.Count -eq 0); Errors = @($Errors.ToArray()) }
@@ -143,7 +143,7 @@ function Import-WtDashboardInternal {
         [Parameter(Mandatory = $false)][switch]$Force
     )
 
-    $Document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 12
+    $Document = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 12
     $Validation = Test-WtDashboardDocument -Document $Document
     if (-not $Validation.Valid) { return @{ Ok = $false; Errors = @($Validation.Errors) } }
 
@@ -167,7 +167,7 @@ function Read-WtDashboardInternal {
     $Path = Join-Path $Dir "$Id.json"
     if (Test-Path -LiteralPath $Path) {
         try {
-            $Document = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 12
+            $Document = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path) -Depth 12
             $Validation = Test-WtDashboardDocument -Document $Document
             if ($Validation.Valid) { return $Document }
         }
@@ -210,7 +210,7 @@ function Save-WtDashboardInternal {
     $Dir = Join-Path (Get-WtDataRoot) 'dashboards'
     New-WtDirectory -Path $Dir
     $Target = Join-Path $Dir ("$([string]$Dashboard.dashboardId).json")
-    $Dashboard | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $Target -Encoding utf8NoBOM
+    Write-WtTextFile -Path $Target -Value (ConvertTo-WtJson -InputObject $Dashboard -Depth 12)
     return @{ Ok = $true; Errors = @(); Target = $Target }
 }
 
@@ -297,12 +297,12 @@ function Save-WtConfigRevision {
     )
 
     $Current = Get-WtConfigRevision -Kind $Kind -Id $Id
-    $Json = $Document | ConvertTo-Json -Depth 12 -Compress
+    $Json = ConvertTo-WtJson -InputObject $Document -Depth 12 -Compress
 
     if ($Current -gt 0) {
         $PrevPath = Get-WtConfigRevisionPath -Kind $Kind -Id $Id -Revision $Current
         if (Test-Path -LiteralPath $PrevPath) {
-            $PrevJson = (Get-Content -LiteralPath $PrevPath -Raw | ConvertFrom-Json).content
+            $PrevJson = (ConvertFrom-WtJson -Text (Read-WtTextFile -Path $PrevPath)).content
             if ($PrevJson -eq $Json) { return $Current }
         }
     }
@@ -315,7 +315,7 @@ function Save-WtConfigRevision {
         content = $Json
         recordedUtc = (Get-Date).ToUniversalTime().ToString('o')
     }
-    $Snapshot | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Get-WtConfigRevisionPath -Kind $Kind -Id $Id -Revision $NewRevision) -Encoding utf8NoBOM
+    Write-WtTextFile -Path (Get-WtConfigRevisionPath -Kind $Kind -Id $Id -Revision $NewRevision) -Value (ConvertTo-WtJson -InputObject $Snapshot -Depth 12)
     return $NewRevision
 }
 
@@ -329,7 +329,7 @@ function Get-WtConfigRevisions {
     if (-not (Test-Path -LiteralPath $Dir)) { return @() }
     $Revisions = @()
     foreach ($F in @(Get-ChildItem -LiteralPath $Dir -Filter 'rev-*.json' -File | Sort-Object Name)) {
-        $Revisions += (Get-Content -LiteralPath $F.FullName -Raw | ConvertFrom-Json)
+        $Revisions += (ConvertFrom-WtJson -Text (Read-WtTextFile -Path $F.FullName))
     }
     return @($Revisions | Sort-Object revision -Descending)
 }
@@ -344,8 +344,8 @@ function Restore-WtConfigRevision {
 
     $Path = Get-WtConfigRevisionPath -Kind $Kind -Id $Id -Revision $Revision
     if (-not (Test-Path -LiteralPath $Path)) { throw "Revision $Revision not found for $Kind/$Id." }
-    $Doc = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-    $Content = $Doc.content | ConvertFrom-Json
+    $Doc = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path)
+    $Content = ConvertFrom-WtJson -Text $Doc.content
 
     switch ($Kind) {
         'dashboard' {

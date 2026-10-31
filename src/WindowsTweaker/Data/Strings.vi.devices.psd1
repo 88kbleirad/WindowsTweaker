@@ -1,4 +1,4 @@
-# WindowsTweaker - vi strings for device inventory and worker notes.
+﻿# WindowsTweaker - vi strings for device inventory and worker notes.
 # Read with Import-PowerShellDataFile (never executes code).
 @{
     # --- tồn kho thiết bị và trình điều khiển -------------------------------------------

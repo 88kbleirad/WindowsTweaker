@@ -1,4 +1,4 @@
-# WindowsTweaker - en strings for device inventory and worker notes.
+﻿# WindowsTweaker - en strings for device inventory and worker notes.
 # Read with Import-PowerShellDataFile (never executes code).
 @{
     # --- device and driver inventory ----------------------------------------------------

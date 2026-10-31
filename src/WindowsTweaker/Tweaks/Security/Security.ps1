@@ -1,4 +1,4 @@
-# WindowsTweaker - Security category tweaks.
+﻿# WindowsTweaker - Security category tweaks.
 #
 # Security policy for this project:
 #   * no tweak here is applied at startup or by any preset,

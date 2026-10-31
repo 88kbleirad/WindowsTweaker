@@ -1,4 +1,4 @@
-# WindowsTweaker - provider level unit tests.
+﻿# WindowsTweaker - provider level unit tests.
 #
 # Pure logic that must stay correct regardless of the host platform: operation status
 # aggregation, registry value-name normalisation, value comparison and the honest

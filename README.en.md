@@ -1,4 +1,4 @@
-# WindowsTweaker
+﻿# WindowsTweaker
 
 Reviewable, reversible Windows customization, driven from the terminal.
 
@@ -42,7 +42,7 @@ rolled back to the state that actually existed before - not to a hard-coded defa
 | Requirement | Detail |
 |---|---|
 | Operating system | **Windows 10 22H2 or Windows 11** (the target platform). Every tweak declares `-SupportedOS`/`-MinBuild`; on any other build it reports `unsupported` with the reason instead of guessing |
-| PowerShell | **7.4 or newer** - enforced by `#Requires -Version 7.4` and by the module manifest. Windows PowerShell 5.1 is neither supported nor tested |
+| PowerShell | **Windows PowerShell 5.1 (included with Windows) and PowerShell 7.4-7.6.** `#Requires -Version 5.1` refuses older hosts; 7.4-7.6 is the fully validated range. Per-runtime detail: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md) |
 | Elevation | Only for tweaks that declare `-Privilege Admin`; browsing, previewing and the dry run never need it |
 | On Linux | The module loads and the read-only surfaces work (this is where the test suite runs), but every machine-level tweak reports `unsupported`: treat Linux as a place to review and develop, not to apply changes |
 | Windows integration checks | **Not executed.** No Windows host was available for validation: real registry, service, scheduled-task, firewall, DNS, Appx, Defender and DISM behaviour, and the WPF interface, were never run. See [docs/VALIDATION.md](docs/VALIDATION.md) |
@@ -62,21 +62,46 @@ Things to know before you apply something:
 
 ## Quick start
 
-Run from the repository root; no installed launcher is shipped today.
+Run from the repository root. **Both Windows PowerShell 5.1 and PowerShell 7 start the
+application**: same interface, same journal, same rollback.
 
 ```powershell
-pwsh -File WindowsTweaker.ps1                  # terminal interface: browse, review, apply
-pwsh -File WindowsTweaker.ps1 -Language vi     # the same interface in Vietnamese
-pwsh -File WindowsTweaker.ps1 -Status          # read-only: what can this machine do?
-pwsh -File WindowsTweaker.ps1 -Id Privacy.AdvertisingId -State Disabled -WhatIf
+# Windows PowerShell 5.1 (the console that ships with Windows) - runs natively
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\WindowsTweaker.ps1
+
+# PowerShell 7.4-7.6 - same interface, the fully validated runtime
+pwsh -NoProfile -File .\WindowsTweaker.ps1
+pwsh -NoProfile -File .\WindowsTweaker.ps1 -Language vi     # the same interface in Vietnamese
+pwsh -NoProfile -File .\WindowsTweaker.ps1 -Status          # read-only: what can this machine do?
+pwsh -NoProfile -File .\WindowsTweaker.ps1 -Id Privacy.AdvertisingId -State Disabled -WhatIf
 ```
 
-The first two commands open the interface. The dry run prints every operation it would perform
+The first three commands open the interface. The dry run prints every operation it would perform
 and writes nothing; drop `-WhatIf` to apply the change and keep the previous state for rollback.
 
-`irm | iex` installation exists as a script, but it is **not hosted**: the defaults still point at
-placeholder repository values, so there is no working public URL today. See
-[docs/BOOTSTRAP.md](docs/BOOTSTRAP.md).
+`-ExecutionPolicy Bypass` above applies to **that process only** (it does not change the machine
+policy and writes nothing to the registry). Drop the flag if your policy already allows scripts.
+
+No PowerShell 7 installed? The bootstrap looks for one and asks exactly once before installing it
+through `winget` (Microsoft's official source). Declining still runs on 5.1. Manual install:
+<https://aka.ms/powershell-release?tag=stable> (pick the package for this architecture, x64 or ARM64).
+
+To see what the current runtime supports:
+`powershell.exe -NoProfile -File .\WindowsTweaker.ps1 -RuntimeReport` (read-only, printed in
+Vietnamese and English).
+
+`irm | iex` installation exists as a script and its defaults now name the real repository
+(`88kbleirad/WindowsTweaker`), but **no release is published yet**: the bootstrap resolves
+`releases/latest`, gets `HTTP 404` and says so instead of installing anything unverified. Publish
+the archives described in [docs/RELEASE.md](docs/RELEASE.md) and the documented one-liner starts
+working:
+
+```powershell
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
+
+See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) for what that script verifies, and
+[docs/RELEASE.md](docs/RELEASE.md) for what has to be uploaded first.
 
 ## Essential keys
 

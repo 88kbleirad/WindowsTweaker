@@ -129,7 +129,7 @@ function Read-WtPresetFile
 
     try
     {
-        $Document = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json
+        $Document = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $Path)
     }
     catch
     {
@@ -358,7 +358,7 @@ function Export-WtPreset
         New-WtDirectory -Path $Directory
     }
 
-    ($Document | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $Path -Encoding utf8NoBOM -Force
+    Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Document -Depth 8)
 
     Write-WtLog -Message "Preset written: $Path" -Operation 'ExportPreset' -Status 'succeeded'
     return $Path

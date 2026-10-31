@@ -1,4 +1,4 @@
-# WindowsTweaker - Privacy category tweaks, batch G2.
+﻿# WindowsTweaker - Privacy category tweaks, batch G2.
 #
 # Derived from Sophia Script for Windows (MIT, (c) 2023 farag2); the operations were
 # re-expressed as explicit, reversible registry operations instead of LGPO policy

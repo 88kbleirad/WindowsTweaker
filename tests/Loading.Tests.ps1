@@ -1,4 +1,4 @@
-# WindowsTweaker - loading, catalog and localization contract tests.
+﻿# WindowsTweaker - loading, catalog and localization contract tests.
 #
 # These tests protect the invariants that were broken in the previous revision:
 #   * importing the module must not change any system setting
@@ -111,7 +111,7 @@ Describe 'Public surface and command definitions' {
             'Enable-WtMetricRecording', 'Disable-WtMetricRecording', 'Get-WtMetricRecording', 'Get-WtStoredMetricRange',
             'Get-WtPowerSettings', 'Get-WtSrumHistory',
             'Get-WtSetupPlan', 'New-WtSetupPlan', 'Export-WtSetupPlan', 'Import-WtSetupPlan', 'Get-WtSetupPlanPreview', 'Start-WtSetupPlan', 'Resume-WtSetupPlan', 'Remove-WtSetupPlanResume',
-            'Get-WtEnvironment', 'Get-WtTweak', 'Get-WtCategory', 'Get-WtNetworkAdapter',
+            'Get-WtRuntimeInfo', 'Get-WtEnvironment', 'Get-WtTweak', 'Get-WtCategory', 'Get-WtNetworkAdapter',
             'Get-WtWindowsFeature', 'Get-WtWindowsCapability',
             'Test-WtPrerequisite', 'Get-WtTweakState', 'Invoke-WtTweak', 'Undo-WtTweak',
             'New-WtRestorePoint', 'Get-WtPreset', 'Import-WtPreset', 'Export-WtPreset',

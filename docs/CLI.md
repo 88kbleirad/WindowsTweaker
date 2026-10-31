@@ -13,7 +13,7 @@ pwsh -File WindowsTweaker.ps1 -Status               # environment snapshot, read
 
 Without a command switch the script starts the keyboard-driven interface ([KEYBOARD.md](KEYBOARD.md)); every other switch is non-interactive. Without an interactive console (stdin or stdout redirected) the interface refuses to half-start and exits `2`.
 
-Release archives (`WindowsTweaker-<platform>-v<version>.zip`) are unpacked and run from the unpacked root: no launcher is installed and nothing is added to `PATH`. The archive holds `WindowsTweaker.ps1`, `src/WindowsTweaker`, the licence texts and the matching worker binary ([VALIDATION.md](VALIDATION.md) section 11, [tools/New-ReleasePackage.ps1](../tools/New-ReleasePackage.ps1)). PowerShell 7.4 is required; Windows PowerShell 5.1 is not supported.
+Release archives (`WindowsTweaker-<platform>-v<version>.zip`) are unpacked and run from the unpacked root: no launcher is installed and nothing is added to `PATH`. The archive holds `WindowsTweaker.ps1`, `src/WindowsTweaker`, the licence texts, the matching worker binary and the package `manifest.json` that names every file with its SHA-256 ([RELEASE.md](RELEASE.md), [VALIDATION.md](VALIDATION.md) section 11, [tools/New-ReleasePackage.ps1](../tools/New-ReleasePackage.ps1)). PowerShell 7.4-7.6 is the validated runtime, and Windows PowerShell 5.1 starts the same entry point natively (reduced, capability-gated mode) - see [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## Parameters
 
@@ -99,6 +99,7 @@ See [SANITY-SCAN.md](SANITY-SCAN.md), [RECOMMENDATIONS.md](RECOMMENDATIONS.md), 
 | `-Language` | `en`, `vi` or a culture name such as `vi-VN` | Interface language for this run | `-Language vi` |
 | `-Colour` | `Auto` (default), `TrueColor`, `Ansi256`, `Ansi16`, `Mono` | Palette depth | `-Colour Mono` |
 | `-Ascii` | switch | ASCII frame characters instead of box drawing (also forces ASCII icons) | `-Ascii` |
+| `-RuntimeReport` | switch | Print the runtime profile, every capability with its reason and the validated range. Read-only, identical on both runtimes | `-RuntimeReport` |
 | `-Icons` | `Auto` (default), `Unicode`, `NerdFont`, `ASCII`, `None` | Icon display mode; no font is installed or detected | `-Icons ASCII` |
 
 Language precedence: `-Language`, then the choice saved from the interface, then `WT_LANG`, then the supported UI culture, then English; an unsupported explicit value resolves to English so a typo stays visible. Changing the language never applies a tweak.

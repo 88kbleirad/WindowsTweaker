@@ -14,7 +14,7 @@ function Test-WtDnsAvailable
     [OutputType([bool])]
     param ()
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return $false
     }

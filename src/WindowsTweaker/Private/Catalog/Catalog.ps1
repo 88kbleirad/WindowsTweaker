@@ -79,12 +79,15 @@ $Script:WtCatalogWindowsEvidenceKeys = @('build', 'edition', 'architecture', 'da
 
 <#
 .SYNOPSIS
-    Reads one JSON document with the strict options this file requires.
+    Reads one JSON document with the strictness this file requires.
 .DESCRIPTION
     Returns @{ Ok; Document; Errors; Bytes; Depth } - Document is $null when the document could
-    not be parsed at all, and Errors carries every problem found (bounded).
-    The reader deliberately does not convert to objects first: duplicate property names are
-    detected by walking the parsed tree, which a plain conversion hides.
+    not be parsed at all, and Errors carries every problem found (bounded). Document carries
+    the parsed node tree (Root), the errors and the observed depth, and is consumed through
+    ConvertFrom-WtCatalogNode.
+    The strict parsing lives in Read-WtStrictJsonNode, so it behaves the same on Windows
+    PowerShell 5.1 and on PowerShell 7; duplicate property names are one of the errors it
+    reports, which a plain conversion would hide.
 #>
 function Read-WtCatalogJson
 {
@@ -114,121 +117,64 @@ function Read-WtCatalogJson
         return $Result
     }
 
-    $Options = [System.Text.Json.JsonDocumentOptions]::new()
-    $Options.AllowTrailingCommas = $false
-    $Options.CommentHandling = [System.Text.Json.JsonCommentHandling]::Disallow
-    $Options.MaxDepth = $Script:WtCatalogLimits.MaxDepth
+    $Parsed = Read-WtStrictJsonNode -Text $Text `
+        -MaxDepth $Script:WtCatalogLimits.MaxDepth `
+        -MaxStringLength $Script:WtCatalogLimits.MaxStringLength `
+        -MaxErrors $Script:WtCatalogLimits.MaxErrors
 
-    $Document = $null
-    try
+    $Result.Errors = @($Parsed.Errors)
+    $Result.Depth = [int]$Parsed.Depth
+    $Result.Ok = [bool]$Parsed.Ok
+    if ($null -ne $Parsed.Root)
     {
-        $Document = [System.Text.Json.JsonDocument]::Parse($Text, $Options)
-    }
-    catch
-    {
-        $Message = $_.Exception.Message
-        if ($_.Exception.InnerException) { $Message = $_.Exception.InnerException.Message }
-        $Result.Errors = @("The document is not valid JSON: $Message")
-        return $Result
+        $Result.Document = @{ Root = $Parsed.Root; Errors = @($Parsed.Errors); Depth = [int]$Parsed.Depth }
     }
 
-    $Errors = [System.Collections.Generic.List[string]]::new()
-
-    # Walk the tree: duplicate property names, depth and type sanity are reported with a path.
-    $Walk = {
-        param ($Element, [string]$Path, [int]$Depth)
-
-        $DepthValue = $Depth
-        if ($DepthValue -gt $Result.Depth) { $Result.Depth = $DepthValue }
-
-        if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object)
-        {
-            $Seen = @{}
-            foreach ($Property in $Element.EnumerateObject())
-            {
-                $Name = [string]$Property.Name
-                if ($Seen.ContainsKey($Name) -and $Errors.Count -lt $Script:WtCatalogLimits.MaxErrors)
-                {
-                    $Errors.Add("$Path.$Name : duplicate property name.")
-                }
-                $Seen[$Name] = $true
-
-                if ($Property.Value.ValueKind -eq [System.Text.Json.JsonValueKind]::String)
-                {
-                    $Value = [string]$Property.Value.GetString()
-                    if ($Value.Length -gt $Script:WtCatalogLimits.MaxStringLength -and $Errors.Count -lt $Script:WtCatalogLimits.MaxErrors)
-                    {
-                        $Errors.Add("$Path.$Name : string of $($Value.Length) characters exceeds the $($Script:WtCatalogLimits.MaxStringLength) character limit.")
-                    }
-                }
-
-                & $Walk $Property.Value "$Path.$Name" ($DepthValue + 1)
-            }
-
-            return
-        }
-
-        if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array)
-        {
-            $Index = 0
-            foreach ($Item in $Element.EnumerateArray())
-            {
-                & $Walk $Item "$Path[$Index]" ($DepthValue + 1)
-                $Index++
-            }
-        }
-    }
-
-    & $Walk $Document.RootElement '$' 1
-
-    $Result.Document = $Document
-    $Result.Errors = @($Errors.ToArray())
-    $Result.Ok = ($Errors.Count -eq 0)
     return $Result
 }
 
 <#
 .SYNOPSIS
-    Converts a parsed JSON element into a plain hashtable/array tree, preserving property order.
+    Converts a node from Read-WtStrictJsonNode into a plain hashtable/array tree, preserving
+    property order.
 .DESCRIPTION
     PowerShell's ConvertFrom-Json is not used for documents: this conversion keeps every value
     as a string/number/bool/array/hashtable and never produces a script block, a type name or a
-    resolved reference. Objects become ordered hashtables so the loader can require exact keys.
+    resolved reference. Objects become ordered hashtables so the loader can require exact keys,
+    and a number that does not fit a [double] keeps the raw text the document spelled.
 #>
-function ConvertFrom-WtCatalogElement
+function ConvertFrom-WtCatalogNode
 {
     [CmdletBinding()]
-    param ([Parameter(Mandatory = $true)][System.Text.Json.JsonElement]$Element)
+    param ([Parameter(Mandatory = $true)][object]$Node)
 
-    switch ($Element.ValueKind)
+    switch ($Node.Kind)
     {
-        ([System.Text.Json.JsonValueKind]::Object)
+        'Object'
         {
             $Table = [ordered]@{}
-            foreach ($Property in $Element.EnumerateObject())
+            foreach ($Name in $Node.Properties.Keys)
             {
-                $Table[$Property.Name] = ConvertFrom-WtCatalogElement -Element $Property.Value
+                $Table[$Name] = ConvertFrom-WtCatalogNode -Node $Node.Properties[$Name]
             }
             return $Table
         }
-        ([System.Text.Json.JsonValueKind]::Array)
+        'Array'
         {
             $Items = @()
-            foreach ($Item in $Element.EnumerateArray())
+            foreach ($Item in $Node.Items)
             {
-                $Items += , (ConvertFrom-WtCatalogElement -Element $Item)
+                $Items += , (ConvertFrom-WtCatalogNode -Node $Item)
             }
             return , $Items
         }
-        ([System.Text.Json.JsonValueKind]::String) { return [string]$Element.GetString() }
-        ([System.Text.Json.JsonValueKind]::Number)
+        'String' { return [string]$Node.Value }
+        'Number'
         {
-            $Value = 0.0
-            if ($Element.TryGetDouble([ref]$Value)) { return $Value }
-            return [string]$Element.GetRawText()
+            if ($null -eq $Node.Value) { return [string]$Node.Raw }
+            return [double]$Node.Value
         }
-        ([System.Text.Json.JsonValueKind]::True) { return $true }
-        ([System.Text.Json.JsonValueKind]::False) { return $false }
+        'Boolean' { return [bool]$Node.Value }
         default { return $null }
     }
 }

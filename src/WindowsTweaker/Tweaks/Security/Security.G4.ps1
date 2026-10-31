@@ -1,4 +1,4 @@
-# WindowsTweaker - Security category tweaks, batch G4.
+﻿# WindowsTweaker - Security category tweaks, batch G4.
 #
 # Legacy modules converted here (per-module outcome in docs/migration-notes/Security.G4.md):
 #   AppsSmartScreen, DismissSmartScreenFilter, DefenderSandbox, NetworkProtection,

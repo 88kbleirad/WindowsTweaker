@@ -1,4 +1,4 @@
-# WindowsTweaker - terminal interface icon registry.
+﻿# WindowsTweaker - terminal interface icon registry.
 #
 # One file owns every glyph the interface can draw. Rendering code never contains a
 # literal symbol: it asks for a semantic key ("Category.Network", "Status.Warning") and

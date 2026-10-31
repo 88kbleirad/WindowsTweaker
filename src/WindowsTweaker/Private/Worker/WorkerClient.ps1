@@ -1,4 +1,4 @@
-# WindowsTweaker - optional background worker client (process side only).
+﻿# WindowsTweaker - optional background worker client (process side only).
 #
 # This file is the PowerShell half of the worker protocol: it locates the binary, performs
 # the capability handshake, sends one request at a time, drains the worker's output
@@ -40,9 +40,10 @@ function Get-WtWorkerBackendPath
         return $env:WT_WORKER_PATH
     }
 
-    $Name = if ($IsWindows) { 'wt-worker.exe' } else { 'wt-worker' }
-    $Platform = if ($IsWindows) { 'windows' } else { 'linux' }
-    $Architecture = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
+    $RuntimeProfile = Get-WtRuntimeProfile
+    $Name = if ($RuntimeProfile.IsWindows) { 'wt-worker.exe' } else { 'wt-worker' }
+    $Platform = if ($RuntimeProfile.IsWindows) { 'windows' } else { 'linux' }
+    $Architecture = switch ($RuntimeProfile.Architecture)
     {
         'X64' { 'amd64' }
         'Arm64' { 'arm64' }
@@ -193,6 +194,11 @@ function Start-WtWorkerClient
     $StartInfo.RedirectStandardError = $true
     $StartInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
     $StartInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
+    # ProcessStartInfo.StandardInputEncoding exists on .NET Core only. On Windows PowerShell
+    # 5.1 (.NET Framework) Process.StandardInput would encode request lines with the console
+    # code page and corrupt Vietnamese JSON, so the input side is written by hand below
+    # through one UTF-8 writer over the same pipe, and both runtimes send the same bytes.
+    # StandardOutputEncoding/StandardErrorEncoding themselves exist since .NET Framework 4.5.
 
     $Process = $null
     try
@@ -204,9 +210,17 @@ function Start-WtWorkerClient
         throw (Get-WtString -Key 'Worker.Reason.NotExecutable' -Arguments @($Path, $_.Exception.Message))
     }
 
+    # The one writer for request lines: an explicit UTF-8 encoder over the stdin pipe, with a
+    # bare newline terminator, so the protocol bytes do not depend on the runtime's console
+    # code page or on Environment.NewLine. AutoFlush stays off; Write-WtWorkerMessage flushes
+    # every request explicitly.
+    $Stdin = [System.IO.StreamWriter]::new($Process.StandardInput.BaseStream, [System.Text.UTF8Encoding]::new($false))
+    $Stdin.NewLine = "`n"
+
     $Client = @{
         Path        = $Path
         Process     = $Process
+        Stdin       = $Stdin
         Queue       = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
         Stderr      = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
         MaxStderr   = 64
@@ -263,7 +277,7 @@ function Write-WtWorkerMessage
         throw (Get-WtString -Key 'Worker.Reason.Exited' -Arguments @($Client.Process.ExitCode))
     }
 
-    $Payload = $Message | ConvertTo-Json -Depth 8 -Compress
+    $Payload = ConvertTo-WtJson -InputObject $Message -Depth 8 -Compress
     if ($Payload.Length -gt $Script:WtWorkerMaxLineBytes)
     {
         throw (Get-WtString -Key 'Worker.Reason.RequestTooLarge' -Arguments @($Payload.Length, $Script:WtWorkerMaxLineBytes))
@@ -271,8 +285,8 @@ function Write-WtWorkerMessage
 
     try
     {
-        $Client.Process.StandardInput.WriteLine($Payload)
-        $Client.Process.StandardInput.Flush()
+        $Client.Stdin.WriteLine($Payload)
+        $Client.Stdin.Flush()
     }
     catch
     {
@@ -325,7 +339,14 @@ function Read-WtWorkerEvent
 
         try
         {
-            $Message = $Line | ConvertFrom-Json -Depth 16 -ErrorAction Stop
+            # The worker writes exactly one JSON object per line: a blank line is a protocol
+            # violation, not something to skip silently. ConvertFrom-WtJson returns $null for
+            # whitespace, so that case is rejected explicitly before parsing.
+            if ([string]::IsNullOrWhiteSpace($Line))
+            {
+                throw 'The worker wrote an empty line.'
+            }
+            $Message = ConvertFrom-WtJson -Text $Line -Depth 16
             $Client.Queue.Enqueue(@{ Kind = 'Message'; Message = $Message })
         }
         catch

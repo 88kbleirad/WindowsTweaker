@@ -1,4 +1,4 @@
-# WindowsTweaker - Tweak Packs: a local, data-only extension mechanism.
+﻿# WindowsTweaker - Tweak Packs: a local, data-only extension mechanism.
 #
 # A pack is the *same document format* as the built-in catalog (kind "Pack"), with one extra
 # rule: every tweak id must live inside the pack's own namespace, so an imported pack can
@@ -62,7 +62,7 @@ function Get-WtTweakPackInternal
     {
         try
         {
-            $Record = Get-Content -LiteralPath $File.FullName -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+            $Record = ConvertFrom-WtJson -Text (Read-WtTextFile -Path $File.FullName) -AsHashtable
         }
         catch
         {
@@ -107,7 +107,9 @@ function Save-WtPackRecordInternal
     }
 
     $Path = Join-Path $Root ($Record.id + '.record.json')
-    ($Record | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $Path -Encoding utf8
+    # BOM-less on both runtimes and with one escaping shape: the record is read back and
+    # compared by hash, so the file bytes must not depend on which runtime wrote them.
+    Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Record -Depth 6)
     return $Path
 }
 
@@ -135,8 +137,7 @@ function Test-WtPackFile
         return @{ Ok = $false; Errors = @($Errors.ToArray()); Metadata = $null; Document = $null; Sha256 = ''; Bytes = $Read.Bytes; Path = $Path }
     }
 
-    $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-    $Read.Document.Dispose()
+    $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
     $PackId = [string]$Document['id']
     if ($PackId -notmatch $Script:WtPackIdPattern -or $Script:WtPackReservedIds -contains $PackId.ToLowerInvariant())

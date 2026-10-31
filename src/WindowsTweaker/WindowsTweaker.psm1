@@ -1,4 +1,4 @@
-# WindowsTweaker root module.
+﻿# WindowsTweaker root module.
 #
 # Loading order is explicit and deterministic:
 #   1. Private\*.ps1            (shared helpers)
@@ -146,7 +146,8 @@ function Initialize-WtCatalog
 
 # Explicit public surface: everything else stays private to the module.
 $PublicFunctions = @(
-    # environment and catalog queries
+    # environment, runtime and catalog queries
+    'Get-WtRuntimeInfo'
     'Get-WtEnvironment'
     'Get-WtTweak'
     'Get-WtCategory'

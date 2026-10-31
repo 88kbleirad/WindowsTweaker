@@ -113,7 +113,7 @@ function Get-WtPowerSettingsInternal
     [OutputType([hashtable])]
     param ()
 
-    if (-not $IsWindows)
+    if (-not (Get-WtRuntimeProfile).IsWindows)
     {
         return @{
             Available = $false

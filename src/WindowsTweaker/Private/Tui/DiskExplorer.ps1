@@ -260,12 +260,12 @@ function Export-WtDiskExplorerReport
             cancelled = $Listing.Cancelled
             entries   = @($Listing.Entries)
         }
-        $Lines = @($Payload | ConvertTo-Json -Depth 8)
+        $Lines = @(ConvertTo-WtJson -InputObject $Payload -Depth 8)
     }
 
     try
     {
-        Set-Content -LiteralPath $Path -Value ($Lines -join "`n") -Encoding utf8NoBOM
+        Write-WtTextFile -Path $Path -Value ($Lines -join "`n")
         Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Disk.ExportTitle') -Lines @((Get-WtString -Key 'Disk.ExportDone' -Arguments @($Path))) -Tone 'Success'
     }
     catch

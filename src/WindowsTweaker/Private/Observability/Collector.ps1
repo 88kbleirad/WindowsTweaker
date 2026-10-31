@@ -1,4 +1,4 @@
-# WindowsTweaker - metrics collector (one controlled owner).
+﻿# WindowsTweaker - metrics collector (one controlled owner).
 #
 # The collector owns every metric sample in the application. It has exactly one owner (a
 # single runspace when the monitoring workspace is active), bounded concurrency (one
@@ -235,12 +235,13 @@ function Get-WtMonitorSlowSnapshot
 
     if (-not $NowMs) { $NowMs = [int64]([datetime]::UtcNow.ToUniversalTime() - [datetime]::new(1970,1,1,0,0,0,[datetimekind]::Utc)).TotalMilliseconds }
 
+    $RuntimeProfile = Get-WtRuntimeProfile
     $Samples = [System.Collections.Generic.List[object]]::new()
 
     $Drive = $Disk
     if (-not $Drive)
     {
-        if ($IsWindows)
+        if ($RuntimeProfile.IsWindows)
         {
             $SystemDrive = [string](Get-WtEnvironment).OSName -replace '.*', ''
             if (-not $SystemDrive) { $SystemDrive = $env:SystemDrive }
@@ -255,7 +256,7 @@ function Get-WtMonitorSlowSnapshot
 
     try
     {
-        if ($IsWindows)
+        if ($RuntimeProfile.IsWindows)
         {
             $Volume = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='$($Drive.TrimEnd('\'))'" -ErrorAction Stop
             if ($Volume)

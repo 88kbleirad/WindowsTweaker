@@ -1,4 +1,4 @@
-# WindowsTweaker - PowerShell versus Go worker benchmark.
+﻿# WindowsTweaker - PowerShell versus Go worker benchmark.
 #
 # Measures the same read-only workload with both backends, under the same conditions, and
 # writes every raw sample to JSON so the numbers can be checked instead of trusted.

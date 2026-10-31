@@ -1,4 +1,4 @@
-# WindowsTweaker - Privacy category tweaks.
+﻿# WindowsTweaker - Privacy category tweaks.
 #
 # Derived from Sophia Script for Windows (MIT, (c) 2023 farag2) where noted; the
 # operations below were re-expressed as explicit, reversible registry operations

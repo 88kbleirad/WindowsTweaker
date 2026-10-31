@@ -1,4 +1,4 @@
-# WindowsTweaker - journal, change verification and recovery tests.
+﻿# WindowsTweaker - journal, change verification and recovery tests.
 #
 # These tests inject the failures the journal exists for: overlapping targets, an
 # interrupted write, a corrupt store, a verification mismatch, a failed compensation, an

@@ -1,4 +1,4 @@
-# WindowsTweaker - sanity scan, recommendation, state-dimension and choice-group strings (vi).
+﻿# WindowsTweaker - sanity scan, recommendation, state-dimension and choice-group strings (vi).
 #
 # A separate part file for the same reason as Strings.vi.catalog.psd1: Import-PowerShellDataFile
 # refuses a hashtable literal with more than 500 entries, so feature strings live in their own

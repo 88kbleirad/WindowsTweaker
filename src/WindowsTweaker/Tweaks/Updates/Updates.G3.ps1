@@ -1,4 +1,4 @@
-# WindowsTweaker - Updates category tweaks (batch G3).
+﻿# WindowsTweaker - Updates category tweaks (batch G3).
 #
 # Replaces the legacy modules modules/UpdateMicrosoftProducts.ps1,
 # modules/WindowsLatestUpdate.ps1, modules/RestartDeviceAfterUpdate.ps1,

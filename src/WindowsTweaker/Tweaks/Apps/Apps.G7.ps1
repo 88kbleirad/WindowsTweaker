@@ -1,4 +1,4 @@
-# WindowsTweaker - application preference and shell context-menu tweaks (batch G7).
+﻿# WindowsTweaker - application preference and shell context-menu tweaks (batch G7).
 #
 # Derived from Sophia Script for Windows (MIT, (c) 2023 farag2) where noted; every
 # setting below was re-expressed as explicit, reversible operations instead of a
@@ -528,7 +528,7 @@ New-WtScriptTweak -Id 'Apps.WindowsSandbox' -Category 'Apps' `
     -Detect {
         param ($Tweak, $Arguments)
 
-        if (-not [bool]$IsWindows)
+        if (-not [bool](Get-WtRuntimeProfile).IsWindows)
         {
             return @{ State = 'Unsupported'; Reason = 'The Windows Sandbox optional feature can only be managed on Windows.' }
         }
@@ -565,7 +565,7 @@ New-WtScriptTweak -Id 'Apps.WindowsSandbox' -Category 'Apps' `
         $Operation = 'WindowsOptionalFeature'
         $FeatureName = 'Containers-DisposableClientVM'
 
-        if (-not [bool]$IsWindows)
+        if (-not [bool](Get-WtRuntimeProfile).IsWindows)
         {
             return New-WtOperationResult -Status 'unsupported' -Operation $Operation -Target $FeatureName -Message 'The Windows Sandbox optional feature can only be changed on Windows.'
         }

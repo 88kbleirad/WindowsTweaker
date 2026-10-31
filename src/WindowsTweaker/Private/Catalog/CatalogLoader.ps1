@@ -1285,8 +1285,7 @@ function Import-WtCatalogDirectory
             continue
         }
 
-        $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-        $Read.Document.Dispose()
+        $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
         $Import = Import-WtCatalogDocument -Document $Document -Source $Source -PackId $PackId
         foreach ($Problem in @($Import.Errors)) { $Errors.Add("$($File.Name): $Problem") }

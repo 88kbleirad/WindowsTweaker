@@ -1,7 +1,14 @@
-# WindowsTweaker - English strings (reference language).
+﻿# WindowsTweaker - English strings (reference language).
 # The file must remain a single hashtable literal: it is read with
 # Import-PowerShellDataFile, which never executes code.
 @{
+    # Runtime policy (Private/Compatibility.ps1, WindowsTweaker.ps1, bootstrap).
+    'Runtime.Notice.WindowsPowerShell' = 'Running natively on Windows PowerShell {0}. Newer runtime available for full capability: PowerShell {1} - start it with: {2}'
+    'Runtime.Notice.Untested'   = 'PowerShell {0} is outside the tested stable range ({1}-{2}). It runs, but only PowerShell {1}-{2} is validated for this project.'
+    'Runtime.Notice.Preview'    = 'PowerShell {0} is a preview build. Preview runtimes are never selected automatically; the tested stable range is {1}-{2}.'
+    'Runtime.Report.Title'      = 'WindowsTweaker runtime report'
+    'Runtime.Report.Capability' = '{0} = {1} ({2})'
+
     'Common.Yes'                = 'Yes'
     'Common.No'                 = 'No'
     'Common.Cancel'             = 'Cancel'
@@ -40,7 +47,6 @@
     'Msg.RestoreVerificationFailed' = 'Verification failed for {0} target(s): the restored value does not match the captured state.'
 
     'Error.WindowsOnly'         = 'WindowsTweaker only runs on Windows. Detected platform: {0}.'
-    'Error.PowerShellVersion'   = 'PowerShell {0} or newer is required. Running: {1}.'
     'Error.AdminRequired'       = 'Administrator privileges are required for: {0}'
     'Error.CmdletMissing'       = 'Required cmdlet not found: {0}'
     'Error.ModuleMissing'       = 'Required module not found: {0}'

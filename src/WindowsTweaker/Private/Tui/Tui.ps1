@@ -1,4 +1,4 @@
-# WindowsTweaker - terminal user interface.
+﻿# WindowsTweaker - terminal user interface.
 #
 # Design contract:
 #   * Presentation only. The interface never writes to the registry, a service, a task,
@@ -2345,6 +2345,19 @@ function Start-WtTui
         }
 
         Restore-WtTuiTerminal -Restore $Restore
+
+        # The capability probe enabled ENABLE_VIRTUAL_TERMINAL_PROCESSING on Windows; put
+        # the console mode back last, and never let it mask the rest of the cleanup. It is
+        # a no-op when nothing was enabled and does not throw.
+        try
+        {
+            [void](Restore-WtConsoleVirtualTerminal)
+        }
+        catch
+        {
+            Write-WtLog -Level Debug -Message 'Could not restore the console mode.' -NoConsole
+        }
+
         Close-WtTuiWorker -State $State
     }
 

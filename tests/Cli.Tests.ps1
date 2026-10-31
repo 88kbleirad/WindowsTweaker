@@ -1,4 +1,4 @@
-# WindowsTweaker - command line contract tests.
+﻿# WindowsTweaker - command line contract tests.
 #
 # The entry point is run as a child process so that its exit codes, its output and
 # its on-disk effects are tested exactly as a user or an automation script sees them.
@@ -148,7 +148,9 @@ Describe 'Entry point' {
 
     It 'exists and documents the supported PowerShell version' {
         Test-Path -LiteralPath $script:EntryPoint | Should -BeTrue
-        (Get-Content -LiteralPath $script:EntryPoint -Raw) | Should -Match '#Requires -Version 7\.4'
+        # 5.1 is the floor (the console that ships with Windows); see docs/COMPATIBILITY.md.
+        (Get-Content -LiteralPath $script:EntryPoint -Raw) | Should -Match '#Requires -Version 5\.1'
+        (Get-Content -LiteralPath $script:EntryPoint -Raw) | Should -Not -Match '#Requires -Version 7'
     }
 
     It 'reports the environment without changing anything' {

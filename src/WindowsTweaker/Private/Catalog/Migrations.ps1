@@ -213,8 +213,7 @@ function Import-WtMigrationRegistry
         return @{ Path = $Path; Records = @(); Errors = @($Read.Errors); Present = $true }
     }
 
-    $Document = ConvertFrom-WtCatalogElement -Element $Read.Document.RootElement
-    $Read.Document.Dispose()
+    $Document = ConvertFrom-WtCatalogNode -Node $Read.Document.Root
 
     $Tested = Test-WtMigrationDocument -Document $Document
     if ($Tested.Errors.Count -gt 0)

@@ -1,4 +1,4 @@
-# WindowsTweaker - application package (UWP/Appx) tweaks.
+﻿# WindowsTweaker - application package (UWP/Appx) tweaks.
 #
 # Contract for package removal, enforced by the provider and by this definition:
 #   * nothing is selected by default (DefaultState is Disabled, and Enabled without

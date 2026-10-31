@@ -33,11 +33,19 @@ src/WindowsTweaker/
   Data/Strings.<lang>*.psd1       localization (en reference + vi, split by feature)
   Gui/                            optional WPF interface (XAML + Gui.ps1)
 tests/                            Pester suite (engine, providers, CLI, GUI, TUI, ...)
-tools/                            Parse-All, Test-Catalog, Test-Insight, Invoke-Validation,
-                                  New-FeatureInventory, New-ReleasePackage, Measure-WtWorker
+tools/                            Parse-All, Test-Catalog, Test-Insight, Test-Compatibility,
+                                  Invoke-Validation, New-FeatureInventory, New-ReleasePackage,
+                                  Measure-WtWorker
+.github/workflows/release.yml     tag-triggered release: package, validate, upload the six assets
 docs/                             catalog, packs, worker, state journal, validation,
                                   limitations, dependencies, keyboard, and the notes here
-bootstrap/bootstrap.ps1           installer launcher, run as text
+bootstrap/bootstrap.ps1           installer launcher, run as text (5.1-parseable; runtime policy,
+                                  discovery, handoff, installation offer)
+src/WindowsTweaker/Private/Compatibility.ps1
+                                  one runtime layer: profile, capabilities, BOM-less UTF-8,
+                                  portable JSON, pwsh discovery, console VT enable/restore
+src/WindowsTweaker/Private/Catalog/Json.ps1
+                                  portable strict JSON parser (duplicate keys, depth, kinds)
 deploy/short-url/                 nginx config for the short download URL (prepared only)
 worker/                           optional Go worker: cmd/wt-worker, internal/, go.mod, bin/
 samples/example-pack.json         example tweak pack for the catalog/pack switches

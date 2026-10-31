@@ -1,4 +1,4 @@
-# WindowsTweaker - TUI screen buffer and rendering.
+﻿# WindowsTweaker - TUI screen buffer and rendering.
 #
 # The interface paints into an in-memory cell grid and then writes the whole frame in
 # a single console write. That keeps the screen consistent (no partially painted

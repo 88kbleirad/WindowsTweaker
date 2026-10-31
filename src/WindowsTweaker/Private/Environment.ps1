@@ -1,4 +1,4 @@
-# WindowsTweaker - read-only environment and dependency probing.
+﻿# WindowsTweaker - read-only environment and dependency probing.
 #
 # Hard rule: nothing in this file may modify the system. Every function here only
 # reads (registry reads, service queries, module/cmdlet lookups). Initialisation
@@ -9,12 +9,11 @@ $Script:WtCapabilityCache = @{}
 
 <#
 .SYNOPSIS
-    Minimum supported PowerShell version.
+    PowerShell version that must be present for the application to start.
 .DESCRIPTION
-    The code base relies on PowerShell 7 features that do not exist in Windows
-    PowerShell 5.1: -Encoding utf8NoBOM, -ErrorAction Ignore and
-    [type]::new() over ScriptBlock-based Add-Type helpers. Compatibility with
-    5.1 is therefore neither claimed nor implemented.
+    Windows PowerShell 5.1 ships with Windows, so it is the requirement - not 7.4. The
+    validated runtime is Get-WtSupportedPowerShellVersion (7.4-7.6), and the bootstrap
+    prefers it when it is installed. See docs/COMPATIBILITY.md.
 #>
 function Get-WtRequiredPowerShellVersion
 {
@@ -22,7 +21,36 @@ function Get-WtRequiredPowerShellVersion
     [OutputType([version])]
     param ()
 
-    return [version]'7.4'
+    return (Get-WtMinimumPowerShellVersion)
+}
+
+<#
+.SYNOPSIS
+    PowerShell version the application is designed and validated for.
+.DESCRIPTION
+    Not a start gate: the bootstrap hands off to it, and the interactive interface prefers
+    it, but Windows PowerShell 5.1 runs the same engine natively.
+#>
+function Get-WtRecommendedPowerShellVersion
+{
+    [CmdletBinding()]
+    [OutputType([version])]
+    param ()
+
+    return (Get-WtSupportedPowerShellVersion)
+}
+
+<#
+.SYNOPSIS
+    Oldest PowerShell version that may start the application.
+#>
+function Get-WtMinimumRuntimeVersion
+{
+    [CmdletBinding()]
+    [OutputType([version])]
+    param ()
+
+    return (Get-WtMinimumPowerShellVersion)
 }
 
 <#
@@ -41,20 +69,31 @@ function Get-WtEnvironmentInternal
         return $Script:WtEnvironmentCache
     }
 
+    # One snapshot of the runtime, shared with every capability question below.
+    $Runtime = Get-WtRuntimeProfile
+
     $Environment = [ordered]@{
         PSTypeName    = 'WindowsTweaker.Environment'
         PowerShell    = $PSVersionTable.PSVersion
-        PSEdition     = $PSVersionTable.PSEdition
+        PSEdition     = $Runtime.PSEdition
         RequiredPS    = Get-WtRequiredPowerShellVersion
+        MinimumPS     = $Runtime.MinimumVersion
+        RecommendedPS = Get-WtRecommendedPowerShellVersion
         MeetsPowerShell = ($PSVersionTable.PSVersion -ge (Get-WtRequiredPowerShellVersion))
-        IsWindows     = [bool]$IsWindows
+        MeetsMinimumRuntime = ($PSVersionTable.PSVersion -ge $Runtime.MinimumVersion)
+        MeetsRecommendedRuntime = ($PSVersionTable.PSVersion -ge (Get-WtRecommendedPowerShellVersion))
+        RuntimeTier   = $Runtime.Tier
+        IsPreviewRuntime = [bool]$Runtime.PreRelease
+        IsWindowsPowerShell = [bool]$Runtime.IsWindowsPowerShell
+        RuntimeCapabilities = @(Get-WtRuntimeCapabilityList)
+        IsWindows     = [bool]$Runtime.IsWindows
         IsAdmin       = $false
         OSName        = $null
         OSBuild       = $null
         OSUBR         = $null
         OSDisplayVersion = $null
         OSVersionKey  = 'Unknown'
-        Architecture  = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+        Architecture  = Get-WtPlatformArchitecture
         IsVirtualMachine = $null
         LanguageMode  = $ExecutionContext.SessionState.LanguageMode.ToString()
         PendingReboot = $null
@@ -71,7 +110,7 @@ function Get-WtEnvironmentInternal
         $Environment.Culture = 'en-US'
     }
 
-    if ($IsWindows)
+    if ($Runtime.IsWindows)
     {
         try
         {
@@ -149,17 +188,12 @@ function Get-WtPlatformDescription
         return [string]$Environment.OSName
     }
 
-    try
+    # RuntimeInformation.OSDescription does not exist on .NET Framework, so it is read
+    # through the compatibility layer, which falls back to the platform name.
+    $Description = Get-WtOsDescription
+    if ($Description)
     {
-        $Description = [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
-        if ($Description)
-        {
-            return [string]$Description
-        }
-    }
-    catch
-    {
-        Write-WtLog -Level Debug -Message 'OS description unavailable.' -NoConsole
+        return [string]$Description
     }
 
     return [string][System.Environment]::OSVersion.Platform

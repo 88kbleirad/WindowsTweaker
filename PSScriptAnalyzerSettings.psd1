@@ -30,9 +30,15 @@
         # Assert-WtScriptParses). Exported command names are singular.
         'PSUseSingularNouns'
 
-        # Windows PowerShell 5.1 is explicitly unsupported (PowerShellVersion = 7.4),
-        # and PowerShell 7 reads UTF-8 without BOM correctly, including the Vietnamese
-        # string tables. Files are written with utf8NoBOM to keep diffs byte-stable.
+        # The rule is not a preference here, it is the opposite of what the project needs:
+        # Windows PowerShell 5.1 is a supported runtime (the manifest declares
+        # PowerShellVersion = 5.1), and it decodes a BOM-less file with the ANSI code page,
+        # which mangles every Vietnamese string table and every Vietnamese literal in the
+        # interface. Files that contain non-ASCII therefore carry a UTF-8 BOM, and
+        # tools/Test-Compatibility.ps1 (phase 7 of the validation suite) fails the build if
+        # one of them does not. Runtime data files are still written BOM-less through
+        # Write-WtTextFile, because PowerShell 7 would otherwise read a BOM back into the
+        # first journal/log line.
         'PSUseBOMForUnicodeEncodedFile'
 
         # Tweak detectors/appliers share one fixed invocation signature
