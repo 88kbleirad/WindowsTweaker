@@ -1,0 +1,49 @@
+{
+  "preset": 1,
+  "name": "explorer-usability",
+  "description": "Convenience choices for File Explorer and the taskbar (visible extensions, detailed transfer dialog, left-aligned search icon). Subjective defaults - review before applying.",
+  "generator": "WindowsTweaker",
+  "createdUtc": "2026-10-30T10:05:38.2289157Z",
+  "tweaks": [
+    {
+      "id": "Explorer.CheckBoxes",
+      "state": "Enabled"
+    },
+    {
+      "id": "Explorer.FileExtensions",
+      "state": "Enabled"
+    },
+    {
+      "id": "Explorer.FileTransferDialog",
+      "state": "Detailed"
+    },
+    {
+      "id": "Explorer.HiddenItems",
+      "state": "Enabled"
+    },
+    {
+      "id": "Explorer.NavigationPaneExpand",
+      "state": "Enabled"
+    },
+    {
+      "id": "Explorer.OpenFileExplorerTo",
+      "state": "ThisPC"
+    },
+    {
+      "id": "Explorer.RecycleBinDeleteConfirmation",
+      "state": "Enabled"
+    },
+    {
+      "id": "Explorer.ThisPC",
+      "state": "Shown"
+    },
+    {
+      "id": "Taskbar.SearchBox",
+      "state": "IconOnly"
+    },
+    {
+      "id": "Taskbar.SecondsInClock",
+      "state": "Enabled"
+    }
+  ]
+}

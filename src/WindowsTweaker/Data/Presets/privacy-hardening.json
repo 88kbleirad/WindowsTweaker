@@ -1,0 +1,81 @@
+{
+  "preset": 1,
+  "name": "privacy-hardening",
+  "description": "Reduces data collection and advertising surfaces. Review every entry before applying; nothing is applied automatically.",
+  "generator": "WindowsTweaker",
+  "createdUtc": "2026-10-30T10:05:38.1447709Z",
+  "tweaks": [
+    {
+      "id": "Privacy.AdvertisingId",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.BingSearch",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.DiagnosticDataLevel",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.DismissMSAccount",
+      "state": "Dismissed"
+    },
+    {
+      "id": "Privacy.ErrorReporting",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.FeedbackFrequency",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.LanguageListAccess",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.SearchHighlights",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.SettingsSuggestedContent",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.SigninInfo",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.SilentInstalledApps",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.StartAccountNotifications",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.StartRecommendationsTips",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.StartRecommendedSection",
+      "state": "Hidden"
+    },
+    {
+      "id": "Privacy.TailoredExperiences",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.WhatsNewInWindows",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.WindowsTips",
+      "state": "Disabled"
+    },
+    {
+      "id": "Privacy.WindowsWelcomeExperience",
+      "state": "Disabled"
+    }
+  ]
+}

@@ -1,0 +1,641 @@
+{
+  "schemaVersion": 1,
+  "kind": "Catalog",
+  "id": "builtin",
+  "version": "1.0.0",
+  "minEngineVersion": "1.0.0",
+  "author": "WindowsTweaker contributors",
+  "description": "Built-in declarative catalog. Every definition here was migrated from the equivalent PowerShell definition with identical detection maps and operation lists; tests/Catalog.Tests.ps1 proves the equivalence.",
+  "references": [
+    {
+      "id": "schema",
+      "url": "https://windows-tweaker.invalid/docs/CATALOG.md",
+      "title": "Catalog authoring documentation",
+      "supports": "The document format, the operation vocabulary and the strictness rules.",
+      "status": "Documented"
+    }
+  ],
+  "tweaks": [
+    {
+      "id": "Privacy.DismissMSAccount",
+      "revision": 1,
+      "category": "Privacy",
+      "tags": [
+        "account",
+        "windows-security",
+        "notification"
+      ],
+      "names": {
+        "en": "Microsoft account sign-in prompt in Windows Security",
+        "vi": "Lời nhắc đăng nhập tài khoản Microsoft trong Windows Security"
+      },
+      "descriptions": {
+        "en": "Controls whether the \"sign in to your Microsoft account\" recommendation on the Account protection card of Windows Security stays dismissed for the current user (Windows Security Health state record AccountProtection_MicrosoftAccount_Disconnected).",
+        "vi": "Điều khiển việc gợi ý \"đăng nhập tài khoản Microsoft\" trên thẻ Bảo vệ tài khoản của Windows Security có tiếp tục được bỏ qua cho người dùng hiện tại hay không (bản ghi trạng thái AccountProtection_MicrosoftAccount_Disconnected của Windows Security Health)."
+      },
+      "impacts": {
+        "en": "Dismissing only hides that one recommendation; Windows Security, Defender and the account protection status itself are unchanged. Shown lets Windows Security offer the recommendation again.",
+        "vi": "Bỏ qua chỉ ẩn duy nhất gợi ý đó; Windows Security, Defender và trạng thái bảo vệ tài khoản không thay đổi. Tùy chọn hiện lại sẽ để Windows Security gợi ý lại."
+      },
+      "sideEffects": {
+        "en": "Only the dismiss state of that one recommendation changes. Nothing about the account, sign-in or protection is modified.",
+        "vi": "Chỉ trạng thái bỏ qua của đúng gợi ý đó thay đổi. Không có gì về tài khoản, đăng nhập hay bảo vệ bị sửa."
+      },
+      "scope": "User",
+      "privilege": "None",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "None",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": [
+        "Cmdlet:Get-ItemProperty"
+      ],
+      "requires": [],
+      "runAfter": [],
+      "conflictsWith": [],
+      "supportedOS": [
+        "Windows10",
+        "Windows11"
+      ],
+      "architecture": "Any",
+      "detection": {
+        "hive": "HKCU",
+        "key": "Software\\Microsoft\\Windows Security Health\\State",
+        "name": "AccountProtection_MicrosoftAccount_Disconnected",
+        "map": {
+          "Dismissed": [
+            1
+          ],
+          "Shown": [
+            0
+          ]
+        }
+      },
+      "states": {
+        "Dismissed": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows Security Health\\State",
+            "name": "AccountProtection_MicrosoftAccount_Disconnected",
+            "type": "DWord",
+            "value": 1
+          }
+        ],
+        "Shown": [
+          {
+            "kind": "RegistryRemove",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows Security Health\\State",
+            "name": "AccountProtection_MicrosoftAccount_Disconnected"
+          }
+        ]
+      },
+      "defaultState": "Dismissed",
+      "references": [
+        {
+          "id": "ms-security-health",
+          "url": "https://learn.microsoft.com/windows/security/operating-system-security/device-management/windows-security-configuration-framework/windows-security-baselines",
+          "title": "Microsoft: Windows security baselines",
+          "supports": "That Windows Security surfaces account-protection recommendations, which is what this state record belongs to.",
+          "status": "Documented",
+          "checkedUtc": "2026-10-30"
+        }
+      ],
+      "evidence": {
+        "documentation": [
+          "ms-security-health"
+        ],
+        "windowsIntegration": {
+          "build": "not executed",
+          "edition": "not executed",
+          "architecture": "not executed",
+          "dateUtc": "not executed",
+          "method": "No Windows host was available; only the registry shape is documented above.",
+          "limitations": "The record name is taken from the previous PowerShell definition and has not been re-read from a live Windows Security Health state store on Windows 11.",
+          "result": "Unverified"
+        },
+        "notes": "Migrated from the PowerShell definition of the same id with an identical detection map and operation list."
+      },
+      "recommendation": {
+        "kind": "Optimization",
+        "policy": "Eligible",
+        "objectives": [
+          "Privacy",
+          "Balanced"
+        ],
+        "rationale": {
+          "en": "Dismisses one Windows Security recommendation for the current user, without touching Defender, the account or any protection state. It is a low-risk tidying change with an exact restore.",
+          "vi": "Bỏ qua một gợi ý của Windows Security cho người dùng hiện tại, không đụng tới Defender, tài khoản hay trạng thái bảo vệ nào. Đây là thay đổi dọn dẹp rủi ro thấp và khôi phục chính xác."
+        },
+        "documented": true
+      }
+    },
+    {
+      "id": "Privacy.LanguageListAccess",
+      "revision": 1,
+      "category": "Privacy",
+      "tags": [
+        "language",
+        "browser",
+        "accept-language"
+      ],
+      "names": {
+        "en": "Let websites show locally relevant content by accessing my language list",
+        "vi": "Cho phép trang web hiển thị nội dung phù hợp bằng cách truy cập danh sách ngôn ngữ"
+      },
+      "descriptions": {
+        "en": "Sets HttpAcceptLanguageOptOut for the current user. Disabling it stops Windows from passing the language list to websites through the Accept-Language header.",
+        "vi": "Đặt HttpAcceptLanguageOptOut cho người dùng hiện tại. Khi tắt, Windows sẽ không chuyển danh sách ngôn ngữ cho trang web qua tiêu đề Accept-Language."
+      },
+      "impacts": {
+        "en": "Disabling only affects sites that use the language list for localisation; the Windows display language, keyboard layouts and installed languages are unchanged.",
+        "vi": "Tắt chỉ ảnh hưởng đến các trang web dùng danh sách ngôn ngữ để bản địa hóa; ngôn ngữ hiển thị, bàn phím và các ngôn ngữ đã cài của Windows không thay đổi."
+      },
+      "sideEffects": {
+        "en": "Websites may fall back to a default language for content that would otherwise follow your language list.",
+        "vi": "Trang web có thể dùng ngôn ngữ mặc định cho nội dung mà trước đây theo danh sách ngôn ngữ của bạn."
+      },
+      "scope": "User",
+      "privilege": "None",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "None",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": [
+        "Cmdlet:Get-ItemProperty"
+      ],
+      "requires": [],
+      "runAfter": [],
+      "conflictsWith": [],
+      "supportedOS": [
+        "Windows10",
+        "Windows11"
+      ],
+      "architecture": "Any",
+      "detection": {
+        "hive": "HKCU",
+        "key": "Control Panel\\International\\User Profile",
+        "name": "HttpAcceptLanguageOptOut",
+        "map": {
+          "Enabled": [
+            0
+          ],
+          "Disabled": [
+            1
+          ]
+        }
+      },
+      "states": {
+        "Enabled": [
+          {
+            "kind": "RegistryRemove",
+            "hive": "HKCU",
+            "key": "Control Panel\\International\\User Profile",
+            "name": "HttpAcceptLanguageOptOut"
+          }
+        ],
+        "Disabled": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Control Panel\\International\\User Profile",
+            "name": "HttpAcceptLanguageOptOut",
+            "type": "DWord",
+            "value": 1
+          }
+        ]
+      },
+      "defaultState": "Disabled",
+      "references": [
+        {
+          "id": "http-accept-language",
+          "url": "https://learn.microsoft.com/windows/win32/wininet/http-sessions",
+          "title": "Microsoft: WinINet HTTP sessions",
+          "supports": "That the Accept-Language request header is what sends the language list to a site.",
+          "status": "Documented",
+          "checkedUtc": "2026-10-30"
+        }
+      ],
+      "evidence": {
+        "documentation": [
+          "http-accept-language"
+        ],
+        "windowsIntegration": {
+          "build": "not executed",
+          "edition": "not executed",
+          "architecture": "not executed",
+          "dateUtc": "not executed",
+          "method": "No Windows host was available; the value name comes from the previous PowerShell definition.",
+          "limitations": "Not read back from a live Windows installation.",
+          "result": "Unverified"
+        },
+        "notes": "Migrated from the PowerShell definition of the same id (default state Disabled, states derived from the operation map)."
+      },
+      "recommendation": {
+        "kind": "Optimization",
+        "policy": "Eligible",
+        "objectives": [
+          "Privacy"
+        ],
+        "rationale": {
+          "en": "Stops Windows from passing the language list to websites through the Accept-Language header. It changes no language, keyboard or installed-language setting, and it restores exactly.",
+          "vi": "Ngăn Windows gửi danh sách ngôn ngữ cho trang web qua tiêu đề Accept-Language. Không thay đổi ngôn ngữ, bàn phím hay ngôn ngữ đã cài, và khôi phục chính xác."
+        },
+        "documented": true
+      }
+    },
+    {
+      "id": "Privacy.WindowsTips",
+      "revision": 1,
+      "category": "Privacy",
+      "tags": [
+        "tips",
+        "suggestions",
+        "content-delivery"
+      ],
+      "names": {
+        "en": "Tips and suggestions when using Windows",
+        "vi": "Mẹo và gợi ý khi sử dụng Windows"
+      },
+      "descriptions": {
+        "en": "Shows or hides the Windows tips and suggestion notifications (ContentDeliveryManager SubscribedContent-338389Enabled).",
+        "vi": "Hiện hoặc ẩn thông báo mẹo và gợi ý của Windows (ContentDeliveryManager SubscribedContent-338389Enabled)."
+      },
+      "impacts": {
+        "en": "Showing the tips also removes the machine-wide DisableSoftLanding policy (\"Do not show Windows tips\"), which would otherwise force them off for every user.",
+        "vi": "Khi bật, công cụ cũng xóa chính sách DisableSoftLanding ở cấp máy (\"Không hiển thị mẹo Windows\"), vì chính sách đó sẽ buộc tắt mẹo cho mọi người dùng."
+      },
+      "sideEffects": {
+        "en": "Showing the tips deletes a machine-wide policy value, so every account on the machine can receive tips again.",
+        "vi": "Khi bật, một giá trị chính sách ở cấp máy bị xóa, nên mọi tài khoản trên máy có thể nhận mẹo trở lại."
+      },
+      "scope": "UserAndMachine",
+      "privilege": "Admin",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "None",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": [
+        "Cmdlet:Get-ItemProperty"
+      ],
+      "requires": [],
+      "runAfter": [],
+      "conflictsWith": [],
+      "supportedOS": [
+        "Windows10",
+        "Windows11"
+      ],
+      "architecture": "Any",
+      "detection": {
+        "hive": "HKCU",
+        "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+        "name": "SubscribedContent-338389Enabled",
+        "map": {
+          "Enabled": [
+            1
+          ],
+          "Disabled": [
+            0
+          ]
+        }
+      },
+      "states": {
+        "Enabled": [
+          {
+            "kind": "RegistryRemove",
+            "hive": "HKLM",
+            "key": "SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+            "name": "DisableSoftLanding"
+          },
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SubscribedContent-338389Enabled",
+            "type": "DWord",
+            "value": 1
+          }
+        ],
+        "Disabled": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SubscribedContent-338389Enabled",
+            "type": "DWord",
+            "value": 0
+          }
+        ]
+      },
+      "defaultState": "Disabled",
+      "managedPolicy": [
+        {
+          "hive": "HKLM",
+          "key": "SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+          "name": "DisableSoftLanding"
+        }
+      ],
+      "references": [
+        {
+          "id": "cdm-subscribed-content",
+          "url": "https://learn.microsoft.com/windows/client-management/mdm/policy-csp-experience",
+          "title": "Microsoft: Experience policy CSP",
+          "supports": "That Windows exposes content-delivery/tips policies that can override the per-user value this tweak writes.",
+          "status": "Documented",
+          "checkedUtc": "2026-10-30"
+        }
+      ],
+      "evidence": {
+        "documentation": [
+          "cdm-subscribed-content"
+        ],
+        "windowsIntegration": {
+          "build": "not executed",
+          "edition": "not executed",
+          "architecture": "not executed",
+          "dateUtc": "not executed",
+          "method": "No Windows host was available.",
+          "limitations": "The machine-wide policy value is removed on every state that needs it; that behaviour is carried over from the PowerShell definition and has not been re-read on a live machine.",
+          "result": "Unverified"
+        },
+        "notes": "Migrated from the PowerShell definition of the same id, including its managed-policy list."
+      },
+      "recommendation": {
+        "kind": "Optimization",
+        "policy": "Eligible",
+        "objectives": [
+          "Privacy",
+          "Balanced"
+        ],
+        "rationale": {
+          "en": "Turns off the Windows tips and suggestion notifications for the current user and clears the machine-wide policy that would keep them on. Full rollback, including the policy value.",
+          "vi": "Tắt thông báo mẹo và gợi ý của Windows cho người dùng hiện tại và xóa chính sách cấp máy vốn giữ chúng luôn bật. Hoàn tác đầy đủ, kể cả giá trị chính sách."
+        },
+        "documented": true
+      },
+      "effective": {
+        "evidence": "Inferred",
+        "boundary": "None",
+        "map": {
+          "Enabled": "Active",
+          "Disabled": "Inactive"
+        },
+        "note": {
+          "en": "The mapping follows the meaning of the value this definition writes: the Content Delivery Manager reads SubscribedContent-338389Enabled when it decides whether to show tips. It was not observed on a live build, so it is reported as inferred.",
+          "vi": "Ánh xạ này theo ý nghĩa của giá trị mà định nghĩa ghi: Content Delivery Manager đọc SubscribedContent-338389Enabled khi quyết định có hiện mẹo hay không. Chưa được quan sát trên bản Windows thật nên được báo là suy luận."
+        }
+      }
+    },
+    {
+      "id": "Explorer.OpenFileExplorerTo",
+      "revision": 1,
+      "category": "Explorer",
+      "tags": [
+        "shell",
+        "workflow",
+        "choice"
+      ],
+      "names": {
+        "en": "Folder File Explorer opens to",
+        "vi": "Thư mục File Explorer mở tới"
+      },
+      "descriptions": {
+        "en": "Chooses the folder a new File Explorer window opens with: This PC, Quick access/Home or Downloads. It is one setting with three alternatives, not three independent switches.",
+        "vi": "Chọn thư mục mà cửa sổ File Explorer mới sẽ mở tới: This PC, Truy cập nhanh/Home hoặc Downloads. Đây là một thiết lập có ba lựa chọn, không phải ba công tắc độc lập."
+      },
+      "impacts": {
+        "en": "Downloads uses the undocumented LaunchTo=3 value; the option is hidden from the Folder Options dialog but is honoured by Explorer, and each alternative is a single reversible value. Explorer reads the value when it starts, so the change is reported as pending until Explorer restarts.",
+        "vi": "Downloads dùng giá trị LaunchTo=3 không được tài liệu hóa; tùy chọn này bị ẩn khỏi hộp thoại Tùy chọn thư mục nhưng Explorer vẫn tuân theo, và mỗi lựa chọn chỉ là một giá trị có thể hoàn tác. Explorer đọc giá trị khi khởi động, nên thay đổi được báo là đang chờ cho tới khi Explorer khởi động lại."
+      },
+      "sideEffects": {
+        "en": "Only the startup folder changes. The folder itself, its contents and the Quick access list are not modified.",
+        "vi": "Chỉ thư mục khởi động thay đổi. Bản thân thư mục, nội dung của nó và danh sách Truy cập nhanh không bị sửa."
+      },
+      "scope": "User",
+      "privilege": "None",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "Explorer",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": [
+        "Cmdlet:Get-ItemProperty"
+      ],
+      "requires": [],
+      "runAfter": [],
+      "conflictsWith": [],
+      "supportedOS": [
+        "Windows10",
+        "Windows11"
+      ],
+      "architecture": "Any",
+      "detection": {
+        "hive": "HKCU",
+        "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "name": "LaunchTo",
+        "map": {
+          "ThisPC": [
+            1
+          ],
+          "QuickAccess": [
+            2
+          ],
+          "Downloads": [
+            3
+          ]
+        }
+      },
+      "states": {
+        "ThisPC": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            "name": "LaunchTo",
+            "type": "DWord",
+            "value": 1
+          }
+        ],
+        "QuickAccess": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            "name": "LaunchTo",
+            "type": "DWord",
+            "value": 2
+          }
+        ],
+        "Downloads": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            "name": "LaunchTo",
+            "type": "DWord",
+            "value": 3
+          }
+        ]
+      },
+      "defaultState": "QuickAccess",
+      "group": {
+        "id": "Explorer.StartupLocation",
+        "revision": 1,
+        "labels": {
+          "en": "Folder File Explorer opens to",
+          "vi": "Thư mục File Explorer mở tới"
+        },
+        "descriptions": {
+          "en": "One setting, three alternatives. Choosing one replaces the pending alternative rather than adding a second one.",
+          "vi": "Một thiết lập, ba lựa chọn. Chọn một lựa chọn sẽ thay thế lựa chọn đang chờ chứ không thêm lựa chọn thứ hai."
+        },
+        "notes": {
+          "en": "Quick access is what Windows ships; choosing it is a request for Windows' own behaviour, while switching back to a previously captured value is a restoration. The two are different actions and the review labels them differently.",
+          "vi": "Truy cập nhanh là giá trị Windows dùng sẵn; chọn nó là yêu cầu dùng hành vi của chính Windows, còn chuyển về giá trị đã lưu trước đó là khôi phục. Hai việc khác nhau và phần xem lại ghi nhãn khác nhau."
+        },
+        "options": [
+          {
+            "id": "ThisPC",
+            "intent": "Configured",
+            "labels": {
+              "en": "This PC",
+              "vi": "This PC"
+            },
+            "descriptions": {
+              "en": "Every new window opens at This PC.",
+              "vi": "Mọi cửa sổ mới mở tại This PC."
+            }
+          },
+          {
+            "id": "QuickAccess",
+            "intent": "WindowsDefault",
+            "labels": {
+              "en": "Quick access / Home",
+              "vi": "Truy cập nhanh / Home"
+            },
+            "descriptions": {
+              "en": "The folder Windows uses by default on a new installation.",
+              "vi": "Thư mục Windows dùng mặc định trên bản cài mới."
+            }
+          },
+          {
+            "id": "Downloads",
+            "intent": "Configured",
+            "labels": {
+              "en": "Downloads",
+              "vi": "Downloads"
+            },
+            "descriptions": {
+              "en": "Every new window opens at Downloads (LaunchTo=3).",
+              "vi": "Mọi cửa sổ mới mở tại Downloads (LaunchTo=3)."
+            }
+          }
+        ]
+      },
+      "recommendation": {
+        "kind": "Preference",
+        "policy": "Manual",
+        "objectives": [
+          "Balanced"
+        ],
+        "rationale": {
+          "en": "A workflow preference: which folder a new window opens at is a matter of habit, so it is offered and never selected automatically. No performance claim is made for any alternative.",
+          "vi": "Đây là sở thích trong cách làm việc: thư mục mà cửa sổ mới mở tới là thói quen, nên chỉ được đề nghị và không bao giờ được tự chọn. Không có khẳng định về hiệu năng cho bất kỳ lựa chọn nào."
+        },
+        "documented": true
+      },
+      "effective": {
+        "evidence": "Inferred",
+        "boundary": "Explorer",
+        "note": {
+          "en": "Explorer reads LaunchTo when it starts, which is why this definition declares a File Explorer restart. The value was not read back on a live build here.",
+          "vi": "Explorer đọc LaunchTo khi khởi động, đó là lý do định nghĩa này yêu cầu khởi động lại File Explorer. Giá trị chưa được đọc lại trên bản Windows thật ở đây."
+        }
+      },
+      "evidence": {
+        "documentation": [],
+        "windowsIntegration": {
+          "build": "not executed",
+          "edition": "not executed",
+          "architecture": "not executed",
+          "dateUtc": "not executed",
+          "method": "No Windows host was available; the LaunchTo mapping is the one the previous PowerShell definition of the same id used.",
+          "limitations": "Microsoft does not publish a reference page for the LaunchTo value; the mapping rests on the behaviour the previous definition encoded, and LaunchTo=3 is specifically undocumented.",
+          "result": "Unverified"
+        },
+        "notes": "Migrated from the PowerShell definition of the same id so the mapping and its evidence live in one place. The group metadata is new: it adds exclusivity and the WindowsDefault intent, not a different mapping."
+      }
+    },
+    {
+      "id": "Mmcss.SystemResponsiveness",
+      "revision": 1,
+      "category": "System",
+      "tags": ["mmcss", "audio", "repair"],
+      "names": { "en": "MMCSS system responsiveness value", "vi": "Giá trị độ phản hồi hệ thống của MMCSS" },
+      "descriptions": {
+        "en": "Writes the documented shipped value (20) of SystemResponsiveness under the Multimedia Class Scheduler profile, replacing a value whose documented semantics are rounded down to a multiple of 10 and clamped to 20.",
+        "vi": "Ghi giá trị mặc định được ghi trong tài liệu (20) cho SystemResponsiveness trong hồ sơ Multimedia Class Scheduler, thay cho một giá trị mà tài liệu nói rằng bị làm tròn xuống bội số của 10 và bị giới hạn về 20."
+      },
+      "impacts": {
+        "en": "Changes one registry value under the Multimedia Class Scheduler profile. It does not measure or promise any audio, gaming or latency improvement.",
+        "vi": "Thay đổi một giá trị registry trong hồ sơ Multimedia Class Scheduler. Không đo và không hứa hẹn cải thiện âm thanh, trò chơi hay độ trễ."
+      },
+      "sideEffects": {
+        "en": "Applications that join an MMCSS task keep the priority the task profile assigns; this value only changes the share of CPU reserved for the scheduler.",
+        "vi": "Các ứng dụng tham gia tác vụ MMCSS vẫn giữ mức ưu tiên mà hồ sơ tác vụ gán; giá trị này chỉ thay đổi phần CPU dành cho bộ lập lịch."
+      },
+      "scope": "Machine",
+      "privilege": "Admin",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "None",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": ["Cmdlet:Get-ItemProperty"],
+      "supportedOS": ["Windows10", "Windows11"],
+      "detection": { "hive": "HKLM", "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile", "name": "SystemResponsiveness", "map": { "WindowsDefault": [20] } },
+      "states": {
+        "WindowsDefault": [ { "kind": "RegistrySet", "hive": "HKLM", "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile", "name": "SystemResponsiveness", "type": "DWord", "value": 20 } ]
+      },
+      "defaultState": "WindowsDefault",
+      "recommendation": {
+        "kind": "Repair",
+        "policy": "Eligible",
+        "objectives": ["Responsiveness", "Balanced"],
+        "rationale": {
+          "en": "Repair for one observed sanity finding: the machine carries a SystemResponsiveness value whose documented meaning is 'rounded down to a multiple of 10 and clamped to 20', so it no longer does what a tuning recipe claimed. Writing the shipped value 20 keeps the documented behaviour and removes the ambiguity; the previous value is captured and restorable. It is offered only while the finding is present.",
+          "vi": "Sửa chữa cho một phát hiện đã quan sát: máy đang giữ giá trị SystemResponsiveness mà tài liệu nói rằng 'bị làm tròn xuống bội số của 10 và bị giới hạn về 20', nên nó không còn tác dụng như công thức tinh chỉnh từng khẳng định. Ghi giá trị 20 như Windows dùng giữ nguyên hành vi được ghi trong tài liệu và bỏ đi sự mập mờ; giá trị cũ được lưu lại và khôi phục được. Chỉ được đề nghị khi phát hiện đó còn hiện diện."
+        },
+        "requiresFinding": "Mmcss.TaskOverrides/system-responsiveness",
+        "documented": true
+      },
+      "effective": {
+        "evidence": "Inferred",
+        "boundary": "None",
+        "map": { "WindowsDefault": "Active" },
+        "note": {
+          "en": "Inferred from the documented meaning of the value: MMCSS reads SystemResponsiveness when it reserves CPU for a task. It was not observed on a live build, so it is not reported as observed.",
+          "vi": "Suy luận từ ý nghĩa được ghi trong tài liệu: MMCSS đọc SystemResponsiveness khi dành CPU cho một tác vụ. Chưa được quan sát trên bản Windows thật nên không được báo là đã quan sát."
+        }
+      },
+      "references": [
+        { "id": "mmcss", "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service", "title": "Multimedia Class Scheduler Service - Win32 apps", "supports": "SystemResponsiveness is rounded down to a multiple of 10, values below 10 or above 100 are clamped to 20, and 20 is the value Windows ships.", "status": "Documented", "checkedUtc": "2026-10-31" }
+      ],
+      "evidence": { "documentation": ["mmcss"], "structural": "Structural", "windowsIntegration": { "build": "", "edition": "", "architecture": "", "dateUtc": "", "method": "Not run for this definition.", "limitations": "No Windows build was used to write or read back this value here; the mapping rests on the documentation above.", "result": "Unverified" } }
+    }
+  ]
+}

@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://windows-tweaker.invalid/schemas/catalog.schema.json",
+  "title": "WindowsTweaker declarative catalog, pack and migration documents",
+  "description": "Normative description of the documents the engine reads. The loader does not use a JSON-Schema library and never resolves a $ref: it validates in PowerShell, with the same bounds and enums listed here. tests/Catalog.Tests.ps1 asserts that every enum, key list and limit in this file still matches the constants in Private/Catalog/Catalog.ps1, so this file cannot drift from the implementation. Documents are data only: nothing in a document is evaluated, downloaded or resolved, and loading one never changes Windows.",
+  "oneOf": [
+    { "$ref": "#/$defs/catalogDocument" },
+    { "$ref": "#/$defs/packDocument" },
+    { "$ref": "#/$defs/migrationDocument" }
+  ],
+  "$defs": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Document format version. A document with any other value is refused."
+    },
+    "localizedText": {
+      "type": "object",
+      "description": "One non-empty string per supported language.",
+      "required": ["en", "vi"],
+      "additionalProperties": false,
+      "properties": {
+        "en": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "vi": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "registryOperation": {
+      "description": "One write. RegistrySet writes a value; RegistryRemove deletes one, and a restore replays the captured state instead of a generic removal.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "hive", "key", "name", "type", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "RegistrySet" },
+            "hive": { "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"] },
+            "key": { "type": "string", "minLength": 1, "description": "Registry path without the hive prefix." },
+            "name": { "type": "string", "description": "Value name; an empty string is the default (unnamed) value." },
+            "type": { "enum": ["String", "ExpandString", "Binary", "DWord", "MultiString", "QWord"] },
+            "value": { "type": ["string", "number", "boolean", "array"] },
+            "view": { "enum": ["Default", "Registry32", "Registry64"] },
+            "user": { "const": "CurrentUser" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "hive", "key", "name"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "RegistryRemove" },
+            "hive": { "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"] },
+            "key": { "type": "string", "minLength": 1 },
+            "name": { "type": "string" },
+            "view": { "enum": ["Default", "Registry32", "Registry64"] },
+            "user": { "const": "CurrentUser" }
+          }
+        }
+      ]
+    },
+    "detection": {
+      "type": "object",
+      "required": ["hive", "key", "name", "map"],
+      "additionalProperties": false,
+      "properties": {
+        "hive": { "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"] },
+        "key": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "view": { "enum": ["Default", "Registry32", "Registry64"] },
+        "map": {
+          "type": "object",
+          "description": "State name -> the values Windows writes for that state. A value that is absent is reported as unknown, never guessed.",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": ["string", "number", "boolean"] }
+          }
+        }
+      }
+    },
+    "managedPolicy": {
+      "type": "array",
+      "description": "Machine or policy values that indicate an organization manages this setting.",
+      "items": {
+        "type": "object",
+        "required": ["hive", "key", "name"],
+        "additionalProperties": false,
+        "properties": {
+          "hive": { "enum": ["HKCU", "HKLM", "HKCR", "HKU", "HKCC"] },
+          "key": { "type": "string", "minLength": 1 },
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "description": "Evidence reference. It is never fetched; the URL is required to be https so it is unambiguous as a citation.",
+      "required": ["id", "url", "title", "supports"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "url": { "type": "string", "pattern": "^https://" },
+        "title": { "type": "string" },
+        "supports": { "type": "string", "minLength": 1, "description": "What this reference supports. A bare URL proves nothing." },
+        "status": { "enum": ["Documented", "Structural", "ProviderTested", "WindowsValidated", "Unverified"] },
+        "checkedUtc": { "type": "string" }
+      }
+    },
+    "windowsIntegration": {
+      "type": "object",
+      "description": "What was actually observed on a real Windows build, if anything. Kept apart from claim-level evidence.",
+      "additionalProperties": false,
+      "properties": {
+        "build": { "type": "string" },
+        "edition": { "type": "string" },
+        "architecture": { "type": "string" },
+        "dateUtc": { "type": "string" },
+        "method": { "type": "string", "description": "How the observation was made." },
+        "limitations": { "type": "string", "description": "What was not covered." },
+        "result": { "enum": ["Documented", "Structural", "ProviderTested", "WindowsValidated", "Unverified"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "enum": ["BuiltIn", "Pack"] },
+        "documentation": { "type": "array", "items": { "type": "string" }, "description": "Ids of the references that support this definition." },
+        "structural": { "enum": ["Documented", "Structural", "ProviderTested", "WindowsValidated", "Unverified"] },
+        "providerTests": { "enum": ["Documented", "Structural", "ProviderTested", "WindowsValidated", "Unverified"] },
+        "windowsIntegration": { "$ref": "#/$defs/windowsIntegration" },
+        "notes": { "type": "string" }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "description": "What the definition asks the engine to consider. Eligibility is claimed here and decided by the engine (Private/Insight/Recommendations.ps1): a document may ask to be considered, it can never grant itself a place in an automatic proposal, and a definition with no recommendation metadata - or metadata the engine cannot use - is never selected automatically.",
+      "required": ["kind", "policy"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["Optimization", "Preference", "Diagnostic", "Repair"], "description": "Optimization changes behaviour, Preference is a visual or workflow habit, Diagnostic collects information, Repair fixes an observed finding." },
+        "policy": { "enum": ["Eligible", "Manual", "Never"], "description": "Eligible may be considered for an automatic proposal; Manual is only ever offered; Never is never selected automatically. Eligibility is separate from evidence, risk, compatibility and user intent." },
+        "objectives": { "type": "array", "items": { "enum": ["Balanced", "Responsiveness", "Gaming", "PowerEfficiency", "Privacy"] }, "description": "Required and non-empty for an Eligible item: an item that names no objective is never matched to one." },
+        "rationale": { "$ref": "#/$defs/localizedText", "description": "Required for an Eligible item: why it is recommended. A recommendation without a reason is refused." },
+        "requiresFinding": { "type": "string", "description": "Sanity rule id whose observed finding unlocks this repair. Required for kind Repair, refused for every other kind: a repair follows a finding, not an unapplied tweak." },
+        "documented": { "type": "boolean", "description": "Whether the rationale rests on the referenced documentation rather than on an author's opinion." }
+      }
+    },
+    "effective": {
+      "type": "object",
+      "description": "The mapping from configuration to behaviour, and the boundary at which Windows reads it. Declaring nothing means the effective state is reported as Unknown: a write and read-back proves configuration, never behaviour.",
+      "required": ["evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "evidence": { "enum": ["Observed", "Inferred", "Unknown"], "description": "Observed means a probe read the live behaviour or a Windows-validated observation is recorded for a real build; Inferred means a documented mapping implies it. An imported pack can never declare Observed." },
+        "boundary": { "enum": ["None", "Explorer", "SignOut", "Reboot"], "description": "When the component reads the value. Until that boundary is crossed the effective state is reported as pending, not as applied, and the answer is re-probed afterwards rather than assumed." },
+        "map": {
+          "type": "object",
+          "description": "Declared state name -> effective behaviour. A key that is not a declared state, or a value that is not an effective state, is refused.",
+          "additionalProperties": { "enum": ["Active", "Inactive", "PendingRestart", "PendingSignOut", "PendingReboot", "Unknown", "Unsupported"] }
+        },
+        "note": { "$ref": "#/$defs/localizedText", "description": "How the mapping was obtained and what it does not cover." }
+      }
+    },
+    "capabilityCondition": {
+      "type": "object",
+      "description": "When a Conditional impact applies. The explanation is required and always shown; the capability tokens are probed on this machine, and a condition that cannot be evaluated is reported as such - never treated as satisfied or as irrelevant.",
+      "required": ["explanation"],
+      "additionalProperties": false,
+      "properties": {
+        "explanation": { "$ref": "#/$defs/localizedText", "description": "What must be true for the impact to apply. It must not claim that an installed feature is unused: absence of detected usage is not proof of no usage." },
+        "requiresCapabilities": { "type": "array", "maxItems": 16, "items": { "type": "string" }, "description": "Capability tokens (same vocabulary as requiresCapabilities) that must be present on this machine for the impact to apply. A token that is absent means the impact does not apply now; a token that cannot be probed keeps the impact conditional and reports the probe as missing." }
+      }
+    },
+    "capabilityImpact": {
+      "type": "object",
+      "description": "One capability-loss disclosure: something that may stop working after this action. The capability id is a stable identifier shared across definitions, so the engine can deduplicate repeated impacts and name every selected action that causes each one. Kinds: Guaranteed (the loss follows from the action whenever it succeeds), Conditional (it applies only under the stated condition) and Unknown (the impact is possible but needs further review). Temporary means the loss is expected to be reversible or to lapse on its own; restoredBy describes how the capability may be brought back (including the exact rollback path where one exists), and limitations says what that restoration does not cover.",
+      "required": ["capability", "kind", "names"],
+      "additionalProperties": false,
+      "properties": {
+        "capability": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "description": "Stable capability id, e.g. recording.screen, printing, hibernation, app.integration.<name>." },
+        "names": { "$ref": "#/$defs/localizedText", "description": "What may stop working, in the user's language." },
+        "kind": { "enum": ["Guaranteed", "Conditional", "Unknown"] },
+        "temporary": { "type": "boolean", "description": "True when the loss is temporary (reversible, or lapses on its own); false when it persists until restored." },
+        "condition": { "$ref": "#/$defs/capabilityCondition" },
+        "restoredBy": { "$ref": "#/$defs/localizedText", "description": "How the capability may be restored. Absent means the definition does not claim any restoration path." },
+        "limitations": { "$ref": "#/$defs/localizedText", "description": "Recovery limitations: what restoration does not cover." }
+      }
+    },
+    "groupOption": {
+      "type": "object",
+      "description": "One alternative of a mutually exclusive group. Its id is also the name of the state that reaches it, so the option and its operations cannot drift apart.",
+      "required": ["id", "labels"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$" },
+        "intent": { "enum": ["Configured", "WindowsDefault"], "description": "Configured writes a value this tool can restore exactly; WindowsDefault asks for the behaviour Windows uses by default. Neither is the same as restoring the captured baseline, and the review labels them differently." },
+        "labels": { "$ref": "#/$defs/localizedText" },
+        "descriptions": { "$ref": "#/$defs/localizedText" }
+      }
+    },
+    "group": {
+      "type": "object",
+      "description": "One setting with several alternatives, declared as a tweak whose states are exactly the alternatives. One pending alternative exists per tweak id, so the interface cannot offer two of them as unrelated checkboxes; the alternatives keep the same preview, journal, verification and recovery path as everything else, and their targets go through the same conflict detection (a group declaration never bypasses it).",
+      "required": ["id", "revision", "labels", "options"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$", "description": "Group identity, unique across the whole document: two definitions declaring the same group id would be reported as one setting with two different sets of alternatives." },
+        "revision": { "type": "integer", "minimum": 1, "description": "Required, like the tweak-level revision: a group is a definition of its own and carries its own revision." },
+        "labels": { "$ref": "#/$defs/localizedText" },
+        "descriptions": { "$ref": "#/$defs/localizedText" },
+        "notes": { "$ref": "#/$defs/localizedText" },
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/groupOption" },
+          "description": "At least two, unique ids, each with a state of the same name, and no state that is not an option. defaultState must be one of them, and a group may not be irreversible: it exists to be switched back and forth. Every option id must also be a key of detection.map (an alternative that cannot be detected could never be reported as the current one), and every option's state must write the same set of canonical targets: an option writing a target the others do not would leave it behind on switching, so the group would not be one setting with alternatives."
+        }
+      }
+    },
+    "tweak": {
+      "type": "object",
+      "required": [
+        "id", "category", "names", "descriptions", "impacts", "sideEffects",
+        "scope", "lifecycle", "risk", "restart", "rollback",
+        "irreversible", "dataDeletion", "reducesProtection",
+        "detection", "states", "defaultState"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$" },
+        "revision": { "type": "integer", "minimum": 1, "description": "Definition revision, incremented when the definition changes." },
+        "category": { "enum": ["Privacy", "Security", "System", "Explorer", "Taskbar", "StartMenu", "Apps", "Network", "Updates", "Personalization", "Maintenance"] },
+        "tags": { "type": "array", "maxItems": 16, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$" } },
+        "names": { "$ref": "#/$defs/localizedText" },
+        "descriptions": { "$ref": "#/$defs/localizedText" },
+        "impacts": { "$ref": "#/$defs/localizedText" },
+        "sideEffects": { "$ref": "#/$defs/localizedText" },
+        "scope": { "enum": ["User", "Machine", "UserAndMachine"] },
+        "privilege": { "enum": ["None", "Admin"], "description": "Derived from scope: anything other than User requires Admin; a document that claims otherwise is refused." },
+        "lifecycle": { "enum": ["Available", "Experimental", "Unsupported", "Deprecated", "Restore-only"] },
+        "risk": { "enum": ["Low", "Medium", "High"], "description": "A risk floor is derived from the flags below; a lower value is refused." },
+        "restart": { "enum": ["None", "Explorer", "SignOut", "Reboot"] },
+        "rollback": { "enum": ["Full", "Partial", "None"] },
+        "irreversible": { "type": "boolean" },
+        "dataDeletion": { "type": "boolean" },
+        "reducesProtection": { "type": "boolean" },
+        "requires": { "type": "array", "maxItems": 16, "items": { "type": "string" }, "description": "Hard prerequisites: applied first, or already satisfied." },
+        "runAfter": { "type": "array", "maxItems": 16, "items": { "type": "string" }, "description": "Ordering only." },
+        "conflictsWith": { "type": "array", "maxItems": 16, "items": { "type": "string" }, "description": "Must not be applied together with this tweak." },
+        "requiresCapabilities": { "type": "array", "maxItems": 16, "items": { "type": "string" } },
+        "supportedOS": { "type": "array", "items": { "enum": ["Windows10", "Windows11"] } },
+        "minBuild": { "type": "integer", "minimum": 0 },
+        "maxBuild": { "type": "integer", "minimum": 0, "description": "Recorded and reported as not enforced: this engine evaluates the platform key and the minimum build only." },
+        "editions": { "type": "array", "items": { "type": "string" }, "description": "Recorded and reported as not enforced." },
+        "architecture": { "enum": ["Any", "X64", "Arm64", "X86"], "description": "Recorded and reported as not enforced unless Any." },
+        "hardware": { "type": "array", "items": { "type": "string" }, "description": "Recorded and reported as not enforced." },
+        "detection": { "$ref": "#/$defs/detection" },
+        "states": {
+          "type": "object",
+          "description": "State name -> the complete operation list for that state. Every state must be complete on its own.",
+          "minProperties": 1,
+          "maxProperties": 8,
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": { "$ref": "#/$defs/registryOperation" }
+          }
+        },
+        "defaultState": { "type": "string" },
+        "managedPolicy": { "$ref": "#/$defs/managedPolicy" },
+        "references": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/reference" } },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "recommendation": { "$ref": "#/$defs/recommendation" },
+        "effective": { "$ref": "#/$defs/effective" },
+        "group": { "$ref": "#/$defs/group" },
+        "capabilityLoss": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/capabilityImpact" }, "description": "Capability-loss disclosures: what may stop working after this action. A pack may add disclosures; it can never suppress the engine-owned warnings. Duplicate capability ids within one definition are refused; the same capability across different definitions is deduplicated by the engine, which then names every selected action that causes it." }
+      }
+    },
+    "catalogDocument": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "id", "tweaks"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "kind": { "const": "Catalog" },
+        "id": { "type": "string" },
+        "version": { "type": "string" },
+        "minEngineVersion": { "type": "string" },
+        "author": { "type": "string" },
+        "description": { "type": "string" },
+        "references": { "type": "array", "items": { "$ref": "#/$defs/reference" } },
+        "tweaks": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/tweak" } }
+      }
+    },
+    "packDocument": {
+      "type": "object",
+      "description": "A pack is the same format as the built-in catalog. Every tweak id must start with the pack id, so a pack can never redefine, shadow or replace a built-in tweak.",
+      "required": ["schemaVersion", "kind", "id", "tweaks"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "kind": { "const": "Pack" },
+        "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[A-Za-z0-9][A-Za-z0-9_-]*)+$" },
+        "version": { "type": "string" },
+        "minEngineVersion": { "type": "string" },
+        "author": { "type": "string" },
+        "description": { "type": "string" },
+        "references": { "type": "array", "items": { "$ref": "#/$defs/reference" } },
+        "tweaks": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/tweak" } }
+      }
+    },
+    "migrationDocument": {
+      "type": "object",
+      "description": "Stable-ID registry: rename, replace or retire an id without rewriting anything that already refers to it.",
+      "required": ["schemaVersion", "kind", "migrations"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+        "kind": { "const": "Migrations" },
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "migrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "kind"],
+            "additionalProperties": false,
+            "properties": {
+              "from": { "type": "string" },
+              "to": { "type": "string" },
+              "kind": { "enum": ["rename", "replace", "deprecate"] },
+              "since": { "type": "string" },
+              "notes": { "$ref": "#/$defs/localizedText" },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

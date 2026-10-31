@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "sample-incident-001",
+  "title": "Sample incident: high sustained CPU (fixture)",
+  "fromMs": 1700000000000,
+  "toMs": 1700003600000,
+  "createdUtc": "2025-11-14T12:00:00Z",
+  "updatedUtc": "2025-11-14T12:10:00Z",
+  "pinnedPanels": ["host.cpu.utilization"],
+  "notes": [
+    { "text": "Fixture note: this incident is sample data, not live.", "atUtc": "2025-11-14T12:05:00Z" }
+  ],
+  "events": [
+    { "kind": "observed", "source": "journal", "type": "operation", "atMs": 1700001200000, "text": "System.Hibernation: Disabled [succeeded]", "clockUncertain": false, "payload": { "operationId": "sample-1", "sessionId": "sample-s1", "outcome": "succeeded" } },
+    { "kind": "observed", "source": "alerts", "type": "alert", "atMs": 1700002400000, "text": "cpu-sustained: firing", "clockUncertain": false, "payload": { "ruleId": "cpu-high" } },
+    { "kind": "inferred", "source": "metrics", "type": "boot", "atMs": 1700000000000, "text": "Uptime reset detected inside the window (possible restart).", "clockUncertain": true, "payload": null }
+  ]
+}

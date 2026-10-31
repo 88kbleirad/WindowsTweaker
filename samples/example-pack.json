@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "kind": "Pack",
+  "id": "WindowsTweaker.Sample",
+  "version": "1.0.0",
+  "minEngineVersion": "1.0.0",
+  "author": "WindowsTweaker contributors",
+  "description": "Sample pack: a complete, non-destructive example of the pack format. Every value it writes lives under HKCU\\Software\\WindowsTweaker\\Samples, a key no Windows component reads, so importing and applying it changes nothing about how Windows behaves. Use it to see the workflow (import, review, apply, roll back) and as the starting point for your own pack: see docs/PACKS.md and Data/Catalog/catalog.schema.json.",
+  "references": [
+    {
+      "id": "pack-docs",
+      "url": "https://windows-tweaker.invalid/docs/PACKS.md",
+      "title": "Pack authoring documentation",
+      "supports": "The pack format, the namespace rule and the import workflow.",
+      "status": "Documented"
+    }
+  ],
+  "tweaks": [
+    {
+      "id": "WindowsTweaker.Sample.ExampleSetting",
+      "revision": 1,
+      "category": "System",
+      "tags": ["sample", "documentation"],
+      "names": {
+        "en": "Sample setting (writes an inert value)",
+        "vi": "Thiết lập mẫu (ghi một giá trị vô hại)"
+      },
+      "descriptions": {
+        "en": "Writes HKCU\\Software\\WindowsTweaker\\Samples\\ExampleSetting. No Windows component reads that key: the value exists so a pack author can see detection, review, journal capture, verification and rollback work end to end.",
+        "vi": "Ghi HKCU\\Software\\WindowsTweaker\\Samples\\ExampleSetting. Không thành phần nào của Windows đọc khóa này: giá trị chỉ tồn tại để tác giả gói thấy được quá trình nhận biết, xem lại, ghi nhật ký, xác minh và hoàn tác hoạt động trọn vẹn."
+      },
+      "impacts": {
+        "en": "Writes or removes one value under HKCU in a key that nothing reads, so nothing about Windows, the shell or the account changes. Rollback restores the exact previous value.",
+        "vi": "Ghi hoặc xóa một giá trị trong HKCU ở khóa không ai đọc, nên Windows, shell hay tài khoản không thay đổi gì. Hoàn tác khôi phục đúng giá trị trước đó."
+      },
+      "sideEffects": {
+        "en": "Adds one small registry value for the current user. No policy, service, scheduled task or file is touched.",
+        "vi": "Thêm một giá trị registry nhỏ cho người dùng hiện tại. Không chạm tới chính sách, dịch vụ, tác vụ theo lịch hay tệp nào."
+      },
+      "scope": "User",
+      "privilege": "None",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "None",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": ["Cmdlet:Get-ItemProperty"],
+      "requires": [],
+      "runAfter": [],
+      "conflictsWith": [],
+      "supportedOS": ["Windows10", "Windows11"],
+      "architecture": "Any",
+      "detection": {
+        "hive": "HKCU",
+        "key": "Software\\WindowsTweaker\\Samples",
+        "name": "ExampleSetting",
+        "map": {
+          "Enabled": [1],
+          "Disabled": [0]
+        }
+      },
+      "states": {
+        "Enabled": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\WindowsTweaker\\Samples",
+            "name": "ExampleSetting",
+            "type": "DWord",
+            "value": 1
+          }
+        ],
+        "Disabled": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\WindowsTweaker\\Samples",
+            "name": "ExampleSetting",
+            "type": "DWord",
+            "value": 0
+          }
+        ]
+      },
+      "defaultState": "Enabled",
+      "references": [
+        {
+          "id": "pack-docs",
+          "url": "https://windows-tweaker.invalid/docs/PACKS.md",
+          "title": "Pack authoring documentation",
+          "supports": "That a pack is data only and that its definitions run through the same reviewed apply path as built-in tweaks.",
+          "status": "Documented",
+          "checkedUtc": "2026-10-30"
+        }
+      ],
+      "evidence": {
+        "source": "Pack",
+        "documentation": ["pack-docs"],
+        "structural": "Structural",
+        "providerTests": "Unverified",
+        "notes": "This is a sample: it demonstrates the format, and it deliberately claims no more than that. Anything a pack says about itself is recorded as an author claim."
+      }
+    },
+    {
+      "id": "WindowsTweaker.Sample.SecondSetting",
+      "revision": 1,
+      "category": "System",
+      "tags": ["sample", "documentation"],
+      "names": {
+        "en": "Sample setting with a prerequisite",
+        "vi": "Thiết lập mẫu có điều kiện tiên quyết"
+      },
+      "descriptions": {
+        "en": "Writes HKCU\\Software\\WindowsTweaker\\Samples\\SecondSetting and declares WindowsTweaker.Sample.ExampleSetting as a prerequisite, so the dependency planner shows how a requirement is added to the plan before the tweak that needs it.",
+        "vi": "Ghi HKCU\\Software\\WindowsTweaker\\Samples\\SecondSetting và khai báo WindowsTweaker.Sample.ExampleSetting là điều kiện tiên quyết, để bộ lập kế hoạch cho thấy một yêu cầu được thêm vào kế hoạch trước tinh chỉnh cần nó như thế nào."
+      },
+      "impacts": {
+        "en": "Writes one inert value. When it is planned, the prerequisite is checked first: if the prerequisite is already in its default state it is not changed, and if its state cannot be read it stays in the plan and is verified when it runs.",
+        "vi": "Ghi một giá trị vô hại. Khi lập kế hoạch, điều kiện tiên quyết được kiểm tra trước: nếu đã ở trạng thái mặc định thì không bị thay đổi, còn nếu không đọc được trạng thái thì vẫn nằm trong kế hoạch và được xác minh khi chạy."
+      },
+      "sideEffects": {
+        "en": "Adds one small registry value for the current user, and may apply its prerequisite if that prerequisite is not already in place.",
+        "vi": "Thêm một giá trị registry nhỏ cho người dùng hiện tại, và có thể áp dụng điều kiện tiên quyết nếu điều kiện đó chưa được thiết lập."
+      },
+      "scope": "User",
+      "privilege": "None",
+      "lifecycle": "Available",
+      "risk": "Low",
+      "restart": "None",
+      "rollback": "Full",
+      "irreversible": false,
+      "dataDeletion": false,
+      "reducesProtection": false,
+      "requiresCapabilities": ["Cmdlet:Get-ItemProperty"],
+      "requires": ["WindowsTweaker.Sample.ExampleSetting"],
+      "runAfter": [],
+      "conflictsWith": [],
+      "supportedOS": ["Windows10", "Windows11"],
+      "architecture": "Any",
+      "detection": {
+        "hive": "HKCU",
+        "key": "Software\\WindowsTweaker\\Samples",
+        "name": "SecondSetting",
+        "map": {
+          "Enabled": [1],
+          "Disabled": [0]
+        }
+      },
+      "states": {
+        "Enabled": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\WindowsTweaker\\Samples",
+            "name": "SecondSetting",
+            "type": "DWord",
+            "value": 1
+          }
+        ],
+        "Disabled": [
+          {
+            "kind": "RegistrySet",
+            "hive": "HKCU",
+            "key": "Software\\WindowsTweaker\\Samples",
+            "name": "SecondSetting",
+            "type": "DWord",
+            "value": 0
+          }
+        ]
+      },
+      "defaultState": "Enabled",
+      "references": [
+        {
+          "id": "pack-docs",
+          "url": "https://windows-tweaker.invalid/docs/PACKS.md",
+          "title": "Pack authoring documentation",
+          "supports": "That a pack may declare requires, runAfter and conflictsWith, and how the planner treats them.",
+          "status": "Documented",
+          "checkedUtc": "2026-10-30"
+        }
+      ],
+      "evidence": {
+        "source": "Pack",
+        "documentation": ["pack-docs"],
+        "structural": "Structural",
+        "providerTests": "Unverified",
+        "notes": "This is a sample: it demonstrates the format, and it deliberately claims no more than that."
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "__inputs": [
+    { "name": "DS_PROMETHEUS", "label": "Prometheus", "description": "", "type": "datasource", "pluginId": "prometheus", "pluginName": "Prometheus" }
+  ],
+  "title": "WindowsTweaker overview",
+  "uid": "wt-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    { "title": "CPU utilization", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "wt_cpu_utilization_percent", "legendFormat": "cpu" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 } },
+    { "title": "Physical memory used", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "wt_mem_physical_used_bytes", "legendFormat": "mem" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 } },
+    { "title": "Disk free", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "wt_disk_system_free_bytes" } ],
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 } },
+    { "title": "Network receive (bytes/s)", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "rate(wt_net_rx_bytes_total[5m])", "legendFormat": "{{adapter}}" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 } },
+    { "title": "Network transmit (bytes/s)", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "rate(wt_net_tx_bytes_total[5m])", "legendFormat": "{{adapter}}" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 } },
+    { "title": "Collector freshness", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "wt_collector_freshness_seconds" } ],
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 8 } },
+    { "title": "Operation outcomes", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "wt_ops_succeeded_total", "legendFormat": "succeeded" },
+                   { "expr": "wt_ops_failed_total", "legendFormat": "failed" },
+                   { "expr": "wt_ops_interrupted_total", "legendFormat": "interrupted" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 } },
+    { "title": "Active alerts", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [ { "expr": "wt_alerts_active" } ],
+      "gridPos": { "h": 6, "w": 8, "x": 12, "y": 22 } }
+  ],
+  "templating": { "list": [ { "name": "instance", "type": "query", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "query": "label_values(up, instance)" } ] },
+  "annotations": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" }
+}

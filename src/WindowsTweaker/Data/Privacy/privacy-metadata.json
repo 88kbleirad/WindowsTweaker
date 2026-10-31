@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "kind": "PrivacyMetadata",
+  "notes": "Privacy-specific profile metadata for selected catalog tweaks. It is descriptive data, not a promise: settingsEditable reports whether the Windows Settings screen remains editable for this value as we understand it, editions/builds are the declared support bounds, and diagnosticsConsequence is a stable capability id (see the capability-loss declarations) that describes the troubleshooting consequence. Nothing here is evaluated or executed.",
+  "entries": [
+    { "tweakId": "Privacy.DiagnosticDataLevel", "settingsEditable": "Unknown", "supportedEditions": [], "minBuild": 0, "diagnosticsConsequence": "diagnostics.troubleshooting" },
+    { "tweakId": "Privacy.AdvertisingId", "settingsEditable": "Editable", "supportedEditions": [], "minBuild": 0, "diagnosticsConsequence": "" },
+    { "tweakId": "Privacy.BingSearch", "settingsEditable": "Editable", "supportedEditions": [], "minBuild": 0, "diagnosticsConsequence": "" },
+    { "tweakId": "Privacy.SearchHighlights", "settingsEditable": "Editable", "supportedEditions": [], "minBuild": 0, "diagnosticsConsequence": "" },
+    { "tweakId": "Privacy.WindowsTips", "settingsEditable": "PolicyReadOnly", "supportedEditions": [], "minBuild": 0, "diagnosticsConsequence": "" },
+    { "tweakId": "Privacy.PuaProtection", "settingsEditable": "Editable", "supportedEditions": [], "minBuild": 0, "diagnosticsConsequence": "" }
+  ]
+}

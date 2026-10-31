@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "kind": "Migrations",
+  "id": "builtin",
+  "description": "Stable-ID migration registry. Empty on purpose: every id currently shipped is the id it has always had, and no definition has been retired yet. The format is normative (Data/Catalog/catalog.schema.json) and the behaviour is covered by tests/Catalog.Tests.ps1. Records are added here when a shipped definition is renamed, replaced or retired - never by rewriting a preset, a report or a journal entry, because those keep the id that was actually applied.",
+  "migrations": []
+}

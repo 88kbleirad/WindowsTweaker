@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "kind": "Rules",
+  "id": "builtin",
+  "version": "1.0.0",
+  "description": "Read-only configuration sanity rules. Each rule states one documented claim about Windows, cites the page it comes from, and declares what it cannot conclude. Rules describe probes; they never contain code, never write, and never repair anything.",
+  "rules": [
+    {
+      "id": "Mmcss.TaskOverrides",
+      "revision": 1,
+      "area": "Mmcss",
+      "title": {
+        "en": "MMCSS task overrides",
+        "vi": "Ghi đè tác vụ MMCSS"
+      },
+      "rationale": {
+        "en": "The Multimedia Class Scheduler service reads these values to decide the relative priority of the threads of a task such as Games, Audio or Playback. Microsoft documents several of them as rounded, clamped, treated as a fixed value, removed or not used at all, so a machine that carries them often carries someone's tuning notes rather than a setting that still does what it says.",
+        "vi": "Dịch vụ Multimedia Class Scheduler đọc các giá trị này để quyết định mức ưu tiên tương đối cho các luồng của một tác vụ như Games, Audio hay Playback. Microsoft ghi rõ một số giá trị bị làm tròn, bị giới hạn, luôn bị coi là một giá trị cố định, đã bị loại bỏ hoặc không được dùng, nên một máy còn giữ chúng thường là còn giữ ghi chú tinh chỉnh cũ hơn là một thiết lập còn tác dụng như tên gọi."
+      },
+      "severity": "Low",
+      "effective": "Inferred",
+      "supportedOS": ["Windows10", "Windows11"],
+      "minBuild": 0,
+      "source": {
+        "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/multimedia-class-scheduler-service",
+        "title": "Multimedia Class Scheduler Service - Win32 apps",
+        "claim": "SystemResponsiveness is rounded down to a multiple of 10 and values below 10 or above 100 are clamped to 20; a value of 100 disables MMCSS. Each task defines Affinity, BackgroundPriority (1-8), Clock Rate, GPU Priority (0-31), Priority (1-8), Scheduling Category and SFIO Priority. Priority is always treated as 2 for tasks whose Scheduling Category is High; GPU Priority is not yet used; SFIO Priority is not used; the Clock Rate guarantee was removed starting with Windows 7.",
+        "checkedUtc": "2026-10-31"
+      },
+      "limitations": {
+        "en": "The citations say what each value means to MMCSS, not what the machine will do with it: thread priority also depends on the application, on what it requests through the MMCSS API, and on the CPU resources the threads consume. A task profile that exists is not proof that any application joins it. Values are read as data; nothing here measures scheduling behaviour.",
+        "vi": "Trích dẫn nói rõ từng giá trị có nghĩa gì với MMCSS, không nói máy sẽ làm gì với nó: mức ưu tiên luồng còn phụ thuộc ứng dụng, yêu cầu mà ứng dụng gửi qua API của MMCSS và lượng CPU mà các luồng tiêu thụ. Một hồ sơ tác vụ tồn tại không chứng minh ứng dụng nào đó có tham gia. Giá trị chỉ được đọc, không có phép đo hành vi lập lịch nào ở đây."
+      },
+      "expected": {
+        "en": "Windows ships the task profiles Audio, Capture, Distribution, Games, Playback, Pro Audio and Window Manager, and does not require any of them to be edited.",
+        "vi": "Windows cung cấp sẵn các hồ sơ tác vụ Audio, Capture, Distribution, Games, Playback, Pro Audio và Window Manager, và không yêu cầu chỉnh sửa hồ sơ nào."
+      },
+      "nextStep": {
+        "en": "Reset the values that Microsoft documents as ignored, removed or fixed to their documented shape, or keep them deliberately and write down why. There is no automatic repair: these values are machine-wide and a task profile is a preference.",
+        "vi": "Đặt lại các giá trị mà Microsoft ghi rõ là bị bỏ qua, đã loại bỏ hoặc luôn cố định về đúng dạng được ghi, hoặc giữ lại có chủ ý kèm lý do. Không có sửa tự động: đây là giá trị toàn máy và hồ sơ tác vụ là một lựa chọn."
+      },
+      "remediation": {
+        "kind": "Tweak",
+        "tweak": "Mmcss.SystemResponsiveness",
+        "notes": {
+          "en": "The SystemResponsiveness value has a reviewed definition that writes the documented shipped value (20); it is offered as a repair only while this rule's system-responsiveness finding is present, and it goes through the normal preview, journal and verification path. Nothing else in this rule has a reviewed tweak: the task profiles under Tasks stay manual, because their effect depends on the applications that join the task.",
+          "vi": "Giá trị SystemResponsiveness có một định nghĩa đã được duyệt để ghi giá trị mặc định theo tài liệu (20); định nghĩa đó chỉ được đề nghị như một sửa chữa khi phát hiện system-responsiveness của quy tắc này còn hiện diện, và vẫn đi qua đường xem trước, nhật ký và xác minh thông thường. Không phần nào khác của quy tắc này có tinh chỉnh đã duyệt: các hồ sơ tác vụ trong Tasks vẫn làm thủ công, vì tác dụng của chúng phụ thuộc ứng dụng tham gia tác vụ."
+        }
+      },
+      "probes": [
+        {
+          "id": "system-responsiveness",
+          "required": true,
+          "kind": "RegistryValue",
+          "hive": "HKLM",
+          "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile",
+          "name": "SystemResponsiveness",
+          "reviewWhen": "NotIn",
+          "values": [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+          "expect": {
+            "en": "Not set, or a multiple of 10 between 10 and 99; 20 is the value Windows ships and 100 disables MMCSS.",
+            "vi": "Không được đặt, hoặc là bội số của 10 trong khoảng 10-99; 20 là giá trị Windows dùng và 100 sẽ tắt MMCSS."
+          },
+          "claim": "Values that are not evenly divisible by 10 are rounded down, and values below 10 or above 100 are clamped to 20."
+        },
+        {
+          "id": "games-gpu-priority",
+          "required": false,
+          "kind": "RegistryValue",
+          "hive": "HKLM",
+          "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile\\Tasks\\Games",
+          "name": "GPU Priority",
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "Absent: Microsoft documents this value as not yet used.",
+            "vi": "Không có: Microsoft ghi rõ giá trị này chưa được dùng."
+          },
+          "claim": "GPU Priority: the range is 0-31. This priority is not yet used."
+        },
+        {
+          "id": "games-sfio-priority",
+          "required": false,
+          "kind": "RegistryValue",
+          "hive": "HKLM",
+          "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile\\Tasks\\Games",
+          "name": "SFIO Priority",
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "Absent: Microsoft documents this value as not used.",
+            "vi": "Không có: Microsoft ghi rõ giá trị này không được dùng."
+          },
+          "claim": "SFIO Priority: the scheduled I/O priority. This value is not used."
+        },
+        {
+          "id": "games-priority-high-category",
+          "required": false,
+          "kind": "RegistryPair",
+          "hive": "HKLM",
+          "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile\\Tasks\\Games",
+          "name": "Priority",
+          "conditions": [
+            { "name": "Scheduling Category", "equals": "High" }
+          ],
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "With Scheduling Category High, Microsoft documents the task priority as always treated as 2, whatever is written here.",
+            "vi": "Khi Scheduling Category là High, Microsoft ghi rõ mức ưu tiên của tác vụ luôn được coi là 2, bất kể giá trị ghi ở đây."
+          },
+          "claim": "For tasks with a Scheduling Category of High, this value is always treated as 2."
+        },
+        {
+          "id": "games-clock-rate",
+          "required": false,
+          "kind": "RegistryValue",
+          "hive": "HKLM",
+          "key": "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile\\Tasks\\Games",
+          "name": "Clock Rate",
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "Absent: Microsoft documents the clock-rate guarantee as removed starting with Windows 7.",
+            "vi": "Không có: Microsoft ghi rõ bảo đảm về clock rate đã bị loại bỏ từ Windows 7."
+          },
+          "claim": "Starting with Windows 7 and Windows Server 2008 R2, this guarantee was removed to reduce system power consumption."
+        }
+      ]
+    },
+    {
+      "id": "Tcp.LegacyReceiveWindow",
+      "revision": 1,
+      "area": "Tcp",
+      "title": {
+        "en": "Static TCP receive window instead of autotuning",
+        "vi": "Cửa sổ nhận TCP cố định thay vì tự điều chỉnh"
+      },
+      "rationale": {
+        "en": "The Windows network stack negotiates the TCP receive window itself, and the documented control for it is the receive window autotuning level, whose default is Normal. A fixed receive window value is the mechanism Windows used before autotuning existed; a machine that still carries one has capped the window for every connection, which Microsoft's own throughput relationship shows costs throughput on links with latency.",
+        "vi": "Ngăn xếp mạng của Windows tự thương lượng cửa sổ nhận TCP, và cách điều khiển được ghi trong tài liệu là mức tự điều chỉnh cửa sổ nhận, mặc định là Normal. Giá trị cửa sổ nhận cố định là cơ chế Windows dùng trước khi có tự điều chỉnh; máy còn giữ giá trị này đã giới hạn cửa sổ cho mọi kết nối, và chính công thức thông lượng của Microsoft cho thấy điều đó làm mất thông lượng trên các kết nối có độ trễ."
+      },
+      "severity": "Low",
+      "effective": "Unknown",
+      "supportedOS": ["Windows10", "Windows11"],
+      "minBuild": 0,
+      "source": {
+        "url": "https://learn.microsoft.com/en-us/windows-server/networking/technologies/network-subsystem/net-sub-performance-tuning-nics",
+        "title": "Network Adapter Performance Tuning in Windows Server",
+        "claim": "The Windows network stack uses a feature named TCP receive window autotuning level to negotiate the TCP receive window size; previously the stack used a fixed-size receive window of 65,535 bytes; the default autotuning level is Normal, and the five levels are Normal, Disabled, Restricted, Highly Restricted and Experimental. Throughput of a single connection equals the receive window size divided by the connection latency.",
+        "checkedUtc": "2026-10-31"
+      },
+      "limitations": {
+        "en": "This rule reads configuration only. The autotuning level itself is reported by 'netsh interface tcp show global', which needs an elevated session and is deliberately not part of the basic scan. A window size value can be superseded by an application that sets its own window, and a link with no latency is not measurably affected. Nothing here measures throughput.",
+        "vi": "Quy tắc này chỉ đọc cấu hình. Mức tự điều chỉnh do 'netsh interface tcp show global' báo cáo, cần phiên có quyền quản trị và cố ý không thuộc phần quét cơ bản. Giá trị kích thước cửa sổ có thể bị ứng dụng tự đặt cửa sổ ghi đè, và kết nối không có độ trễ thì gần như không bị ảnh hưởng. Không có phép đo thông lượng nào ở đây."
+      },
+      "expected": {
+        "en": "No static receive window in the registry; Windows negotiates it through autotuning (default level Normal).",
+        "vi": "Không có cửa sổ nhận cố định trong registry; Windows tự thương lượng qua cơ chế tự điều chỉnh (mức mặc định là Normal)."
+      },
+      "nextStep": {
+        "en": "Review whether the fixed window is still needed. If it is, note the link it was tuned for; if it is not, the documented mechanism to change autotuning is 'netsh interface tcp set global autotuninglevel=...' rather than a registry value.",
+        "vi": "Xem lại xem cửa sổ cố định còn cần thiết không. Nếu cần, hãy ghi lại tuyến mạng mà nó được tinh chỉnh; nếu không, cách được ghi trong tài liệu để đổi mức tự điều chỉnh là 'netsh interface tcp set global autotuninglevel=...', không phải một giá trị registry."
+      },
+      "remediation": {
+        "kind": "Manual",
+        "notes": {
+          "en": "Manual by design: the scan cannot know why the value was set, and removing it changes every connection on the machine.",
+          "vi": "Cố ý để thao tác thủ công: phần quét không thể biết vì sao giá trị đó được đặt, và việc xóa nó ảnh hưởng mọi kết nối trên máy."
+        }
+      },
+      "probes": [
+        {
+          "id": "tcp-window-size",
+          "required": true,
+          "kind": "RegistryValue",
+          "hive": "HKLM",
+          "key": "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters",
+          "name": "TcpWindowSize",
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "Absent, so the receive window is negotiated by autotuning.",
+            "vi": "Không có, để cửa sổ nhận được thương lượng bởi cơ chế tự điều chỉnh."
+          },
+          "claim": "Previously the Windows network stack used a fixed-size receive window of 65,535 bytes; autotuning negotiates the size per connection instead."
+        },
+        {
+          "id": "tcp-global-max-window",
+          "required": true,
+          "kind": "RegistryValue",
+          "hive": "HKLM",
+          "key": "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters",
+          "name": "GlobalMaxTcpWindowSize",
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "Absent, as above.",
+            "vi": "Không có, như trên."
+          },
+          "claim": "Autotuning negotiates the receive window size for every TCP communication during the TCP handshake."
+        },
+        {
+          "id": "tcp-interface-window-size",
+          "required": false,
+          "kind": "RegistryValuesUnderKey",
+          "hive": "HKLM",
+          "key": "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces",
+          "name": "TcpWindowSize",
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "Absent on every interface subkey.",
+            "vi": "Không có trên mọi khóa con của giao diện mạng."
+          },
+          "claim": "A per-interface window size is a fixed receive window for that interface."
+        }
+      ]
+    },
+    {
+      "id": "Boot.TimerDebugOverrides",
+      "revision": 1,
+      "area": "Boot",
+      "title": {
+        "en": "Debug-only timer options in the boot configuration",
+        "vi": "Tùy chọn đồng hồ chỉ dành cho gỡ lỗi trong cấu hình khởi động"
+      },
+      "rationale": {
+        "en": "Microsoft documents useplatformclock and tscsyncpolicy as options that should only be used for debugging: the first forces the platform clock to be used as the system performance counter, the second pins the timestamp counter synchronization policy. Both change how the system keeps time, and a machine that carries them usually inherited them from a tuning recipe.",
+        "vi": "Microsoft ghi rõ useplatformclock và tscsyncpolicy là tùy chọn chỉ nên dùng để gỡ lỗi: tùy chọn đầu buộc dùng đồng hồ nền tảng làm bộ đếm hiệu năng hệ thống, tùy chọn sau ghim chính sách đồng bộ bộ đếm thời gian. Cả hai thay đổi cách hệ thống giữ thời gian, và máy còn giữ chúng thường là do một công thức tinh chỉnh trước đây."
+      },
+      "severity": "Medium",
+      "effective": "Unknown",
+      "supportedOS": ["Windows10", "Windows11"],
+      "minBuild": 0,
+      "source": {
+        "url": "https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set",
+        "title": "BCDEdit /set - Windows drivers",
+        "claim": "useplatformclock [yes|no] forces the use of the platform clock as the system's performance counter, and the documentation notes that this option should only be used for debugging. tscsyncpolicy [Default|Legacy|Enhanced] controls the timestamp counter synchronization policy and should only be used for debugging.",
+        "checkedUtc": "2026-10-31"
+      },
+      "limitations": {
+        "en": "Reading the boot configuration needs an elevated session; without one this rule reports itself as incomplete rather than clean. The rule judges only the two options Microsoft documents as debugging-only: other timer-related boot options exist and are deliberately not judged here, because no verification of their documented status was performed. The scan does not measure timer behaviour, and it never changes the boot configuration.",
+        "vi": "Đọc cấu hình khởi động cần phiên có quyền quản trị; nếu không, quy tắc tự báo là chưa đầy đủ chứ không báo sạch. Quy tắc chỉ xét hai tùy chọn mà Microsoft ghi rõ là chỉ dùng cho gỡ lỗi: còn các tùy chọn liên quan đồng hồ khác và cố ý không xét ở đây, vì chưa xác minh tình trạng tài liệu hóa của chúng. Phần quét không đo hành vi đồng hồ và không bao giờ sửa cấu hình khởi động."
+      },
+      "expected": {
+        "en": "Neither option configured on the current boot entry (bcdedit shows no line for them).",
+        "vi": "Không tùy chọn nào được đặt trên mục khởi động hiện tại (bcdedit không hiện dòng nào cho chúng)."
+      },
+      "nextStep": {
+        "en": "If the option was not added deliberately for a debugging session, remove it with 'bcdedit /deletevalue {current} <option>' from an elevated session, then restart. This engine does not change boot configuration: a wrong edit there can leave the machine unbootable.",
+        "vi": "Nếu tùy chọn không được thêm có chủ ý cho một phiên gỡ lỗi, hãy xóa nó bằng 'bcdedit /deletevalue {current} <tùy chọn>' trong phiên có quyền quản trị rồi khởi động lại. Công cụ này không sửa cấu hình khởi động: sửa sai ở đó có thể khiến máy không khởi động được."
+      },
+      "remediation": {
+        "kind": "Manual",
+        "notes": {
+          "en": "Manual by design: the boot configuration is outside what the preview, journal and recovery engine can capture and restore.",
+          "vi": "Cố ý để thao tác thủ công: cấu hình khởi động nằm ngoài khả năng lưu và khôi phục của cơ chế xem trước, nhật ký và phục hồi."
+        }
+      },
+      "probes": [
+        {
+          "id": "bcd-timer-options",
+          "required": true,
+          "kind": "BcdEntry",
+          "settings": ["useplatformclock", "tscsyncpolicy"],
+          "reviewWhen": "Present",
+          "expect": {
+            "en": "No timer option configured on the current boot entry.",
+            "vi": "Không tùy chọn đồng hồ nào được đặt trên mục khởi động hiện tại."
+          },
+          "claim": "Both options are documented as debugging-only."
+        }
+      ]
+    },
+    {
+      "id": "Restart.PendingMarkers",
+      "revision": 1,
+      "area": "Restart",
+      "title": {
+        "en": "Pending restart markers left behind",
+        "vi": "Dấu hiệu cần khởi động lại còn sót lại"
+      },
+      "rationale": {
+        "en": "Windows records work it owes at the next restart as structured markers, and the documented example is the list of file renames and deletions Windows performs then. A marker that is still present after the restart it asked for is worth reviewing: it means work Windows believes is outstanding, which changes what the next restart will do.",
+        "vi": "Windows ghi lại công việc sẽ làm ở lần khởi động lại kế tiếp dưới dạng các dấu hiệu có cấu trúc, ví dụ được ghi trong tài liệu là danh sách tệp cần đổi tên và xóa. Một dấu hiệu vẫn còn sau lần khởi động lại mà nó yêu cầu là điều đáng xem lại: nó nghĩa là Windows cho rằng vẫn còn việc chưa xong, và điều đó thay đổi việc lần khởi động lại tới sẽ làm."
+      },
+      "severity": "Low",
+      "effective": "Inferred",
+      "supportedOS": ["Windows10", "Windows11"],
+      "minBuild": 0,
+      "source": {
+        "url": "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-2000-server/cc960241(v=technet.10)",
+        "title": "PendingFileRenameOperations",
+        "claim": "PendingFileRenameOperations lists the files that are to be renamed or deleted when the computer restarts.",
+        "checkedUtc": "2026-10-31"
+      },
+      "limitations": {
+        "en": "The source documents the mechanism of the value-based markers; the servicing markers under Component Based Servicing and Windows Update are read and reported with their state, and no claim is made here about which component wrote them or what it will do. A marker that cannot be read is reported as unreadable, never as absent. Nothing here deletes a marker, and this rule never blocks a restart.",
+        "vi": "Tài liệu nguồn mô tả cơ chế của các dấu hiệu dạng giá trị; các dấu hiệu dịch vụ dưới Component Based Servicing và Windows Update được đọc và báo cáo kèm trạng thái, không có khẳng định nào ở đây về việc thành phần nào đã ghi chúng hay sẽ làm gì. Dấu hiệu không đọc được sẽ được báo là không đọc được, không bao giờ là không tồn tại. Không có gì ở đây xóa dấu hiệu, và quy tắc này không bao giờ chặn khởi động lại."
+      },
+      "expected": {
+        "en": "No pending-restart marker holds entries after the restart Windows asked for.",
+        "vi": "Sau lần khởi động lại mà Windows yêu cầu, không dấu hiệu nào còn chứa mục nào."
+      },
+      "nextStep": {
+        "en": "Restart the machine at a convenient time and read the rule again. If a marker survives a restart, review what installed or updated software between the two reads; the engine leaves the marker untouched.",
+        "vi": "Hãy khởi động lại máy vào lúc thuận tiện rồi đọc lại quy tắc. Nếu dấu hiệu vẫn còn sau khi khởi động lại, hãy xem lại phần mềm nào đã cài hoặc cập nhật giữa hai lần đọc; công cụ không đụng tới dấu hiệu."
+      },
+      "remediation": {
+        "kind": "None",
+        "notes": {
+          "en": "There is nothing to repair here: the marker is Windows' own bookkeeping and the next restart is what clears it.",
+          "vi": "Ở đây không có gì để sửa: dấu hiệu là sổ sách của chính Windows và lần khởi động lại kế tiếp sẽ xóa nó."
+        }
+      },
+      "probes": [
+        {
+          "id": "pending-restart-markers",
+          "required": true,
+          "kind": "PendingRestart",
+          "reviewWhen": "NonEmpty",
+          "expect": {
+            "en": "Every marker absent or empty.",
+            "vi": "Mọi dấu hiệu đều không tồn tại hoặc rỗng."
+          },
+          "claim": "Windows records the files to rename or delete at the next restart in this value."
+        }
+      ]
+    }
+  ]
+}

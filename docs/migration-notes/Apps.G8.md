@@ -1,0 +1,65 @@
+# Migration notes - Apps batch G8
+
+Legacy modules converted into `src/WindowsTweaker/Tweaks/Apps/Apps.G8.ps1`
+(category `Apps`). The legacy files under `modules\` are read-only reference
+material and are deleted at the end of the migration; nothing from
+`reference/` was executed or copied.
+
+|Legacy module|Outcome|Tweak id(s)|Notes|
+|---|---|---|---|
+|WindowsFeatures.ps1|migrated|Apps.WindowsFeature|The legacy file does not even parse (while `tools/Parse-All.ps1` still covered the legacy tree it reported `EmptyPipeElement` at line 113 - the tool now skips `modules\`), and it calls `Get-WindowsOptionalFeatures`, a cmdlet that does not exist (line 213; the singular `Get-WindowsOptionalFeature` is used instead), so only the DISM level of the operation was portable: `Enable-WindowsOptionalFeature -Online -All -NoRestart` / `Disable-WindowsOptionalFeature -Online -NoRestart`. Ported as a scripted tweak that takes the features explicitly in `-Arguments.FeatureName` and runs them through `Invoke-WtProcess` (`%SystemRoot%\System32\dism.exe`), so dry run, logging and per-operation results still work. States are `None` (default: nothing named, nothing changed), `Enabled` and `Disabled`; a real state without a name fails instead of guessing. The WPF window, the pre-checked list (`LegacyComponents`, `MicrosoftWindowsPowerShellV2(Root)`, `Printing-XPSServices-Features`, `Recall`, `WorkFolders-Client`) and the pre-unchecked list (`MediaPlayback`) are deliberately dropped: they were only meaningful for the removed picker and the catalog must select nothing automatically. `-Privilege Admin`, `-Restart Reboot`, `-Rollback Partial` (there is no snapshot of a feature's files; rollback is re-running DISM with the opposite state), `-Risk Medium` (disabling PowerShell 2.0/.NET/Media components breaks dependent software). The name is verified with `Get-WindowsOptionalFeature` before DISM runs, and a name that already has the target state reports `unchanged` instead of starting a privileged DISM run.|
+|WindowsCapabilities.ps1|migrated|Apps.WindowsCapability|Same shape as the features tweak, with `Add-WindowsCapability -Online` / `Remove-WindowsCapability -Online` mapped onto `dism.exe /Online /Add-Capability` and `/Remove-Capability`. Broken legacy details that were not reproduced: `[System.Runtime.InteropService.COMException]` (missing `s` in the namespace, line 171), `Start-Sleep -Miliseconds` (line 264), `contain(translate(...))` instead of `contains` in the XAML name selector (line 98), and the `-and`/`-or` precedence bug in the capability list filter. The pre-checked/unchecked/excluded capability lists and the WPF picker were dropped for the same reason as above: the caller names the capability, e.g. `Browser.InternetExplorer~~~~0.0.1.0`. `-Restart Reboot` (the legacy warned that removing Internet Explorer needs a restart), `-Rollback Partial`, `-Risk Medium`. Installing needs Windows Update access; a failure to fetch the payload is reported as a failed operation with DISM's own output.|
+|ExportAssociations.ps1|not ported|-|It is a reporting action, not a system state: it runs `Dism.exe /Online /Export-DefaultAppAsssociations:` into `%TEMP%` and writes `Application_Associations.json` next to the script (line 149). Writing a report file is outside the tweak model (a tweak's dry run must not write anything) and reporting is already covered by `Export-WtReport`. The legacy function is also broken as written: it exports to `Application_Asssociations.xml` (line 3, three `s`) but reads `Application_Association.xml` (line 9, no plural), and it contains further typos (`[Microsoft.Win32.Registr]`, `Comamnd`, `PartProgramPath`).|
+|ImportAssociations.ps1|not ported|-|The file only shows a WinForms `OpenFileDialog` (lines 3-10), a JSON read and two calls to `Set-Association` (lines 34 and 41) - a helper that is not defined anywhere in the reviewed tree; it only exists in `reference/original-upstream-reference.txt`, where it takes ownership of the `HKCU\...\FileExts\<ext>\UserChoice` key, spawns a copy of `powershell.exe` (`powershell_temp.exe`) to bypass the Windows UCPD write protection, and computes an undocumented `Hash` value. That is an undocumented trick plus an executable copy, which the hard rules forbid, so it is not ported (spec rule 5). A reduced port that only wrote `UserChoice\ProgId` without a valid hash would be worse than nothing: Windows ignores a `UserChoice` whose hash does not match, so the tweak would report success while nothing changed. Previous values are not recoverable through a supported API either, which is the "irreversible" property the batch ticket anticipated.|
+|OneDrive.ps1|partially migrated|Apps.OneDriveFileSync, Apps.OneDriveAutostart, Apps.OneDriveUninstall|- **Apps.OneDriveFileSync** (declarative): line 24 removes `DisableFileSyncNGSC` through LGPO `-Scope Computer -Path SOFTWARE\Policies\Microsoft\Windows\OneDrive`, i.e. `HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive`. `Enabled` (default, and exactly the legacy behaviour) removes the policy value, `Disabled` writes it as `DWord 1`. The legacy line 23 also deleted the value from `HKLM:\Policies\Microsoft\Windows\OneDrive`, a hive path that is not a machine policy location; it is not reproduced (it would create a junk key) and the value is now declared as `-ManagedPolicy` so an organization policy is reported before the change.<br>- **Apps.OneDriveAutostart**: the per-user `Run` entry that starts OneDrive at sign-in (the "autostart" OneDrive setting this batch was asked to port; the legacy module itself never writes it - it relies on `OneDriveSetup.exe` to create the entry - and it only enables OneDrive's own `Onedrive* Update*` tasks on install, which the provider API cannot address by wildcard). `Disabled` removes it, `Enabled` rewrites it with the absolute path of `%LOCALAPPDATA%\Microsoft\OneDrive\OneDrive.exe` after verifying that the file exists, and reports a failure otherwise (it is a scripted tweak because a static literal cannot carry a profile-specific path). Both states go through the registry provider, so the previous value is captured and `Undo-WtTweak` restores it.<br>- **Apps.OneDriveUninstall**: runs the *installed* official uninstaller only - `%SystemRoot%\System32\OneDriveSetup.exe /uninstall`, falling back to `%LOCALAPPDATA%\Microsoft\OneDrive\OneDriveSetup.exe` and `%SystemRoot%\SysWOW64\OneDriveSetup.exe` - through `Invoke-WtProcess`. `-Irreversible -Risk High -Rollback None`, `-State Disabled` (default) does nothing at all, and the operation is refused while a personal account is signed in (`HKCU\Software\Microsoft\OneDrive\Accounts\Personal\UserEmail`), which is the guard the legacy function had. The impact text states that user files are preserved: the tweak never traverses or deletes directories.<br>- **Not ported: the install path** - it downloads OneDrive from `https://g.live.com/1rewlive5skydrive/OneDriveProductionV2`, parses an XML feed and takes `root.update.amd64binary.url[1]`. The binary URL is not a stable, statically verifiable official `https://` URL, so it cannot be passed to `Get-WtVerifiedDownload` with a publisher check; per the batch ticket the download-and-install path is therefore recorded as not ported. (Running the *already installed* `%SystemRoot%\System32\OneDriveSetup.exe` without downloading would be a possible follow-up, but it is outside this batch's scope.)<br>- **Dropped from the uninstall path**: `Stop-Process OneDrive,OneDriveSetup,FileCoAuth`, the `AutoRestartShell` toggle plus killing `explorer`/`UserOOBEBroker`, `regsvr32 /u` on `FileSyncShell64.dll`, the recursive `Remove-Item` of the OneDrive folders, `HKCU:\Environment` value removal, `Unregister-ScheduledTask *OneDrive*` and the `: OneDrive` folder cleanup - all of them are either aggressive side effects (process/explorer killing, AutoRestartShell) or recursive user-directory deletion, which the hard rules forbid inside a tweak. The `Get-ScheduledTask -TaskName "Onedrive* Update*" | Enable-ScheduledTask` call cannot be expressed either: the provider takes a literal task path/name and the real task names contain a per-user SID.|
+|UninstallUWPApp.ps1|migrated (already covered by Apps.UninstallUwpPackage)|Apps.UninstallUwpPackage (existing)|Duplicate: this file defines the same `UninstallUWPApps` function as `UninstallUWPApps.ps1`, and it is truncated - it builds only the WPF window and ends without any removal logic, so it never removed a package. Nothing new to port. Deliberately dropped: the WPF picker and the bundled-binary `Add-Type` of `Binaries\WinRT.Runtime.dll` / `Binaries\Microsoft.Windows.SDK.NET.dll`.|
+|UninstallUWPApps.ps1|migrated (already covered by Apps.UninstallUwpPackage)|Apps.UninstallUwpPackage (existing)|The existing catalog tweak already implements the honest core: explicit `-Arguments.PackageFullName`, protection of essential packages, `Remove-WtAppxPackage`, `-Irreversible -DataDeletion`, nothing removed by default. Deliberately dropped from this port: the WPF checkbox window and its console-hiding `ShowWindowAsync`/`SendKeys` tricks (lines 452+), the hard-coded `ExcludedAppxPackages`/`UncheckedAppxPackages` allow/deny lists (they were the picker's defaults and would silently encode a policy the user never chose), the `Get-AppxBundle` helper that mixed `Get-AppxPackage -PackageTypeFilter Bundle` with the WinRT `[Windows.Management.Deployment.PackageManager]` type from the bundled DLLs (line 259), and the special-case `msiexec /x {A7AB73A3-CB10-4AA5-9D38-6AEFFBDE4C91} /qn` Teams uninstall (line 352), which would need a mode the catalog does not have. No new tweak id was created, so no id collides with `Apps.UninstallUwpPackage`.|
+|StartLayout.ps1|migrated|Apps.StartLayout|Contrary to its name the reviewed module contains no Start layout JSON import/export - only `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\Start_Layout` with `0` (Default), `1` (ShowMorePins) and `2` (ShowMoreRecommendations). Ported declaratively with descriptive state names, `-SupportedOS @('Windows11')`, `-MinBuild 22000`, `-Restart Explorer`, `-Rollback Full`. The id keeps the `Apps` prefix because it is registered from this batch's file; the setting is a Windows 11 Start menu layout.|
+
+## Batch-wide decisions
+
+- **One tweak per user-visible setting.** `ShowSyncProviderNotifications`
+  (`Explorer\Advanced`) is owned by the Explorer batch as
+  `Explorer.OneDriveFileExplorerAd` (`Tweaks/Explorer/Explorer.G1.ps1`), which is the
+  port of `modules\OneDriveFileExplorerAd.ps1`. An identical definition
+  (`Apps.OneDriveFileExplorerAd`) was dropped from this batch by owner decision, so
+  `modules\OneDrive.ps1` has no tweak for that value; it is recorded here as covered
+  by `Explorer.OneDriveFileExplorerAd`. `tools/Test-Catalog.ps1` now rejects two
+  tweaks that declare the same detection path+name.
+- **Nothing is selected automatically.** Every tweak in this batch that acts on named
+  items (`Apps.WindowsFeature`, `Apps.WindowsCapability`) selects nothing by default,
+  refuses to act without an explicit name, and reports `failed` rather than guessing.
+  The uninstall tweak's default state performs no change.
+- **Irreversibility is labelled, not hidden.** `Apps.OneDriveUninstall` carries
+  `-Irreversible -Risk High` and its operations report `Rollback None`; the
+  DISM-based tweaks carry `-Rollback Partial` because DISM has no snapshot to restore
+  and code that claims `Full` for them would be wrong.
+- **No download-and-execute.** The only network-touching legacy path in this batch
+  (the OneDrive installer feed) is not ported; the uninstaller that *is* run is the
+  copy already installed on the machine.
+- No further duplicate legacy modules were found inside this batch.
+
+## Validation
+
+Run from the repository root after the batch was written:
+
+```
+~/opt/pwsh/pwsh -NoProfile -File tools/Parse-All.ps1
+~/opt/pwsh/pwsh -NoProfile -File tools/Test-Catalog.ps1
+~/opt/pwsh/pwsh -NoProfile -Command "Import-Module Pester -RequiredVersion 5.7.1; Invoke-Pester -Path tests/Engine.Tests.ps1 -Output None"
+```
+
+Results at the time of writing (re-run on the final head, where
+`tools/Parse-All.ps1` skips the `reference` and `modules` directories):
+
+- `tools/Parse-All.ps1` - "Files parsed : 51 / Skipped dirs : reference, modules /
+  Parse errors : 0".
+- `tools/Test-Catalog.ps1` - "Tweaks in catalog : 111 / Catalog invariants: OK".
+- `tests/Engine.Tests.ps1` - 21 passed, 0 failed (`Result=Passed`).
+- Additional, non-committed check: a mocked Pester harness (outside the repository)
+  exercised the six tweaks' detection and apply paths against in-memory provider
+  doubles - state selection, refusal without an explicit name, "already in state"
+  handling, the DISM argument lists, the uninstaller invocation, the signed-in guard
+  and the dry run - 17 assertions, all passing. It differs from the repository suite
+  only in the Windows-only cmdlets and `%SystemRoot%`/`%LOCALAPPDATA%` paths, which
+  the harness stubs.

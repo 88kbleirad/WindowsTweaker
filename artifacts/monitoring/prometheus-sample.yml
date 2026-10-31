@@ -1,0 +1,12 @@
+# WindowsTweaker sample Prometheus scrape configuration (optional, explicit).
+# The exporter is disabled by default; start it from the monitoring workspace or the
+# worker protocol (exporter.start) before scraping. Loopback only.
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: windows_tweaker
+    metrics_path: /metrics
+    scheme: http
+    # Replace with the machine where WindowsTweaker runs.
+    static_configs:
+      - targets: ["127.0.0.1:39090"]
