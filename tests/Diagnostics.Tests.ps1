@@ -235,7 +235,10 @@ Describe 'Diagnostics ring and export' {
                 'osBuild', 'osVersion', 'culture', 'sessionId', 'exportedUtc')
 
             $Header.type | Should -Be 'header'
-            $Header.appVersion | Should -Be '1.0.0'
+            # The header names the application version it was written by; that value comes from
+            # the module manifest, so it is compared with the manifest rather than with a literal
+            # that would have to be edited on every version bump.
+            $Header.appVersion | Should -Be ([string](Import-PowerShellDataFile -LiteralPath $script:ModuleManifest).ModuleVersion)
             $Header.moduleVersion | Should -Be ([string](Import-PowerShellDataFile -LiteralPath $script:ModuleManifest).ModuleVersion)
             $Header.psVersion | Should -Be ([string]$PSVersionTable.PSVersion)
             $Header.platform | Should -Be $ExpectedPlatform

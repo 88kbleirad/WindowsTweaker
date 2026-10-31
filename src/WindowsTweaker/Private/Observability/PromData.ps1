@@ -49,6 +49,22 @@ function Clear-WtPromLabel {
     return $Clean.Trim()
 }
 
+<#
+.SYNOPSIS
+    Makes System.Net.Http usable on the running runtime.
+.DESCRIPTION
+    Windows PowerShell 5.1 runs on .NET Framework, where System.Net.Http is not loaded by
+    default: `[System.Net.Http.HttpClient]::new()` fails there with "Unable to find type" until
+    the assembly is loaded. It is part of .NET Framework 4.5, so loading it by name is enough;
+    on PowerShell 7 the assembly is already loaded and this is a no-op.
+
+    The same reason is why this file must use HttpContent.ReadAsStreamAsync() rather than the
+    .NET 5+ synchronous ReadAsStream(): the asynchronous accessor exists on both runtimes.
+#>
+function Initialize-WtPromHttpClient {
+    try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch { $null = $_ }
+}
+
 function Invoke-WtPromQuery {
     [CmdletBinding()]
     param (
@@ -71,6 +87,7 @@ function Invoke-WtPromQuery {
     $Uri = "{0}/api/v1/query_range?query={1}&start={2}&end={3}&step={4}s" -f `
         $Source.Endpoint, [uri]::EscapeDataString($Query), [math]::Floor($FromMs / 1000), [math]::Floor($ToMs / 1000), $StepSeconds
 
+    Initialize-WtPromHttpClient
     $Client = [System.Net.Http.HttpClient]::new()
     try {
         $Client.Timeout = [TimeSpan]::FromMilliseconds([int]$Source.TimeoutMs)
@@ -139,6 +156,7 @@ function Test-WtPromConnection {
     param ([Parameter(Mandatory = $true)][hashtable]$Source)
 
     $Uri = "{0}/api/v1/query?query=up&time={1}" -f $Source.Endpoint, [math]::Floor(([datetime]::UtcNow.ToUniversalTime() - [datetime]::new(1970,1,1,0,0,0,[datetimekind]::Utc)).TotalMilliseconds / 1000)
+    Initialize-WtPromHttpClient
     $Client = [System.Net.Http.HttpClient]::new()
     try {
         $Client.Timeout = [TimeSpan]::FromMilliseconds([int]$Source.TimeoutMs)

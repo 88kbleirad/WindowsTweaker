@@ -209,7 +209,7 @@ Binary locations the client looks at (in order):
 3. `<repository>/worker/bin/wt-worker[.exe]` (a development build)
 
 That second path is the **canonical** one: it is what the build commands above write, what
-`bootstrap/bootstrap.ps1` declares in `Get-WtBootstrapPlatforms` and requires of a staged release
+`bootstrap/implementation.ps1` declares in `Get-WtBootstrapPlatforms` and requires of a staged release
 (`worker/bin/<goos>-<goarch>/`), and where `tools/New-ReleasePackage.ps1` places the binary inside
 each archive - stored with the executable bit, so extraction on Linux keeps it runnable. A release
 archive that puts the worker anywhere else is refused by the bootstrap's validator and by the

@@ -1,10 +1,10 @@
 # WindowsTweaker release packaging (runs offline, deterministic inputs).
 #
 # Usage:
-#   pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.0 -OutDir ./dist
+#   pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.1 -OutDir ./dist
 #
 #   # one platform only (fast path used by tests), with the worker binaries already built:
-#   pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.0 -Platforms linux-x64 -SkipWorkerBuild
+#   pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.1 -Platforms linux-x64 -SkipWorkerBuild
 #
 # Produces, beside each other in -OutDir:
 #   WindowsTweaker-<platform>-v<version>.zip   one per selected platform, or all four
@@ -21,9 +21,11 @@
 #     never part of an archive, so no archive hash can depend on them.
 #
 # Every generated archive is verified with the same code the bootstrap runs:
-# bootstrap/bootstrap.ps1 is dot-sourced and Expand-WtBootstrapArchive,
+# bootstrap/implementation.ps1 is dot-sourced and Expand-WtBootstrapArchive,
 # Test-WtBootstrapRelease, Read-WtBootstrapChecksums and Test-WtBootstrapHash are used on
 # the real bytes. A release the bootstrap would refuse is never reported as packaged.
+# (The archive does not contain either bootstrap file: the launcher is fetched from the
+# repository, and the implementation is fetched by it.)
 #
 # Worker binaries are built first, for exactly the selected platforms, so the archive can
 # never contain a stale or missing worker. The build output directory and the archive entry
@@ -52,10 +54,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Path $PSScriptRoot -Parent
-$BootstrapPath = Join-Path $Root 'bootstrap/bootstrap.ps1'
+$BootstrapPath = Join-Path $Root 'bootstrap/implementation.ps1'
 
 # ---- The canonical platform mapping lives in the bootstrap ---------------------
 # Dot-sourced with the entry block disabled: one table, no second copy that can drift.
+# The implementation file is dot-sourced, not the published launcher: the launcher is pure
+# ASCII and only loads the implementation, while the functions used below (platform table,
+# archive extraction, release validation, hash checks) live in the implementation.
 $PreviousTestOnly = $env:WT_BOOTSTRAP_TEST_ONLY
 $env:WT_BOOTSTRAP_TEST_ONLY = '1'
 try {

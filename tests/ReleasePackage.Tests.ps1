@@ -13,7 +13,7 @@
 BeforeAll {
     $env:WT_BOOTSTRAP_TEST_ONLY = '1'
     $script:RepoRoot = Split-Path -Path $PSScriptRoot -Parent
-    $script:BootstrapPath = Join-Path $script:RepoRoot 'bootstrap/bootstrap.ps1'
+    $script:BootstrapPath = Join-Path $script:RepoRoot 'bootstrap/implementation.ps1'
     $script:PackagingScript = Join-Path $script:RepoRoot 'tools/New-ReleasePackage.ps1'
     $script:Version = (Import-PowerShellDataFile -LiteralPath (Join-Path $script:RepoRoot 'src/WindowsTweaker/WindowsTweaker.psd1')).ModuleVersion
     $script:WorkerProtocol = 1

@@ -39,8 +39,10 @@ tools/                            Parse-All, Test-Catalog, Test-Insight, Test-Co
 .github/workflows/release.yml     tag-triggered release: package, validate, upload the six assets
 docs/                             catalog, packs, worker, state journal, validation,
                                   limitations, dependencies, keyboard, and the notes here
-bootstrap/bootstrap.ps1           installer launcher, run as text (5.1-parseable; runtime policy,
-                                  discovery, handoff, installation offer)
+bootstrap/bootstrap.ps1           published launcher: pure ASCII, no BOM, loads the implementation
+                                  as bytes, decodes UTF-8, forwards options, mirrors $LASTEXITCODE
+bootstrap/implementation.ps1      installer implementation (5.1-parseable, UTF-8 BOM): runtime policy,
+                                  discovery, handoff, installation offer, release verification
 src/WindowsTweaker/Private/Compatibility.ps1
                                   one runtime layer: profile, capabilities, BOM-less UTF-8,
                                   portable JSON, pwsh discovery, console VT enable/restore

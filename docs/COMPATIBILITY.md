@@ -9,7 +9,7 @@ run, and a runtime is only advertised when its evidence exists.
 
 | Runtime | Bootstrap | Application | Evidence |
 |---|---|---|---|
-| **Windows PowerShell 5.1** (ships with Windows 10 22H2 / Windows 11) | **Runs.** Parses and starts; runtime policy, discovery, handoff and installation offer are exercised by tests. | **Runs natively** in the same reduced mode as the validated runtime, with capability-gated features. | Static gate (5.1 syntax/commands/types: 0 findings) and 20 bootstrap tests run on PowerShell 7; **no 5.1 host was available**, so console, code page, registry and terminal behaviour are unexecuted. |
+| **Windows PowerShell 5.1** (ships with Windows 10 22H2 / Windows 11) | **Runs.** The published launcher is ASCII-only and BOM-free by construction, so the body `iex` receives cannot start with `U+FEFF`; its download helper uses only APIs that exist on .NET Framework; runtime policy, discovery, handoff and installation offer are exercised by tests. | **Runs natively** in the same reduced mode as the validated runtime, with capability-gated features. | Static gate (5.1 syntax/commands/types: 0 findings, plus the .NET Framework HTTP rules) and the 52 tests of `tests/Bootstrap.Tests.ps1` run on PowerShell 7, including the text the one-liner hands to `iex` and the HTTP body reader over a real socket; **no 5.1 host was available**, so console, code page, registry and terminal behaviour are unexecuted, and the two 5.1 failures that motivated the launcher split and the streaming fix were reproduced on 7.6.9 with the identical error text ([VALIDATION.md](VALIDATION.md) sections 14 and 15). |
 | **PowerShell 7.4 – 7.6 stable** | Runs, no second process. | Runs natively. | Full suite executed on **7.6.9** (Linux): engine, journal, providers, TUI in a real pty, worker, packaging. 7.4 and 7.5 are the same stable line but were not executed here. |
 
 ## Not supported or not advertised
@@ -25,7 +25,7 @@ run, and a runtime is only advertised when its evidence exists.
 
 | Current runtime | Bootstrap behaviour | Exit path |
 |---|---|---|
-| < 5.1 | Refuses. Bilingual message with the current and minimum version (`RUNTIME:` error class). | Returns 2; session intact. |
+| < 5.1 | Refuses. `#Requires -Version 5.1` stops a file run; in the piped-text form the launcher checks the runtime before loading anything and prints an English `RUNTIME:` message with the current and minimum version (the launcher is ASCII-only, so it cannot carry the Vietnamese half of the message). | Returns 2; session intact. |
 | Windows PowerShell 5.1 | Stages and validates the release first (the download/extract/verify path runs **on 5.1**), then: compatible stable pwsh installed → relaunch it on the staged entry point; none → one consent question (`winget`, official source) → re-discover without trusting PATH → relaunch; declined/cancelled/failed → run natively on 5.1 with a notice. | Mirrors the child's code into `$LASTEXITCODE`; never `exit`s. |
 | PowerShell 7.4 – 7.6 | Runs natively, one process. | Same. |
 | PowerShell 6 – 7.3, 7.7+, preview | Runs natively with the untested-runtime notice; a notice never becomes a silent upgrade. | Same. |
@@ -68,6 +68,9 @@ re-runs the gate; it fails the build on any finding.
 | Syntax | No 5.1-incompatible syntax was found (no ternary, `??`, `??=`, `&&`, `\|\|`, `-Parallel`). | 0 | Kept that way; the gate checks it. |
 | Text encoding | `-Encoding utf8NoBOM` (7-only value); `-Encoding utf8` writes a BOM on 5.1 and corrupts hashed JSON/JSONL. | 22 | `Write-WtTextFile` / `Read-WtTextFile`: `System.IO` with `UTF8Encoding($false)` on both runtimes. |
 | Text encoding | 44 source files with non-ASCII text had no BOM; 5.1 decodes those with the ANSI code page (mojibake for every Vietnamese string). | 44 | UTF-8 BOM added; the gate fails if a non-ASCII script lacks it. |
+| Text encoding | The published bootstrap carried that BOM, and `irm \| iex` hands the body over as *text*: the BOM decodes to a leading `U+FEFF` and the parser refused the body's own attribute and param block (`Unexpected attribute 'CmdletBinding'.` at line 84 on the published file). | 1 file | Split: `bootstrap/bootstrap.ps1` is the pure-ASCII, BOM-free published launcher; `bootstrap/implementation.ps1` keeps the BOM and is decoded explicitly by the launcher. The gate fails if the launcher gains a BOM or a non-ASCII byte, if its text does not parse, or if the two files disagree about the launcher protocol. |
+| .NET members | `HttpContent.ReadAsStream()` is .NET 5+; on .NET Framework (5.1) only the asynchronous accessors exist, so calling it throws `does not contain a method named 'ReadAsStream'` inside the download. | 2 (both bootstrap downloaders) | `Read-WtBootstrapContentBytes` / `Read-WtBootstrapLauncherContentBytes` await `ReadAsStreamAsync().GetAwaiter().GetResult()`, keep the byte bound, dispose the stream, and classify failures per stage. The gate fails on any synchronous `ReadAsStream`/`ReadAsString`/`ReadAsByteArray` call. |
+| .NET types | `[System.Net.Http.HttpClient]` cannot be resolved on 5.1 until `System.Net.Http` is loaded, and the assembly is not loaded by default there ("Unable to find type"). | 2 (Prometheus adapter) | `Initialize-WtPromHttpClient` loads the assembly before the client is constructed; the gate fails a shipped file that constructs `HttpClient` without the load. |
 | Platform detection | `$IsWindows` / `$IsLinux` / `$IsMacOS` do not exist on 5.1 → every platform branch read as "not Windows". | 35 | `Get-WtRuntimeProfile` / `Test-WtIsWindows` (`.NET OSVersion` fallback), one cached probe. |
 | JSON parsing | `ConvertFrom-Json -Depth` (7.0+) and `-AsHashtable` (6.0+). | 13 | `ConvertFrom-WtJson`: adds the parameters only where they exist, emulates `-AsHashtable` with case-sensitive ordered dictionaries. |
 | JSON parsing | `System.Text.Json` (`JsonDocument`, `JsonElement`) is absent on .NET Framework. | 1 file | Replaced by a portable recursive-descent parser that reports the same duplicate-key/depth/string-length errors. |
@@ -85,7 +88,11 @@ re-runs the gate; it fails the build on any finding.
 
 1. **Any 5.1 execution.** No Windows host was available. The static gate proves the code
    parses and uses only APIs that exist on 5.1; it cannot prove what a 5.1 console does with
-   VT, code pages, `ReadKey`, or what the registry providers return.
+   VT, code pages, `ReadKey`, or what the registry providers return. The one 5.1 behaviour
+   reported from the field - the `irm | iex` parse failure - is reproduced on PowerShell 7.6.9
+   with the identical messages and line numbers, but that reproduction is not a 5.1
+   measurement; the fix removes the input that failed rather than relying on the parser
+   difference ([VALIDATION.md](VALIDATION.md) section 14).
 2. **PowerShell 7.4 and 7.5** (supported line, not executed) and **7.7+ / preview** (explicitly
    untested; the bootstrap refuses them as handoff targets).
 3. **The Windows-only surfaces**: WPF window, registry/service/task/Appx/Defender mutations,

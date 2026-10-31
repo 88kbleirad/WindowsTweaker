@@ -11,7 +11,9 @@ BeforeAll {
     $script:RepositoryRoot = Split-Path -Path $PSScriptRoot -Parent
     $script:ModuleManifest = Join-Path $script:RepositoryRoot 'src/WindowsTweaker/WindowsTweaker.psd1'
     $script:EntryPoint = Join-Path $script:RepositoryRoot 'WindowsTweaker.ps1'
-    $script:BootstrapPath = Join-Path $script:RepositoryRoot 'bootstrap/bootstrap.ps1'
+    # The bootstrap implementation, not the published launcher: the launcher is ASCII-only and
+    # only loads this file, while the runtime-discovery helpers compared below live in it.
+    $script:BootstrapPath = Join-Path $script:RepositoryRoot 'bootstrap/implementation.ps1'
     $script:TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wt-compat-{0}" -f ([guid]::NewGuid().ToString('n')))
     [System.IO.Directory]::CreateDirectory($script:TestRoot) | Out-Null
 

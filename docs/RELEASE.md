@@ -1,8 +1,13 @@
 # Release: packaging, assets and publishing
 
 This document is the exact procedure for producing and publishing a WindowsTweaker release.
-Everything in the "Local packaging" section is a repository tool and runs offline; nothing in
-this document was used to publish anything - **no release exists in this repository yet**.
+Everything in the "Local packaging" section is a repository tool and runs offline. Release
+`v1.0.0` is published (tag `v1.0.0`); module version `1.0.1` is packaged locally and **not
+published**, and its `dist/` output sits beside the preserved `v1.0.0` files under `dist/v1.0.0/`.
+The `v1.0.0` archives were downloaded, SHA-256-verified and staged by the bootstrap during the
+launcher fixes ([VALIDATION.md](VALIDATION.md) sections 13, 14 and 15). Adding a release does not
+change either bootstrap file, and changing a bootstrap file does not require a new release: neither
+file is packaged.
 
 ## 1. What a release consists of
 
@@ -58,7 +63,7 @@ asset `name`, `platform`, `os`, `arch`, `workerPath`, `version`, `size`, `sha256
 For every archive it just wrote:
 
 1. the file's SHA-256 is compared with the line `checksums.txt` carries for it, using
-   `Test-WtBootstrapHash` from `bootstrap/bootstrap.ps1`;
+   `Test-WtBootstrapHash` from `bootstrap/implementation.ps1`;
 2. the bytes are extracted with `Expand-WtBootstrapArchive` (traversal-safe);
 3. `Test-WtBootstrapRelease` checks the internal manifest: schema, platform identity, entry point,
    `workerProtocol`, the canonical worker path for the platform, the required files
@@ -115,4 +120,6 @@ against `dist/manifest.json` before trusting the run.
 | Checksum -> extraction -> manifest validation -> worker-path resolution on a real archive | **Executed**: `tests/ReleasePackage.Tests.ps1` |
 | GitHub's real asset redirect (`github.com` -> `release-assets.githubusercontent.com`) and the allowed-host list | **Executed** against a public release of another project (`WT_BOOTSTRAP_LIVE_TEST=1`) |
 | Staging into the cache, cache lookup, launch of the staged entry point and exit-code propagation | **Executed** with the generated archive on Linux |
-| A real end-to-end run of the public one-liner: GitHub release download, Windows host, TUI in a console | **NOT executed** - no release is published and no Windows host was available. Until a release is published and downloaded, the one-liner cannot work, and no document here claims it does. |
+| Packaging module version `1.0.1` after the streaming fix | **Executed**: four archives rebuilt with `tools/New-ReleasePackage.ps1 -Version 1.0.1`, each validated (146 file hashes, worker handshake), `version`/`engineVersion` `1.0.1` in both manifests and `ModuleVersion` `1.0.1` inside each archive. Not published, and the `v1.0.0` tag and release were not touched. |
+| A real end-to-end run of the published command on Linux: release resolution, asset download, SHA-256 check, staging, launch into the terminal interface | **Executed** for the published `v1.0.0` during the launcher fix - `bootstrap/bootstrap.ps1` resolved `releases/latest`, downloaded `WindowsTweaker-linux-x64-v1.0.0.zip`, verified its hash against `checksums.txt`, staged it and started the interface (`docs/VALIDATION.md` section 13) |
+| The same end-to-end run on a Windows host (Windows PowerShell 5.1 and PowerShell 7) in a real console | **NOT executed** - no Windows host was available. Both 5.1 failures (the BOM parse failure and the synchronous `ReadAsStream` call) were reported from the field and reproduced on PowerShell 7.6.9 with the identical error text (`docs/VALIDATION.md` sections 13, 14 and 15). |

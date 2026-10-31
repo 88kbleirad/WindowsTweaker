@@ -214,12 +214,15 @@ Describe 'Resume registration and tampering' {
                 @{ stepId = 'two'; tweakId = 'System.Hibernation'; state = 'Disabled' }
             ) -PlanId 'resume-plan-3'
 
+            # appVersion is part of the identity binding, so it must be the version that is
+            # actually running; a literal here would fail on every version bump instead of
+            # testing the binding.
             $Resume = [pscustomobject]@{
                 schemaVersion = 1
                 planId = 'resume-plan-3'
                 planHash = (Get-WtSetupPlanHash -Plan $Plan)
                 userId = 'pester-user'
-                appVersion = '1.0.0'
+                appVersion = [string](Get-WtJournalContext).appVersion
                 executablePath = '/opt/wt.ps1'
                 stepIndex = 1
                 reboots = 0

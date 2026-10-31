@@ -86,7 +86,7 @@ The counts below are the ones Pester reports per file; the same command is phase
 | `Diagnostics.Tests.ps1` | 14 | 0 | bounded ring, no typed character recorded, home-path and token sanitization, sensitive data keys dropped, bounded/truncated values, export header contents, overwrite refusal, record and size bounds, JSONL re-parsing, summary counts, clear |
 | `Measurements.Tests.ps1` | 14 | 0 | sample and timeout bounds, failed samples retained with their error, raw samples with unit/adapter/target/conditions/timestamps, Min/Max/Median over successful samples, improved/regressed/inconclusive/insufficient per the documented criteria, target/kind/unit mismatch, inputs never mutated, no apply path touched |
 | `Worker.Tests.ps1` | 17 | 0 | worker discovery from the application-controlled path only; `Go` refusing to fall back; `Auto` falling back with a reason; backend preference round-trip; protocol handshake (version, capabilities, limits); incompatible version reported; crashed worker reported; garbage on stdout reported; PowerShell/Go aggregate equivalence (with the documented hard-link difference); Vietnamese file names; access-denied partial results in both backends; cooperative cancellation with the worker still usable afterwards; bounded shutdown without a kill; startup and round-trip overhead |
-| `Bootstrap.Tests.ps1` | 39 | 0 | the installer launcher executed as text (no `$PSScriptRoot`, no `$PSCommandPath`, no `exit()`, and the functions it defines removed again); the session surviving a failed run with `$LASTEXITCODE` at 1; exact platform-asset selection, ambiguity refusal and a declared platform that disagrees; the canonical platform-to-worker-path table; OS-architecture mapping including ARM64 and the refusal of a 32-bit host; the 5.1 runtime floor and the refusal of anything older; HTTPS-only and allow-listed-host redirects on every hop, including the real GitHub asset host and the refusal of a cross-host or `http://` hop; checksum-text parsing; refusal without a checksum; hash mismatch; traversal-safe extraction; paths with spaces and Unicode; manifest validation (schema, platform, entry point, worker protocol, canonical worker path, per-file size and hash); the no-bypass staging marker and cache rule; the launch step passing no arguments and propagating the exit code; no app state written; runtime policy (5.1 accepted, 4.0 refused, 7.4-<7.7 as the handoff target); probe-not-filename discovery with preview/untested rejection; PATH-first selection; handoff loop prevention; winget absent/consent/decline/failure with re-discovery; argument quoting and option/cwd/env preservation; classified errors. Three further tests are the opt-in live run (`WT_BOOTSTRAP_LIVE_TEST=1`, skipped by default) |
+| `Bootstrap.Tests.ps1` | 52 | 0 | **the published launcher** (new): pure ASCII with no UTF-8 BOM, its text parsing exactly as `irm` delivers it, the implementation decoded with and without a leading `U+FEFF` to identical parseable text, the launcher-protocol refusal, the pinned URL and allowed-host policy, option forwarding with nothing emitted by the launcher, session survival and `$LASTEXITCODE` mirroring through `iex`, and file execution reaching the implementation beside the launcher without a download; **the HTTP body reader** (new): a real 256 KiB `HttpContent` through both readers, the size bound enforced while reading, and a real HTTP response streamed from a socket (ephemeral `TcpListener`) through the same reader; **the implementation**: executed as text (no `$PSScriptRoot`, no `$PSCommandPath`, no `exit()`, and the functions it defines removed again); the session surviving a failed run with `$LASTEXITCODE` at 1; exact platform-asset selection, ambiguity refusal and a declared platform that disagrees; the canonical platform-to-worker-path table; OS-architecture mapping including ARM64 and the refusal of a 32-bit host; the 5.1 runtime floor and the refusal of anything older; HTTPS-only and allow-listed-host redirects on every hop, including the real GitHub asset host and the refusal of a cross-host or `http://` hop; checksum-text parsing; refusal without a checksum; hash mismatch; traversal-safe extraction; paths with spaces and Unicode; manifest validation (schema, platform, entry point, worker protocol, canonical worker path, per-file size and hash); the no-bypass staging marker and cache rule; the launch step passing no arguments and propagating the exit code; no app state written; runtime policy (5.1 accepted, 4.0 refused, 7.4-<7.7 as the handoff target); probe-not-filename discovery with preview/untested rejection; PATH-first selection; handoff loop prevention; winget absent/consent/decline/failure with re-discovery; argument quoting and option/cwd/env preservation; classified errors. Six tests are the opt-in live run (`WT_BOOTSTRAP_LIVE_TEST=1`, skipped by default): three GitHub transport checks, two published-launcher checks and the whole-downloader check |
 | `Compatibility.Tests.ps1` | 19 | 0 | the runtime layer: profile and tier, the tested range and the capability table with reasons; BOM-less UTF-8 read/write and append; cross-runtime JSON escaping (`\uXXXX`, surrogate pairs, escaped backslashes) and the `-AsHashtable` shape; the handoff command; the module manifest and entry-point floor; the UTF-8 BOM policy over every source file; EN/VI runtime strings; and bootstrap/module discovery classification parity over fake runtimes (stable, old, future, preview, garbage) |
 | `ReleasePackage.Tests.ps1` | 12 | 0 | a real generated archive for the host platform taken through the bootstrap's own code: checksum agreement between `checksums.txt`, the release manifest and the bytes; safe extraction; internal manifest present, complete and free of archive hashes; every declared file hash and size; the executable bit on the worker; manifest validation; worker-path resolution and the real worker handshake from the staged client; and refusal of a byte-flipped archive, a same-length replaced worker, a manifest whose protocol/platform/worker path disagree, and a missing worker |
 | `CapabilityLoss.Tests.ps1` | 11 | 0 | the per-definition capability-loss disclosure: parsing and load-time validation (catalog and PowerShell definitions), attachment to the definition, aggregation across a selection by stable capability id, and the refusal of malformed declarations - read-only throughout |
@@ -98,12 +98,13 @@ The counts below are the ones Pester reports per file; the same command is phase
 | `MultiHost.Tests.ps1` | 10 | 0 | fleet targets and conditions, incident timelines and evidence kinds, read-only playbooks, support-bundle preview/export with redaction and traversal-safe import, and versioned monitoring configuration |
 | `PrivacyPowerTools.Tests.ps1` | 6 | 0 | the privacy summary/activity report shapes, power settings, SRUM history and the Explorer copy-path tweak |
 | `SetupPlans.Tests.ps1` | 10 | 0 | checkpointed setup plans: data-only import, identity-bound resume registrations, refusal on tampering, a failed step stopping the plan, no automatic retry of uncertain steps and bounded reboot counts |
-| **Total** | **529** | **0** | 526 passed, 3 skipped (the opt-in live GitHub tests) |
+| **Total** | **542** | **0** | 536 passed, 6 skipped (the opt-in live GitHub, published-launcher and whole-downloader tests) |
 
-`tools/Invoke-Validation.ps1` phase 5 on this tree reported `Tests passed: 491 | failed: 0 |
-skipped: 3` and ended with `ALL EXECUTED CHECKS PASSED`. The three skipped tests are the live
-GitHub checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access; they were run separately
-and are recorded in section 12.
+`tools/Invoke-Validation.ps1` phase 5 on this tree reported `Tests passed: 536 | failed: 0 |
+skipped: 6` and ended with `ALL EXECUTED CHECKS PASSED`. The six skipped tests are the live
+transport and published-command checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access;
+the pre-existing three were run separately and are recorded in section 12, and the
+launcher/downloader checks can only pass once the fixed files are on `main` (sections 14 and 15).
 
 Destructive operations are mocked: the registry, service, scheduled-task, firewall, DNS,
 Appx and Defender seams are replaced by in-memory doubles, so no real system state is
@@ -472,10 +473,15 @@ pwsh -NoProfile -File tools/Test-Compatibility.ps1
 ```
 5.1 syntax (src, bootstrap, tools, tests)      0 finding(s)
 5.1 commands/parameters and .NET types         0 finding(s)
-Non-ASCII files with a UTF-8 BOM               55 of 55
+Non-ASCII files with a UTF-8 BOM               58 of 58
 Entry point requirement                        #Requires -Version 5.1
 Module manifest floor                          PowerShellVersion 5.1, editions Desktop/Core
+Published launcher encoding                    BOM absent, non-ASCII bytes 0
+Published launcher text parses                 0 error(s) in the text the one-liner passes to iex
+Bootstrap pair protocol                        launcher 1, implementation 1
 Bootstrap runtime policy                       runtime profile present
+HTTP accessors available on .NET Framework     0 synchronous HttpContent accessor call(s)
+System.Net.Http loaded where HttpClient is used 0 file(s) missing the assembly load
 
 COMPATIBILITY GATE PASSED
 ```
@@ -484,9 +490,17 @@ The gate is phase 5 of `tools/Invoke-Validation.ps1`. It runs PSScriptAnalyzer's
 PowerShell 5.1 compatibility rules (`PSUseCompatibleSyntax` with `TargetVersions 5.1`,
 `PSUseCompatibleCommands` and `PSUseCompatibleTypes` against the published profile
 `win-48_x64_10.0.17763.0_5.1.17763.316_x64_4.0.30319.42000_framework`) over every shipped script,
-and separately asserts that each source file containing non-ASCII text carries a UTF-8 BOM
-(5.1 decodes a BOM-less file with the ANSI code page). Development tooling and the test suite are
-gated for syntax only, because they run on the validated PowerShell 7 runtime.
+and separately asserts the properties the rules cannot see:
+
+* every source file containing non-ASCII text carries a UTF-8 BOM (5.1 decodes a BOM-less file
+  with the ANSI code page);
+* the published launcher is pure ASCII with no BOM, its text parses, and both bootstrap files
+  declare the same launcher protocol (section 14);
+* no shipped file calls a synchronous `HttpContent` accessor, and any file that constructs
+  `[System.Net.Http.HttpClient]` loads `System.Net.Http` first (section 15).
+
+Development tooling and the test suite are gated for syntax only, because they run on the
+validated PowerShell 7 runtime.
 
 Before the port, the same gate reported 14 command/parameter findings (twelve
 `ConvertFrom-Json -Depth`, one `-AsHashtable`, one parameter-binding defect) and 18 .NET type
@@ -506,11 +520,162 @@ Executed alongside it:
 | Terminal interface regression | `tests/Tui.Tests.ps1`, `tests/InsightTui.Tests.ps1` after the VT/encoding changes |
 | Release archive still valid after the port | Section 11: four archives, 146 file hashes each, worker handshake |
 
-**Executed on PowerShell 7.6.9 (Linux) only.** Nothing in this section was executed on a Windows
-PowerShell 5.1 host, and the bootstrap was not run against a published release. The rows that
-therefore remain unproven are listed in [COMPATIBILITY.md](COMPATIBILITY.md) ("What remains
-unverified"): 5.1 console/VT/code-page behaviour, 7.4/7.5, Windows-only providers, the WPF window,
-`winget` itself, and the end-to-end public one-liner.
+**Executed on PowerShell 7.6.9 (Linux) only.** The public one-liner was run end to end on Linux
+against the published `v1.0.0` release (section 14), but nothing in this section was executed on a
+Windows PowerShell 5.1 host. The rows that therefore remain unproven are listed in
+[COMPATIBILITY.md](COMPATIBILITY.md) ("What remains unverified"): 5.1 console/VT/code-page
+behaviour, 7.4/7.5, Windows-only providers, the WPF window, `winget` itself, and
+`irm | iex` in a Windows console.
+
+## 14. Public bootstrap command: BOM parse failure and the launcher split (executed)
+
+**Reported.** The documented one-liner on Windows PowerShell 5.1:
+
+```powershell
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
+
+```
+At line:84 char:1
+Unexpected attribute 'CmdletBinding'.
+Unexpected token 'param' in expression or statement.
+... one "the assignment expression is not valid" per parameter default below it
+```
+
+**Root cause.** The published file was a single 5.1-parseable script carrying a UTF-8 BOM (needed
+so 5.1 decodes its Vietnamese messages with UTF-8, not the ANSI code page). `irm` hands the
+response body to `iex` as a *string*; the BOM decodes to a leading `U+FEFF`, and the parser then
+refuses the body's own `[CmdletBinding()] param(...)` block. Measured with the parser on
+PowerShell 7.6.9:
+
+| Text given to the parser | Source | Parse errors |
+|---|---|---|
+| the body as the transport delivers it (first char `U+FEFF`) | UTF-8 decode of the published bytes | **4**, first at line 84: `Unexpected attribute 'CmdletBinding'.` |
+| the same text with the marker removed | `$text.Substring(1)` | **0** |
+| `Get-Content -Raw` of the same file | the cmdlet strips the BOM | **0** |
+| the same bytes decoded as Latin-1 (`ï»¿` prefix) | a transport without the charset | **4**, same messages and lines |
+
+The failure also reproduces through the real mechanism, `irm` over HTTP into `iex`:
+
+```
+ParseException: At line:84 char:1
+    line 84 col 1: Unexpected attribute 'CmdletBinding'.
+    line 85 col 1: Unexpected token 'param' in expression or statement.
+    line 87 col 98: The assignment expression is not valid. ...
+    line 91 col 102: The assignment expression is not valid. ...
+```
+
+A file-level parse (`ParseFile`, `Get-Content -Raw`) never reaches that state, which is why the
+suite did not catch it: the failing input is the *text* the one-liner builds, not the file.
+
+**Fix.** Two files, each with one encoding job:
+
+| File | Encoding | Job |
+|---|---|---|
+| `bootstrap/bootstrap.ps1` | pure ASCII, **no BOM** | Published launcher: runtime floor, implementation bytes (the file beside it, or the pinned HTTPS URL), explicit UTF-8 decode with a leading `U+FEFF` removed, parse + launcher-protocol check, script-block invocation in a child scope with every option forwarded, `$LASTEXITCODE` mirrored, no `exit()`, nothing emitted. |
+| `bootstrap/implementation.ps1` | UTF-8 **with BOM** | The previous installer, unchanged in behaviour: release selection, HTTPS/host/hash verification, staging, runtime discovery and handoff, launch, terminal cleanup. |
+
+Both declare `$Script:WtBootstrapLauncherProtocol = 1`; a mismatch is refused as `INTEGRITY:` with
+the remedy (re-run the documented one-liner). `tools/Test-Compatibility.ps1` now fails the build if
+the launcher gains a BOM or a non-ASCII byte, if the text it serves does not parse, or if the two
+files disagree about the protocol.
+
+**Executed here (Linux, PowerShell 7.6.9)**
+
+| Check | Evidence |
+|---|---|
+| published body parsed as text, exactly as `irm` delivers it | 4 errors, first `line 84: Unexpected attribute 'CmdletBinding'.`; the same text without the marker: 0 errors |
+| fixed launcher through `irm | iex` (local HTTP fixture, no `$PSScriptRoot`) | implementation loaded, the release URL refused → `NETWORK:` error, `$LASTEXITCODE` = 1, 0 `*WtBootstrap*` functions left behind, session alive |
+| launcher as a file (`pwsh -NoProfile -File bootstrap/bootstrap.ps1`) | real GitHub metadata, `v1.0.0` asset downloaded, SHA-256 verified against `checksums.txt`, staged, interface opened in a real pty (header rendered, Vietnamese UI) |
+| implementation content decoded with and without a leading `U+FEFF` | identical text, marker absent, 0 parse errors (`tests/Bootstrap.Tests.ps1`) |
+| protocol mismatch and unparseable implementation | refused as `INTEGRITY:` before anything runs |
+| option forwarding launcher → implementation | all seven options arrive with the caller's values; the launcher itself emits nothing |
+| file execution does not download the implementation | the sibling file is used; the implementation URL is never requested |
+| the whole public chain (Linux) | `releases/latest` → asset → hash → staging → interface, against the published `v1.0.0` |
+
+**Release package.** The published archive's own `manifest.json` (downloaded by the fixed launcher)
+lists 146 files - `WindowsTweaker.ps1`, `PSScriptAnalyzerSettings.psd1`, `THIRD-PARTY-NOTICES.md`,
+`src/WindowsTweaker/**`, `licenses/**`, the platform worker and the manifest itself - and **no
+`bootstrap/` entry**. The bootstrap files are served from `main`, so this fix changes no published
+asset and needs no new release; tag and release `v1.0.0` were left untouched.
+
+**Not executed.** `irm | iex` on a Windows host: no Windows PowerShell 5.1 host and no Windows host
+was available. The 5.1 report above is a user report, reproduced here on PowerShell 7.6.9 with the
+identical error text and line numbers - the parser behaviour is the same on both, but that is an
+inference for 5.1, not a measurement. The fixed body can only be tested against the public URL
+after it is merged to `main`; the opt-in live tests (`WT_BOOTSTRAP_LIVE_TEST=1`) fetch the
+published launcher and implementation and assert the same properties remotely.
+
+## 15. Windows PowerShell 5.1 HTTP content access: the synchronous accessor (executed)
+
+**Reported.** After the launcher split (section 14), a 5.1 run failed while downloading:
+
+```
+LAUNCH: Method invocation failed because [System.Net.Http.StreamContent] does not contain a method named 'ReadAsStream'.
+```
+
+**Root cause.** Both download helpers read the response body with
+`$Response.Content.ReadAsStream()`. That member is .NET 5+; Windows PowerShell 5.1 runs on .NET
+Framework, whose `HttpContent` exposes only `ReadAsStreamAsync()`, `ReadAsStringAsync()` and
+`ReadAsByteArrayAsync()`. The exception was raised inside the download and carried no
+classification, so the entry point reported it as `LAUNCH:` without naming the stage.
+
+**Fix.**
+
+* `bootstrap/implementation.ps1`: `Get-WtBootstrapContent` delegates the body to
+  `Read-WtBootstrapContentBytes`, which awaits
+  `$Content.ReadAsStreamAsync().GetAwaiter().GetResult()` - the parameterless overload; the
+  `CancellationToken` overload is not used because its availability on the .NET Framework build is
+  not guaranteed. It enforces the byte bound **while** reading, disposes the body stream and the
+  buffer on every path, and classifies failures as `NETWORK: ... while opening/reading the
+  response body ...`, or `INTEGRITY` for the bound. The whole client block is wrapped so an
+  unexpected failure there becomes `NETWORK: Download of <url> failed: <original message>` instead
+  of `LAUNCH`. The release-metadata JSON parse is classified `PACKAGE`.
+* `bootstrap/bootstrap.ps1`: the same reader for the implementation download
+  (`Read-WtBootstrapLauncherContentBytes`) with the same classification. It is a deliberate second
+  copy: the launcher has to work before the implementation exists.
+* `src/WindowsTweaker/Private/Observability/PromData.ps1`: `[System.Net.Http.HttpClient]::new()`
+  cannot be resolved on 5.1 until `System.Net.Http` is loaded ("Unable to find type"); both call
+  sites now call `Initialize-WtPromHttpClient` first. Its existing
+  `ReadAsStreamAsync().GetAwaiter().GetResult()` was already 5.1-safe.
+
+Unchanged: bounded size, 30 s client timeout, TLS 1.2 scoped to the request with the previous
+value restored, manual redirect/allowed-host validation, same-release SHA-256 verification, the
+`.complete` staging marker, and disposal of the response, request and client on every path.
+
+**Executed here (Linux, PowerShell 7.6.9)**
+
+| Check | Evidence |
+|---|---|
+| real `HttpContent` (256 KiB `ByteArrayContent`) through both readers | returned bytes hash-equal to the input |
+| the size bound while reading | `INTEGRITY: ... exceeds the 1024 byte limit` from both readers |
+| a real HTTP exchange over a socket (ephemeral `TcpListener`, `Connection: close`) through `Read-WtBootstrapContentBytes` | 256 KiB body streamed and hash-equal; a second response with `-MaxBytes 4096` refused as `INTEGRITY` |
+| the launcher's real HTTPS download of the published body | body fetched and decoded; refused as `INTEGRITY: ... declares launcher protocol 0` (the pre-merge body), not a `ReadAsStream` failure |
+| the whole chain with the real downloader | `releases/latest` → asset and `checksums.txt` → SHA-256 verified → staged → launch attempted |
+| the static gate rules | negative-tested, see below |
+
+`tools/Test-Compatibility.ps1` now fails the build when a shipped file calls a synchronous
+`HttpContent` accessor (AST-level, so the explanatory comments that name the missing member do not
+trip it) or constructs `[System.Net.Http.HttpClient]` without loading `System.Net.Http`. Both rules
+were exercised against the defective shapes: re-adding `.ReadAsStream()` reported
+`bootstrap.ps1:183 ReadAsStream()`, and a probe file constructing `HttpClient` without the
+assembly load was reported by name. Both probes were removed again.
+
+**Not executed.** The streaming tests on Windows PowerShell 5.1: no Windows host was available, so
+the 5.1 failure is a user report and every check above ran on 7.6.9. The tests are deliberately
+runtime-agnostic - a real `HttpContent` and a real socket, never a mock of the failing member - so
+they are the check to run on a 5.1 host, together with the opt-in live test, which drives the whole
+downloader over the real transport on whichever runtime runs it:
+
+```powershell
+$env:WT_BOOTSTRAP_LIVE_TEST = '1'
+powershell.exe -NoProfile -Command "Invoke-Pester -Path ./tests/Bootstrap.Tests.ps1 -Output Detailed"
+```
+
+**Patch release.** `ModuleVersion` is now `1.0.1`, and the packages were rebuilt locally with
+`tools/New-ReleasePackage.ps1 -Version 1.0.1` (four archives, 146 file hashes each, worker
+handshake; `engineVersion` 1.0.1 in both manifests, `ModuleVersion` 1.0.1 inside each archive).
+The published `v1.0.0` release and its tag were not touched, and nothing was pushed or published.
 
 ## Not executed here (Windows-only integration checks)
 

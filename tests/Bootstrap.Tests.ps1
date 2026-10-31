@@ -1,14 +1,23 @@
 ﻿# WindowsTweaker bootstrap tests.
 #
-# Two of the tests here execute the script as *text* through iex, which is the way the
-# documented `irm ... | iex` one-liner runs it: no $PSScriptRoot, and no second chance if
-# the script calls exit(). The session-preservation and "no tweak" properties are asserted
-# on that path, not on a dot-source that skips the entry block.
+# The documented `irm ... | iex` one-liner runs two files: the published launcher
+# (bootstrap/bootstrap.ps1, pure ASCII, no BOM) receives the downloaded body as text, and it
+# executes the full implementation (bootstrap/implementation.ps1, UTF-8 with BOM, Vietnamese
+# messages) that it reads from beside itself or downloads. Both paths are exercised here, and
+# they are exercised *as text* - a parse of the file says nothing about the string `iex`
+# receives, which is exactly how a leading U+FEFF stayed undetected.
+#
+# The tests that run the text through iex/script blocks assert that no $PSScriptRoot is
+# available, that the session survives a failure (nothing calls exit()), that the code is
+# mirrored into $LASTEXITCODE and that no function is left behind.
 
 BeforeAll {
     $env:WT_BOOTSTRAP_TEST_ONLY = '1'
     $script:RepoRoot = Split-Path -Path $PSScriptRoot -Parent
-    $script:BootstrapPath = Join-Path $script:RepoRoot 'bootstrap/bootstrap.ps1'
+    $script:BootstrapPath = Join-Path $script:RepoRoot 'bootstrap/implementation.ps1'
+    $script:LauncherPath = Join-Path $script:RepoRoot 'bootstrap/bootstrap.ps1'
+    $script:PublishedLauncherUrl = 'https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1'
+    $script:PublishedImplementationUrl = 'https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/implementation.ps1'
     $script:TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wt-boot-{0}" -f ([guid]::NewGuid().ToString('n')))
     [System.IO.Directory]::CreateDirectory($script:TestRoot) | Out-Null
     $script:PwshPath = (Get-Command pwsh -ErrorAction Stop).Source
@@ -64,6 +73,344 @@ iex (Get-Content -LiteralPath '$($script:BootstrapPath)' -Raw)
         $Text | Should -Match 'AFTER-BOOTSTRAP 1'
         $Text | Should -Match 'LEFT-OVER-FUNCTIONS 0'
         $Text | Should -Match 'STILL-HERE'
+    }
+}
+
+Describe 'Published launcher and the documented one-liner' {
+
+    It 'is pure ASCII with no UTF-8 BOM, because iex receives its text and not the file' {
+        $Bytes = [System.IO.File]::ReadAllBytes($script:LauncherPath)
+        $HasBom = ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF)
+
+        # A BOM here is the defect this launcher exists to remove: irm decodes it into a
+        # leading U+FEFF and the parser then refuses the body's own CmdletBinding/param block.
+        $HasBom | Should -BeFalse
+        @($Bytes | Where-Object { $_ -gt 0x7F }).Count | Should -Be 0
+    }
+
+    It 'parses from the text the one-liner passes to iex, with no leading U+FEFF' {
+        # irm decodes the response body with the declared charset; decoding the bytes here
+        # reproduces exactly the string that reaches iex in the documented command.
+        $Text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($script:LauncherPath))
+        [int][char]$Text[0] | Should -Not -Be 0xFEFF
+
+        $Tokens = $null
+        $Errors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$Tokens, [ref]$Errors)
+        @($Errors).Count | Should -Be 0
+    }
+
+    It 'removes a leading U+FEFF from the implementation, and decodes both forms to the same text' {
+        . $script:LauncherPath
+        $Bytes = [System.IO.File]::ReadAllBytes($script:BootstrapPath)
+
+        # Unfixed form, as irm would hand the implementation over: the file's UTF-8 BOM
+        # decodes to a leading U+FEFF, and the text does not parse.
+        $AsIs = [System.Text.Encoding]::UTF8.GetString($Bytes)
+        [int][char]$AsIs[0] | Should -Be 0xFEFF
+        $Tokens = $null
+        $Errors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($AsIs, [ref]$Tokens, [ref]$Errors)
+        @($Errors).Count | Should -BeGreaterThan 0
+        @($Errors)[0].Message | Should -Match "Unexpected attribute 'CmdletBinding'"
+
+        # The launcher's decode: explicit UTF-8, marker removed, text parses.
+        $Decoded = Convert-WtBootstrapLauncherImplementationText -Bytes $Bytes
+        [int][char]$Decoded[0] | Should -Not -Be 0xFEFF
+        $Tokens = $null
+        $Errors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($Decoded, [ref]$Tokens, [ref]$Errors)
+        @($Errors).Count | Should -Be 0
+
+        # The same bytes without a BOM must decode to the same text, so neither the transport
+        # nor the file's byte-order mark can change what is executed.
+        $WithoutBom = [byte[]]$Bytes[3..($Bytes.Length - 1)]
+        (Convert-WtBootstrapLauncherImplementationText -Bytes $WithoutBom) | Should -Be $Decoded
+    }
+
+    It 'refuses an implementation from another revision, and one that does not parse' {
+        . $script:LauncherPath
+
+        { Assert-WtBootstrapLauncherImplementationText -Text '$Script:WtBootstrapLauncherProtocol = 99' -Source 'fixture' } |
+            Should -Throw -ExpectedMessage '*declares launcher protocol 99*'
+        { Assert-WtBootstrapLauncherImplementationText -Text 'if (' -Source 'fixture' } |
+            Should -Throw -ExpectedMessage '*does not parse*'
+    }
+
+    It 'pins the implementation to the documented repository and an allowed host' {
+        . $script:LauncherPath
+
+        $Script:WtBootstrapLauncherImplementationUrl |
+            Should -Be 'https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/implementation.ps1'
+        (Get-WtBootstrapLauncherAllowedHosts) | Should -Contain 'raw.githubusercontent.com'
+
+        # The override may only point at HTTPS on an allowed host, and it is refused before any
+        # request is made (no network in this test).
+        $env:WT_BOOTSTRAP_IMPLEMENTATION_URL = 'http://invalid.example/implementation.ps1'
+        try {
+            { Get-WtBootstrapLauncherImplementationText } | Should -Throw -ExpectedMessage '*Refusing non-HTTPS URL*'
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_IMPLEMENTATION_URL -ErrorAction Ignore
+        }
+    }
+
+    It 'forwards every documented option to the implementation and emits nothing itself' {
+        . $script:LauncherPath
+        $StubPath = Join-Path $script:TestRoot 'stub-implementation.ps1'
+        $Record = Join-Path $script:TestRoot 'stub-forward.txt'
+        $Stub = @(
+            # The protocol declaration is a script element: like the implementation's own, it
+            # comes after the param block, because PowerShell only accepts an attribute and
+            # param block at the very start of a script.
+            '[CmdletBinding()]'
+            'param('
+            '    [Parameter(Mandatory = $false)][string]$RuntimeMode = ''auto'','
+            '    [Parameter(Mandatory = $false)][string]$Language,'
+            '    [Parameter(Mandatory = $false)][string]$Colour,'
+            '    [Parameter(Mandatory = $false)][switch]$Ascii,'
+            '    [Parameter(Mandatory = $false)][string]$WorkerBackend = ''Auto'','
+            '    [Parameter(Mandatory = $false)][string]$Icons = ''Auto'','
+            '    [Parameter(Mandatory = $false)][switch]$NoInstall'
+            ')'
+            '$Script:WtBootstrapLauncherProtocol = 1'
+            '$Value = ''{0}|{1}|{2}|{3}|{4}|{5}|{6}'' -f $RuntimeMode, $Language, $Colour, [bool]$Ascii, $WorkerBackend, $Icons, [bool]$NoInstall'
+            "Set-Content -LiteralPath '$Record' -Value `$Value -Encoding utf8"
+            '$global:LASTEXITCODE = 0'
+        ) -join "`n"
+        Set-Content -LiteralPath $StubPath -Value $Stub -Encoding utf8
+
+        $env:WT_BOOTSTRAP_IMPLEMENTATION_PATH = $StubPath
+        # The test session sets WT_BOOTSTRAP_TEST_ONLY (it dot-sources both files); the child
+        # would inherit it and skip the entry block, so it is removed for the child run only.
+        Remove-Item Env:\WT_BOOTSTRAP_TEST_ONLY -ErrorAction Ignore
+        try {
+            $Output = & $script:PwshPath -NoProfile -File $script:LauncherPath -Language vi -Colour Mono -Ascii -WorkerBackend Go -Icons ASCII -RuntimeMode native -NoInstall 2>&1
+            $Code = $LASTEXITCODE
+        } finally {
+            $env:WT_BOOTSTRAP_TEST_ONLY = '1'
+            Remove-Item Env:\WT_BOOTSTRAP_IMPLEMENTATION_PATH -ErrorAction Ignore
+        }
+
+        $Code | Should -Be 0
+        @($Output).Count | Should -Be 0
+        (Get-Content -LiteralPath $Record -Raw).Trim() | Should -Be 'native|vi|Mono|True|Go|ASCII|True'
+    }
+
+    It 'runs the implementation from the text the one-liner receives, mirrors the code and leaves the session clean' {
+        $StateDir = Join-Path $script:TestRoot 'state-launcher'
+        $Script = @"
+# The documented one-liner: the launcher body is executed as text, so it has no
+# `$PSScriptRoot and must find the implementation through the documented override.
+Remove-Item Env:\WT_BOOTSTRAP_TEST_ONLY -ErrorAction Ignore
+`$env:WT_BOOTSTRAP_IMPLEMENTATION_PATH = '$($script:BootstrapPath)'
+`$env:WT_BOOTSTRAP_STATE_DIR = '$StateDir'
+`$env:WT_BOOTSTRAP_RELEASE_URL = 'http://invalid.example/bootstrap'
+`$env:WT_BOOTSTRAP_ENTRYPOINT = 'C:\nonexistent\entry.ps1'
+iex (Get-Content -LiteralPath '$($script:LauncherPath)' -Raw)
+'AFTER-LAUNCHER ' + `$LASTEXITCODE
+'LEFT-OVER-FUNCTIONS ' + (@(Get-ChildItem Function:\ | Where-Object { `$_.Name -like '*WtBootstrap*' }).Count)
+'STILL-HERE'
+"@
+        $Output = & $script:PwshPath -NoProfile -Command $Script 2>$null
+        $ExitCode = $LASTEXITCODE
+        $Text = $Output -join "`n"
+
+        # Nothing in the chain may call exit(), and the failure must arrive as $LASTEXITCODE.
+        $ExitCode | Should -Be 0
+        $Text | Should -Match 'AFTER-LAUNCHER 1'
+        $Text | Should -Match 'LEFT-OVER-FUNCTIONS 0'
+        $Text | Should -Match 'STILL-HERE'
+    }
+
+    It 'reaches release discovery from file execution without downloading the implementation' {
+        # File execution uses the implementation beside the launcher. The release URL is
+        # refused before any request, so this proves the local selection and the error path
+        # without network traffic; a download would have replaced that message with a
+        # NETWORK failure about the implementation URL.
+        $StateDir = Join-Path $script:TestRoot 'state-file'
+        $env:WT_BOOTSTRAP_STATE_DIR = $StateDir
+        $env:WT_BOOTSTRAP_RELEASE_URL = 'http://invalid.example/bootstrap'
+        Remove-Item Env:\WT_BOOTSTRAP_TEST_ONLY -ErrorAction Ignore
+        try {
+            $Output = & $script:PwshPath -NoProfile -File $script:LauncherPath 2>&1
+            $Code = $LASTEXITCODE
+        } finally {
+            $env:WT_BOOTSTRAP_TEST_ONLY = '1'
+            Remove-Item Env:\WT_BOOTSTRAP_STATE_DIR, Env:\WT_BOOTSTRAP_RELEASE_URL -ErrorAction Ignore
+        }
+
+        $Text = @($Output) -join "`n"
+        $Text | Should -Match 'NETWORK: Refusing non-HTTPS URL: http://invalid.example/bootstrap'
+        $Text | Should -Not -Match 'implementation file was not found'
+        # A -File run keeps the process exit code at 0 and mirrors the bootstrap code into
+        # $LASTEXITCODE inside the session, exactly as the single-file bootstrap did.
+        $Code | Should -Be 0
+    }
+}
+
+Describe 'HTTP response streaming over a real HttpContent' {
+    # The defect this covers: Windows PowerShell 5.1 runs on .NET Framework, where HttpContent
+    # exposes only the asynchronous accessors. The previous code called
+    # $Response.Content.ReadAsStream() and failed there with "Method invocation failed because
+    # [System.Net.Http.StreamContent] does not contain a method named 'ReadAsStream'".
+    # These tests drive the real content-to-stream path: real HttpContent objects, and a real
+    # HTTP exchange over a socket, never a mock of the failing member. They are runtime-agnostic,
+    # so the same tests are the check to run on a Windows PowerShell 5.1 host.
+
+    BeforeAll {
+        try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch { $null = $_ }
+        $script:HttpPayload = [byte[]]::new(262144)
+        [System.Random]::new(20261101).NextBytes($script:HttpPayload)
+    }
+
+    It 'reads a real ByteArrayContent through both readers and enforces the size bound' {
+        . $script:BootstrapPath
+        . $script:LauncherPath
+
+        # One content per reader: an HttpContent is a single-use body, so reusing it would test
+        # the wrong thing (the framework closes its stream after a completed read).
+        $ImplementationContent = [System.Net.Http.ByteArrayContent]::new($script:HttpPayload)
+        try {
+            $Implementation = Read-WtBootstrapContentBytes -Content $ImplementationContent -Source 'fixture'
+        } finally {
+            $ImplementationContent.Dispose()
+        }
+        $LauncherContent = [System.Net.Http.ByteArrayContent]::new($script:HttpPayload)
+        try {
+            $Launcher = Read-WtBootstrapLauncherContentBytes -Content $LauncherContent -Source 'fixture'
+        } finally {
+            $LauncherContent.Dispose()
+        }
+
+        $Expected = (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($script:HttpPayload)) -Algorithm SHA256).Hash
+        $Implementation.Length | Should -Be $script:HttpPayload.Length
+        $Launcher.Length | Should -Be $script:HttpPayload.Length
+        (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($Implementation)) -Algorithm SHA256).Hash | Should -Be $Expected
+        (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($Launcher)) -Algorithm SHA256).Hash | Should -Be $Expected
+
+        # A body larger than the bound fails while it is read, and the failure is classified.
+        # Same single-use rule: one content per attempt.
+        $CappedImplementation = [System.Net.Http.ByteArrayContent]::new($script:HttpPayload)
+        try {
+            { Read-WtBootstrapContentBytes -Content $CappedImplementation -MaxBytes 1024 -Source 'fixture' } |
+                Should -Throw -ExpectedMessage '*INTEGRITY*byte limit*'
+        } finally {
+            $CappedImplementation.Dispose()
+        }
+        $CappedLauncher = [System.Net.Http.ByteArrayContent]::new($script:HttpPayload)
+        try {
+            { Read-WtBootstrapLauncherContentBytes -Content $CappedLauncher -MaxBytes 1024 -Source 'fixture' } |
+                Should -Throw -ExpectedMessage '*INTEGRITY*byte limit*'
+        } finally {
+            $CappedLauncher.Dispose()
+        }
+    }
+
+    It 'streams a real HTTP response body from a socket through the same reader' {
+        . $script:BootstrapPath
+
+        # A real TCP listener on an ephemeral port: no URL ACL, no elevation, and a genuine HTTP
+        # response whose body arrives as StreamContent - the type that failed on 5.1.
+        $Listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+        $Listener.Start()
+        $Port = ([System.Net.IPEndPoint]$Listener.LocalEndpoint).Port
+        $Url = "http://127.0.0.1:$Port/payload.bin"
+
+        $Server = [powershell]::Create()
+        $null = $Server.AddScript({
+                param ($Listener, $Payload, $Count)
+                $Header = "HTTP/1.1 200 OK`r`nContent-Type: application/octet-stream`r`nContent-Length: $($Payload.Length)`r`nConnection: close`r`n`r`n"
+                $HeaderBytes = [System.Text.Encoding]::ASCII.GetBytes($Header)
+                for ($Index = 0; $Index -lt $Count; $Index++) {
+                    $Connection = $Listener.AcceptTcpClient()
+                    try {
+                        $Stream = $Connection.GetStream()
+                        $Buffer = [byte[]]::new(4096)
+                        $Text = ''
+                        while ($Text -notmatch "`r`n`r`n") {
+                            $Read = $Stream.Read($Buffer, 0, $Buffer.Length)
+                            if ($Read -le 0) { break }
+                            $Text += [System.Text.Encoding]::ASCII.GetString($Buffer, 0, $Read)
+                        }
+                        $Stream.Write($HeaderBytes, 0, $HeaderBytes.Length)
+                        $Stream.Write($Payload, 0, $Payload.Length)
+                        $Stream.Flush()
+                    } finally {
+                        $Connection.Close()
+                    }
+                }
+            }).AddArgument($Listener).AddArgument($script:HttpPayload).AddArgument(2)
+        $Handle = $Server.BeginInvoke()
+
+        $Client = [System.Net.Http.HttpClient]::new()
+        try {
+            $Response = $Client.GetAsync($Url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            try {
+                $Bytes = Read-WtBootstrapContentBytes -Content $Response.Content -Source $Url
+            } finally {
+                $Response.Dispose()
+            }
+
+            $Bytes.Length | Should -Be $script:HttpPayload.Length
+            (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($Bytes)) -Algorithm SHA256).Hash |
+                Should -Be (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($script:HttpPayload)) -Algorithm SHA256).Hash
+
+            $Response = $Client.GetAsync($Url, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            try {
+                { Read-WtBootstrapContentBytes -Content $Response.Content -MaxBytes 4096 -Source $Url } |
+                    Should -Throw -ExpectedMessage '*INTEGRITY*byte limit*'
+            } finally {
+                $Response.Dispose()
+            }
+        } finally {
+            $Client.Dispose()
+            try { $null = $Server.EndInvoke($Handle) } catch { $null = $_ }
+            $Server.Dispose()
+            $Listener.Stop()
+        }
+    }
+}
+
+Describe 'Live published launcher' -Skip:(-not $env:WT_BOOTSTRAP_LIVE_TEST) {
+    # Remote verification of the published command, kept separate from the local fixtures.
+    # Until this change is on `main`, the URL still serves the previous single-file bootstrap,
+    # so these two tests fail by design before the fix is published.
+
+    It 'serves a body with no leading U+FEFF that parses as text and declares the pair protocol' {
+        . $script:BootstrapPath
+        $Bytes = Get-WtBootstrapContent -Url $script:PublishedLauncherUrl
+        $Text = [System.Text.Encoding]::UTF8.GetString($Bytes)
+
+        [int][char]$Text[0] | Should -Not -Be 0xFEFF
+        $Tokens = $null
+        $Errors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$Tokens, [ref]$Errors)
+        @($Errors).Count | Should -Be 0
+        $Text | Should -Match '(?m)^\s*\$Script:WtBootstrapLauncherProtocol\s*=\s*1\s*$'
+    }
+
+    It 'serves the implementation whose decoded text parses' {
+        . $script:BootstrapPath
+        . $script:LauncherPath
+        $Bytes = Get-WtBootstrapContent -Url $script:PublishedImplementationUrl
+        $Decoded = Convert-WtBootstrapLauncherImplementationText -Bytes $Bytes
+
+        [int][char]$Decoded[0] | Should -Not -Be 0xFEFF
+        $Tokens = $null
+        $Errors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($Decoded, [ref]$Tokens, [ref]$Errors)
+        @($Errors).Count | Should -Be 0
+    }
+
+    It 'downloads real bytes through the whole downloader on this runtime' {
+        . $script:BootstrapPath
+
+        # The check to run on Windows PowerShell 5.1 (`WT_BOOTSTRAP_LIVE_TEST=1`): it drives
+        # Get-WtBootstrapContent end to end - client, request, status, body stream - on the
+        # runtime that lacks the synchronous HttpContent accessors.
+        $Bytes = Get-WtBootstrapContent -Url $script:PublishedLauncherUrl -MaxBytes 4MB
+        $Bytes.Length | Should -BeGreaterThan 1024
+        [System.Text.Encoding]::UTF8.GetString($Bytes, 0, 3) | Should -Be '# W'
     }
 }
 

@@ -1,17 +1,54 @@
 ﻿# Bootstrap: install and launch
 
-`bootstrap/bootstrap.ps1` is the installer launcher. It is a single script meant to be executed
-as **text** (`irm <url> | iex`), so it uses no `$PSScriptRoot`, no `$PSCommandPath` and no
-caller working directory, it never calls `exit()`, it leaves no functions behind in the
-caller's session, and the only session state it writes is `$LASTEXITCODE`.
+Two files make up the bootstrap, and the split is deliberate:
+
+| File | Role | Encoding |
+|---|---|---|
+| `bootstrap/bootstrap.ps1` | The **published launcher**, and the only documented entry point. It loads the implementation and executes it. | Pure ASCII, **no BOM** |
+| `bootstrap/implementation.ps1` | The full installer: release selection, verification, staging, runtime policy, launch. | UTF-8 **with BOM** (Vietnamese messages) |
 
 ```powershell
 irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
 ```
 
-This is the one documented command, and it runs on **Windows PowerShell 5.1 and PowerShell 7**.
-The file is 5.1-parseable and carries a UTF-8 BOM so 5.1 decodes its Vietnamese messages
-correctly; below 5.1 it refuses with a bilingual explanation instead of selecting a wrong release.
+That is the one documented command, and it runs on **Windows PowerShell 5.1 and PowerShell 7**.
+
+## Why the launcher is ASCII-only (the defect this split fixes)
+
+`irm <url> | iex` hands the downloaded body to the parser as a *string*, not as a file. A UTF-8
+BOM in that body is decoded into a leading `U+FEFF`, and PowerShell's parser then refuses the
+body's own attribute and param block:
+
+```
+At line:84 char:1
+Unexpected attribute 'CmdletBinding'.
+Unexpected token 'param' in expression or statement.
+The assignment expression is not valid. ... (one per parameter default below it)
+```
+
+Measured in this repository on PowerShell 7.6.9 by decoding the file's bytes the way the
+transport does, and reported from Windows PowerShell 5.1 with the same line numbers. The same
+text without the leading `U+FEFF` parses with zero errors, and `Get-Content -Raw` (which strips
+the BOM) never showed the problem - which is why a file-level parse test did not catch it, and
+why `tests/Bootstrap.Tests.ps1` now asserts properties of the *text* the one-liner receives.
+
+One file cannot satisfy both requirements: the body `iex` receives must not start with `U+FEFF`,
+and the implementation must keep its BOM because 5.1 decodes a BOM-less file with the ANSI code
+page and would corrupt every Vietnamese message in it. So the launcher is pure ASCII - it cannot
+produce a `U+FEFF`, and its own messages are therefore English - and it loads the implementation
+explicitly:
+
+1. read the implementation as **bytes**: the file beside the launcher for file execution, or the
+   pinned `https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/implementation.ps1`;
+2. decode those bytes as UTF-8 and remove a leading `U+FEFF` if one survived the transport;
+3. refuse the text unless it parses and declares `$Script:WtBootstrapLauncherProtocol = 1`;
+4. execute it as a script block in a child scope, forwarding every documented option, and mirror
+   the code the implementation produced into `$LASTEXITCODE`.
+
+That download refuses redirects (one pinned URL is enough), is capped at 4 MiB, and enables TLS
+1.2 for the request only, as every other download in this project does. A failure is reported as
+`RUNTIME:`, `NETWORK:`, `INTEGRITY:`, `PACKAGE:` or `LAUNCH:` and mirrored into `$LASTEXITCODE`,
+with no unverified fallback.
 
 ## Runtimes: what happens on each one
 
@@ -20,7 +57,7 @@ correctly; below 5.1 it refuses with a bilingual explanation instead of selectin
 | Windows PowerShell 5.1 (the console included with Windows) | Stages and validates the release **on 5.1**, then starts the interface on a compatible stable PowerShell 7 (7.4-7.6) when one is installed. If none is installed it offers the `winget` installation once (consent required) and re-discovers the executable afterwards. Declining, cancelling or a failed installation continues **natively on 5.1** with a bilingual notice. |
 | PowerShell 7.4 - 7.6 (stable) | Runs the interface natively in this session; no second process. |
 | PowerShell 7.0 - 7.3, 7.7+, 8.x, preview | Runs natively and prints a notice naming the validated range. Preview builds are never selected as a handoff target. |
-| older than 5.1 | Refused (`#Requires -Version 5.1` and an explicit bilingual message); the session stays usable. |
+| older than 5.1 | Refused. `#Requires -Version 5.1` stops a file run, and the launcher checks the runtime before it loads anything and prints an English `RUNTIME:` message naming the floor (an ASCII-only file cannot carry the Vietnamese half); the session stays usable. |
 
 Discovery never trusts a file name: every candidate is executed with
 `-NoProfile -NonInteractive -Command` and asked for its version, edition and architecture.
@@ -62,23 +99,37 @@ host executable).
   release metadata URL is
   `https://api.github.com/repos/88kbleirad/WindowsTweaker/releases/latest`, so the script no
   longer needs editing before use.
-* **No release is published yet.** Until one is, that default URL answers `HTTP 404` and the
-  bootstrap fails with `Could not resolve release metadata: HTTP 404 ...` - it never falls back
-  to something unverified. Publish the assets described in [RELEASE.md](RELEASE.md) and the
-  command above starts working.
+* **Release `v1.0.0` is published** (tag `v1.0.0`, assets `WindowsTweaker-<platform>-v1.0.0.zip`,
+  `checksums.txt`, `manifest.json`). During the launcher fix the whole public chain was executed
+  on Linux: release metadata resolved, the `linux-x64` archive downloaded, its SHA-256 verified
+  against `checksums.txt`, staged, and the interface started - see
+  [VALIDATION.md](VALIDATION.md) section 13. A release that is *not* published, or a repository
+  with no release at all, still answers `HTTP 404` at the default metadata URL, and the bootstrap
+  fails with a classified `NETWORK:`/`PACKAGE:` error instead of falling back to something
+  unverified.
+* The release archives do **not** contain either bootstrap file: the launcher is fetched from the
+  repository's `main` ref, and the implementation is fetched by the launcher from the same ref.
+  Changing either file therefore changes no published asset and needs no new release.
+* `v1.0.0` is the published release. The second launcher fix (the .NET Framework download accessor,
+  [VALIDATION.md](VALIDATION.md) section 15) ships as module version `1.0.1`, packaged locally and
+  **not published**: `dist/` holds `WindowsTweaker-<platform>-v1.0.1.zip`, `checksums.txt` and
+  `manifest.json`, and the `v1.0.0` build output is preserved under `dist/v1.0.0/`.
 * `deploy/short-url/nginx-win.conf` is a prepared nginx server block for hosting the same script
   on a short URL. Nothing is deployed; its `YOUR_DOMAIN` is a hosting placeholder, not a
   repository value.
 
 ## The piped-text flow, in order
 
+Step 0 runs in `bootstrap/bootstrap.ps1`; steps 1-12 run in `bootstrap/implementation.ps1`.
+
 | Step | Function | What it enforces |
 |---|---|---|
+| 0. Launcher | `Get-WtBootstrapLauncherImplementationText`, `Convert-WtBootstrapLauncherImplementationText`, `Assert-WtBootstrapLauncherImplementationText`, `Invoke-WtBootstrapLauncherImplementation` | Runtime floor (before anything is loaded); implementation bytes from the sibling file or the pinned URL (HTTPS, allowed host, no redirects, 4 MiB cap) read with `ReadAsStreamAsync()` and classified per stage; explicit UTF-8 decode with the leading `U+FEFF` removed; the text must parse and declare launcher protocol 1; the script block is invoked in a child scope with every option forwarded, and its code is mirrored into `$LASTEXITCODE` with nothing emitted. |
 | 1. Runtime guard | `Get-WtBootstrapRuntimeProfile`, `Assert-WtBootstrapRuntime` | Reads version/edition/platform without `$IsWindows`; refuses only a runtime below 5.1, with a bilingual message. |
 | 2. Platform key | `Get-WtBootstrapPlatformKey` | `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64` from the **OS architecture**; any other architecture throws. |
 | 3. Release metadata | `Get-WtBootstrapRelease` | `GET` of `WT_BOOTSTRAP_RELEASE_URL` or the default API URL; body capped at 2 MiB; `tag_name` and `assets` required. The release `manifest.json` published beside the archives is accepted as well, which is what makes self-hosting possible. |
 | 4. Asset selection | `Get-WtBootstrapAsset` | Exact name match `WindowsTweaker-<key>-<version>.zip` or `WindowsTweaker-<key>.zip`; zero candidates throws; several candidates resolve only when exactly one is versioned, otherwise it throws; when the asset declares a `platform` (our manifest does) it must equal this host's key. |
-| 5. Download | `Get-WtBootstrapAssetBytes`, `Get-WtBootstrapContent` | HTTPS only; every hop checked against the allowed-host list; redirects followed manually (max 10), each hop re-validated; response capped at `asset.size + 1 MiB` and the byte count must equal `asset.size` exactly. |
+| 5. Download | `Get-WtBootstrapAssetBytes`, `Get-WtBootstrapContent`, `Read-WtBootstrapContentBytes` | HTTPS only; every hop checked against the allowed-host list; redirects followed manually (max 10), each hop re-validated; response capped at `asset.size + 1 MiB` and the byte count must equal `asset.size` exactly. The body is read with `HttpContent.ReadAsStreamAsync()` (the synchronous `ReadAsStream()` does not exist on .NET Framework, where 5.1 runs) while the cap is enforced, and any failure names the stage and the original exception: `NETWORK: Download of <url> failed while opening/reading the response body: ...`, `INTEGRITY: ... exceeds the N byte limit`. |
 | 6. SHA-256 | `Get-WtBootstrapExpectedHash`, `Test-WtBootstrapHash` | The hash is read from a `checksums.txt`/`checksum.txt` asset **of the same release** (parsed by `Read-WtBootstrapChecksums`) and compared case-insensitively. Without a checksum asset the bootstrap refuses to continue. |
 | 7. Staging | `Get-WtBootstrapStaging`, `Expand-WtBootstrapArchive` | Version-tagged directory under the state dir with a `.lock` created `CreateNew`, 60 s deadline. Extraction rejects absolute paths and `..` segments and re-checks every target against the base via `Join-WtBootstrapPath`; on Linux the packaged file modes are restored so the worker stays executable. |
 | 8. Release validation | `Test-WtBootstrapRelease` | `manifest.json` present; `schemaVersion` = 1; `version` declared; `platform` (when declared) equals this host's key; `entryPoint` is `WindowsTweaker.ps1`; the declared `worker.path` is the canonical path for that key; required files present; `workerProtocol` = 1; and **every file the manifest declares** is present with the declared size and SHA-256. |
@@ -135,7 +186,9 @@ and recovery data are untouched, and the cleanup in the `finally` block removes 
 | `WT_BOOTSTRAP_STATE_DIR` | Staging/state directory. |
 | `WT_BOOTSTRAP_ENTRYPOINT` | Force the entry point script to launch (tests, packaging validation). |
 | `WT_BOOTSTRAP_ALLOW_OFFLINE` | Only read when `WT_BOOTSTRAP_ENTRYPOINT` or `WT_BOOTSTRAP_RELEASE_URL` is set: launch the cached release without asking; without it, that branch fails explicitly. |
-| `WT_BOOTSTRAP_TEST_ONLY` | Skip the entry block entirely, so the script can be dot-sourced for authoring, tests and `tools/New-ReleasePackage.ps1`. |
+| `WT_BOOTSTRAP_IMPLEMENTATION_PATH` | Launcher only: run this local implementation file instead of the one beside the launcher or the pinned URL (release engineering and tests). Takes precedence over `WT_BOOTSTRAP_IMPLEMENTATION_URL`. |
+| `WT_BOOTSTRAP_IMPLEMENTATION_URL` | Launcher only: implementation URL instead of the pinned `raw.githubusercontent.com` one. HTTPS and an allowed host are still required, and redirects are still refused. |
+| `WT_BOOTSTRAP_TEST_ONLY` | Skip the entry block entirely, so the file can be dot-sourced for authoring, tests and `tools/New-ReleasePackage.ps1`. Applies to both files: dot-source `bootstrap/implementation.ps1` for the installer functions, `bootstrap/bootstrap.ps1` for the launcher functions. |
 | `WT_BOOTSTRAP_RUNTIME` | `auto` (default), `native`, `pwsh`. `native` never relaunches; `pwsh` requires a compatible runtime and fails (exit 3) with the manual instructions instead of falling back silently. |
 | `WT_BOOTSTRAP_NO_INSTALL` | Never offer the `winget` installation; print the manual alternative instead. |
 | `WT_BOOTSTRAP_PWSH` | Explicit executable to probe and hand off to (release engineering and tests). |
@@ -172,19 +225,28 @@ archives and are not part of any archive.
 
 ## Executed vs not executed
 
-Executed here (Linux host, PowerShell 7.6.9): the piped-text execution path including
-session-survival and function cleanup; the platform mapping; the 7.4 runtime guard; exact asset
-selection, ambiguity refusal and platform-declaration mismatch; refusal of non-HTTPS and
-non-allow-listed URLs; redirect-hop validation including the real GitHub asset host; checksum
-parsing; traversal-safe extraction; manifest validation (schema, platform, entry point, protocol,
-canonical worker path, per-file size and hash); the no-bypass cache rule; the launch step with no
-arguments and exit-code propagation; and a full rehearsal of the verification chain on a real
-generated archive (checksum, extraction, validation, staging marker, cache lookup, launch).
-`tests/Bootstrap.Tests.ps1` holds these, and `tests/ReleasePackage.Tests.ps1` drives the real
-archive. Evidence: [VALIDATION.md](VALIDATION.md) sections 3, 11 and 12.
+Executed here (Linux host, PowerShell 7.6.9): the launcher executed from downloaded text
+(`irm ... | iex` against a local HTTP fixture, and `iex` of the file text) with session survival,
+code mirroring and function cleanup; the launcher's explicit decode with and without a leading
+`U+FEFF`, the protocol refusal, the option forwarding and the refuse-non-HTTPS policy; file
+execution of the launcher reaching the implementation beside it; the implementation's
+piped-text execution path; **the download path's body reader over a real `HttpContent` and over a
+real HTTP socket, including the size bound** (section 15); the platform mapping; the 7.4 runtime
+guard; exact asset selection, ambiguity refusal and platform-declaration mismatch; refusal of
+non-HTTPS and non-allow-listed URLs; redirect-hop validation including the real GitHub asset host;
+checksum parsing; traversal-safe extraction; manifest validation (schema, platform, entry point,
+protocol, canonical worker path, per-file size and hash); the no-bypass cache rule; the launch step
+with no arguments and exit-code propagation; a full rehearsal of the verification chain on a real
+generated archive; and the real published release (`v1.0.0`) downloaded from GitHub,
+SHA-256-verified, staged and launched into the terminal interface. `tests/Bootstrap.Tests.ps1`
+holds these, and `tests/ReleasePackage.Tests.ps1` drives the real archive. Evidence:
+[VALIDATION.md](VALIDATION.md) sections 3, 11, 12, 13, 14 and 15.
 
-**Not executed anywhere**: downloading a WindowsTweaker release from GitHub (none is published),
-`irm | iex` on a Windows host, the Windows branch of the state directory, and the interactive
-offline confirmation - the opt-in live tests exercise the transport against a public release of
-another project instead. Until a release is published and a user downloads and launches it, no
-claim is made that the public command works end to end.
+**Not executed anywhere**: `irm | iex` on a Windows host, the download helpers on Windows
+PowerShell 5.1 (no 5.1 host and no Windows host was available; the two 5.1 failures were reported
+from the field and are reproduced here on PowerShell 7.6.9 with the identical error text and line
+numbers), the Windows branch of the state directory, and the interactive offline confirmation. The
+failure mode of the *published* `main` ref is reproduced in section 13 of
+[VALIDATION.md](VALIDATION.md); the fixed public command can only be verified against `main` after
+this change is merged, and the opt-in live tests (`WT_BOOTSTRAP_LIVE_TEST=1`) do exactly that -
+including the streaming test that runs the whole downloader on whichever runtime executes it.
