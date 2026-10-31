@@ -40,6 +40,15 @@ the compiled Go worker, whose statically linked modules and their licences are l
 "Optional Go worker" below. The WPF interface uses fonts and glyphs already present in
 Windows (`Segoe UI`, `Segoe Fluent Icons`).
 
+## Reference projects consulted for product ideas
+
+The features added after the initial revision were designed with the following projects as
+product inspiration only: `windows-11-practical-scripts`, `Windows-Telemetry-OFF`,
+`remove-hidden-devices`, `debora`, `darkhub-suite`, `PrivacyPenguin` (documentation only, never
+inspected or reused as source), `WinSpectorPro`, `ZapTweaks` and `win-Tweak`. No code from any
+of them was imported: the Go worker and every PowerShell module here are original, and no
+licence obligation arises from them.
+
 ## Project licence
 
 This repository contains **no** licence file of its own: the initial archive did not

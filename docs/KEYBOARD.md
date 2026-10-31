@@ -165,10 +165,10 @@ pwsh -File WindowsTweaker.ps1 -InputDiagnostics
 | `Left`/`Right` | switch dashboard (Overview / Network / Changes) |
 | `Up`/`Down` | move the panel selection |
 | `Enter` | inspect the selected panel (metric ids, units, source, history, errors, raw samples) |
-| `F` | freeze/resume the display (collection continues while frozen) |
+| `F` | mark the display as frozen (a header flag; the frame loop does not pause repainting yet) |
 | `P` | pause/resume collection (visible label) |
 | `T` | cycle the time range (1m/5m/15m/1h) |
-| `A` | alert rules: states, holds, hysteresis; toggle acknowledge/mute per rule |
+| `A` | alert rules: states, holds, hysteresis; `Enter` toggles acknowledge (mute is displayed but nothing sets it) |
 | `E` | edit the dashboard layout (add/remove/reorder panels, set size, save, duplicate, reset) |
 | `C` | compare two monitored intervals (baseline vs comparison) |
 | `O` | configure the optional remote Prometheus data source (connection test, `[prom]` badges) |
@@ -184,6 +184,10 @@ pwsh -File WindowsTweaker.ps1 -InputDiagnostics
 
 Charts draw gaps (never zeros), show min/max and aggregation method, and state when the
 requested range exceeds available history.
+
+The fleet, incident, playbook and support-bundle views (`1`-`4`) exist but are the least
+exercised part of the workspace: [docs/MULTI-HOST.md](MULTI-HOST.md) lists what is wired and
+what is not.
 
 ### While an operation is running
 

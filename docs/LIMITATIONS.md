@@ -3,6 +3,26 @@
 Honest list of what this tool does not do, cannot do reliably, or cannot prove in this
 environment. Nothing here is hidden behind a success message.
 
+## Safety model and its scope
+
+These are the guarantees the tool makes, and their exact scope; each one names what is
+enforced and how, so the limits below can be read against it.
+
+| Guarantee | How it is enforced |
+|---|---|
+| Importing the module changes nothing | Tweak files only register metadata; a test asserts that no provider mutation runs during import and that no state/log file is created |
+| Initialisation is read-only | `Get-WtEnvironment` only reads (version, elevation, OS build, pending reboot, cmdlet availability). All mutating startup logic from the previous revision was removed |
+| Selecting a row changes nothing | The interface keeps a pending set; `A` reviews the exact changes and only a confirmation applies them. Every mutation goes through `Invoke-WtTweak`/`Undo-WtTweak` in a worker runspace |
+| `-WhatIf` writes nothing | Providers gate every mutation with `ShouldProcess`; a dry run enumerates *which* operations would run and reports them as `dryrun`, and never captures state. The interface's `W` preview uses the same path |
+| Rollback restores what was captured, not a default | The previous registry value **and its kind and existence**, service start type/state, scheduled-task state, firewall-rule state, per-adapter DNS list and Defender preference are stored before the change and replayed in reverse. Targets with no read-back reader are recorded as *unverifiable* |
+| Irreversible actions are labelled | Package removal, OneDrive uninstall, installer downloads and data deletion are separate tweaks with `-Irreversible`/`-DataDeletion`, `Rollback = None` and an impact text that says what is lost |
+| Failures are never reported as success | Every operation returns `succeeded`, `unchanged`, `skipped`, `unsupported`, `dryrun` or `failed`; verification reads the value back, native processes have their exit codes checked, and the result panel repeats every status verbatim |
+| Organization policies are visible | Tweaks declare the policy values that govern them; state reports `Managed`/`ManagedBy` and every interface shows it |
+| Protection is not reduced | Nothing disables Defender, Controlled Folder Access, SmartScreen, UAC prompts or security logging at startup or as a side effect. Protection-reducing tweaks exist only as explicit, `-Risk High`, `-ReducesProtection`-flagged entries that are never applied automatically, and shipped presets exclude them |
+| User data is preserved | Uninstalling software and deleting data are separate tweaks. OneDrive user files are untouched by the OneDrive tweaks, and package removal deletes package data only for the packages you explicitly selected |
+| No code execution shortcuts | No `Invoke-Expression`, no download-and-execute, no executables copied into `System32` (the previous `powershell_temp.exe` trick is gone), no inline C# |
+| Downloads are verified | `Get-WtVerifiedDownload` requires `https://`, runs only outside a dry run, validates the Authenticode signature against an expected publisher and refuses the file otherwise |
+
 ## Validation limits (this archive)
 
 * **Windows execution was not validated.** The archive was developed and validated on
@@ -248,8 +268,11 @@ environment. Nothing here is hidden behind a success message.
   disposable Windows VM.
 * GPU, temperature, SMART and similar sensors are never reported: no reliable provider
   exists here, and no kernel driver is installed.
-* History and alerts are in-memory and bounded; nothing is persisted across sessions, and
-  no Prometheus exporter or HTTP data source is implemented (see README).
+* History and alerts are in-memory and bounded by default. SQLite metric recording is opt-in and
+  disabled until you enable it (see [MONITORING.md](MONITORING.md)). The worker contains a
+  Prometheus exporter, but it is **not yet wired end to end**: nothing in the interface or the
+  module feeds it, so a started exporter serves an empty registry - do not treat the sample
+  Grafana dashboard in `artifacts/monitoring/` as a working pipeline.
 * Counter rates are computed by the collector from monotonic elapsed time; wall-clock
   changes do not corrupt ordering, and no rate crosses a reset.
 * The overhead measurement (29.6 ms/cycle PowerShell, 48.4 ms/cycle Auto with the Go
@@ -290,7 +313,7 @@ environment. Nothing here is hidden behind a success message.
   Grafana import) require a disposable Windows VM and were not executed here.
 
 
-## Measured overhead for this iteration (conditions on this host)
+## Measured worker overhead (conditions on this host)
 
 - Fleet refresh with an unreachable data source: ~116 ms per forced refresh (failure
   path; caches 10 s). A healthy source adds one bounded query per target.
