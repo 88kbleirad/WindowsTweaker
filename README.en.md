@@ -59,7 +59,6 @@ Things to know before you apply something:
   the shipped presets exclude them.
 - **Monitoring measures, it does not promise.** The workspace reports observations with their
   quality and evidence class; no performance gain is claimed or guaranteed.
-- **The project has no licence of its own yet** - see the last section.
 
 ## Quick start
 
@@ -113,11 +112,3 @@ Everything, including the monitoring and dialog keys, is in [docs/KEYBOARD.md](d
 The complete list is in the [documentation index](docs/README.md). Diagnostic detail lives in
 [docs/SANITY-SCAN.md](docs/SANITY-SCAN.md), [docs/RECOMMENDATIONS.md](docs/RECOMMENDATIONS.md) and
 [docs/STATE-DIMENSIONS.md](docs/STATE-DIMENSIONS.md).
-
-## Licence and attribution
-
-This project derives from **Sophia Script for Windows** (MIT, (c) 2023 farag2); that notice is kept
-in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) together with the licence texts of the Go
-modules the optional worker links. The repository still ships **no licence of its own**: choosing
-one is the owner's decision and is unresolved. No code-signing status, release channel or support
-commitment is claimed.

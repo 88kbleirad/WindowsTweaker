@@ -59,7 +59,6 @@ Vài điều cần biết trước khi áp dụng:
   `Rollback = None`; các bộ cài có sẵn đều loại chúng ra.
 - **Giám sát chỉ đo, không hứa.** Không gian giám sát báo cáo quan sát kèm chất lượng và loại bằng
   chứng; không có cam kết nào về việc tăng hiệu năng.
-- **Dự án chưa có giấy phép riêng** - xem mục cuối.
 
 ## Bắt đầu nhanh
 
@@ -114,11 +113,3 @@ Toàn bộ phím, kể cả phím của không gian giám sát và các hộp th
 Danh sách đầy đủ nằm ở [mục lục tài liệu](docs/README.md). Chi tiết chẩn đoán ở
 [docs/SANITY-SCAN.md](docs/SANITY-SCAN.md), [docs/RECOMMENDATIONS.md](docs/RECOMMENDATIONS.md) và
 [docs/STATE-DIMENSIONS.md](docs/STATE-DIMENSIONS.md).
-
-## Giấy phép và ghi công
-
-Dự án này dựa trên **Sophia Script for Windows** (MIT, (c) 2023 farag2); thông báo đó được giữ
-nguyên trong [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) cùng với nguyên văn giấy phép của các
-mô-đun Go mà worker tùy chọn liên kết. Kho vẫn **không kèm giấy phép riêng**: việc chọn giấy phép là
-quyết định của chủ sở hữu và vẫn còn bỏ ngỏ. Không có tuyên bố nào về chữ ký số, kênh phát hành hay
-cam kết hỗ trợ.
