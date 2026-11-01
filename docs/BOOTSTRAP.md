@@ -110,9 +110,9 @@ host executable).
 * The release archives do **not** contain either bootstrap file: the launcher is fetched from the
   repository's `main` ref, and the implementation is fetched by the launcher from the same ref.
   Changing either file therefore changes no published asset and needs no new release.
-* `v1.0.0` is the published release. The fourth fix (the TUI responsiveness work,
-  [VALIDATION.md](VALIDATION.md) section 17) ships as module version `1.0.3`, packaged locally and
-  **not published**: `dist/` holds `WindowsTweaker-<platform>-v1.0.3.zip`, `checksums.txt` and
+* `v1.0.0` is the published release. The sixth change (the optional restart after a batch,
+  [VALIDATION.md](VALIDATION.md) section 19) ships as module version `1.0.5`, packaged locally and
+  **not published**: `dist/` holds `WindowsTweaker-<platform>-v1.0.5.zip`, `checksums.txt` and
   `manifest.json`, and the `v1.0.0` build output is preserved under `dist/v1.0.0/`.
 * `deploy/short-url/nginx-win.conf` is a prepared nginx server block for hosting the same script
   on a short URL. Nothing is deployed; its `YOUR_DOMAIN` is a hosting placeholder, not a

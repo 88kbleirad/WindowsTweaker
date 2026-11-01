@@ -1,6 +1,6 @@
 ﻿@{
     RootModule           = 'WindowsTweaker.psm1'
-    ModuleVersion        = '1.0.3'
+    ModuleVersion        = '1.0.5'
     GUID                 = 'a491059b-22d0-45ce-b952-302cce0b5a00'
     Author               = 'WindowsTweaker contributors'
     CompanyName          = 'WindowsTweaker'
@@ -93,6 +93,8 @@
         'Get-WtRestorePlan'
         'Export-WtHistory'
         'Undo-WtSession'
+        'Test-WtRestartRequest'
+        'Invoke-WtBatchRestart'
         'Export-WtDiagnostics'
         'Measure-WtNetworkDiagnostics'
         'Compare-WtMeasurements'

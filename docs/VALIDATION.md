@@ -763,9 +763,9 @@ The same constraint already applied to `Initialize-WtLogging` in those two scrip
 does not resolve, and it is harmless because `Write-WtLog` initializes logging lazily - left
 unchanged here, and recorded as an observation rather than a fix.
 
-**Patch release.** `ModuleVersion` is now `1.0.3`, and the packages were rebuilt locally with
-`tools/New-ReleasePackage.ps1 -Version 1.0.3` (four archives, worker handshake, 147 file hashes,
-`version` / `engineVersion` `1.0.3` in both manifests and `ModuleVersion` `1.0.3` inside each
+**Patch release.** `ModuleVersion` is now `1.0.4`, and the packages were rebuilt locally with
+`tools/New-ReleasePackage.ps1 -Version 1.0.4` (four archives, worker handshake, 147 file hashes,
+`version` / `engineVersion` `1.0.4` in both manifests and `ModuleVersion` `1.0.4` inside each
 archive). The published `v1.0.0` release and tag were not touched, and nothing was pushed or
 published.
 
@@ -799,6 +799,114 @@ See [PERFORMANCE.md](PERFORMANCE.md).
 plain renderer paths are exercised on a PTY/redirected console here; measurement on the user's
 console should use `Start-WtTui -PerfDiagnostics` and compare the log summary across runs —
 the benchmark's relative deltas transfer, absolute console latencies do not.
+
+## 18. TUI rendering, progress and batch results (executed on Linux; Windows Console **not** executed)
+**Work.** New keys in `Screen.ps1`: text replacement now clears the trailing cells of its own
+span (a shorter line can never leave stale text); the square box keeps dashes beside its title;
+the plain renderer recovers from an externally scrolled console (window origin check before
+painting) and still runs differentially. `Tui.ps1` reserves adaptive columns for tweak rows
+(dropping impact→target→state before squeezing the name below 8 cells), localizes stored state
+tokens via `Get-WtTuiStateLabel` (enum stays stable), renders the progress panel from the
+authoritative completed counter (the "Item 0/58" defect), and the details pane clears each row
+before painting so switching selection cannot leave stale text. `Worker.ps1` now reports a
+shared progress table on the cancelled-flag object: completed/unchanged/failed/partial/skipped/
+cancelled, incremented after each item (including unchanged and failed), with the batch stop
+counting the skipped remainder. `Workflows.ps1` builds a concise summary (total, changed,
+verified, unchanged, failed, partial, skipped/cancelled, uncertain-journal) and a **failure-first
+report**: worker-level failures first, then failed/partial/incomplete-journal rows each showing
+tweak id, localized name, failed stage, original error, mutation occurred, verification,
+compensation and recovery counts; successes follow under a clear header. The report dialog
+supports scroll, Home/End/PageUp/PageDown, copy (C) and explicit export (E) as JSON.
+
+**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1)**
+
+| Check | Evidence |
+|---|---|
+| Progress advancing from 0 through completion with mixed outcomes | `tests/TuiBatchResults.Tests.ps1` "advances from 0 through completion": worker progress 3 completed = 1 changed + 1 unchanged + 1 failed |
+| Worker-level failure and cancelled accounting | "counts worker-level failures and cancelled items separately" |
+| Accurate mixed-count summary | "summarises with accurate counts": totals, verified, uncertain journal reported separately |
+| Failure-first ordering | "orders failures first": failed and partial rows precede the success header, each with mutation/error/recovery detail |
+| Explicit report export | JSON payload asserted; export only via the E key handler |
+| Shorter text clearing | `Screen` test: replacing a long line with 'short' leaves the remaining cells blank |
+| State label localization | `Get-WtTuiStateLabel` returns localized label, raw enum fallback for unknown states |
+| Box/title rendering and operation-progress icon/bar | existing `Tui.Tests.ps1` tests pass unchanged (box dashes preserved, bar reflects completed count) |
+| Full suite | 568 passed / 0 failed / 6 skipped (Windows-only skips unchanged) |
+
+**Not executed.** The classic Windows Console rendering path (`[Console]` per-cell writes,
+conhost, scrolled window origins) and Windows PowerShell 5.1 behavior were not observable on
+this Linux host; the differential writers and window-origin recovery are exercised under a PTY
+here. Real-console smoke tests should run on a Windows host (see section 17's commands).
+
+## Retrieving the reported six failures (read-only, user's machine)
+
+The six failures in the user's run are **not identified by this work**; they stay in the
+journals. Read-only inspection (nothing is re-applied, deleted or reset):
+
+```powershell
+# 1. Every operation of the run, newest first, with outcome and stage:
+Get-WtOperation -Limit 100 | Where-Object { $_.outcome -eq 'failed' } |
+    Format-Table operationId, tweakId, state, stage, outcome, updatedUtc -AutoSize
+
+# 2. The interrupted (planned/applied, never finalized) operations with their target values:
+Get-WtInterruptedOperation -Targets | Format-Table OperationId, TweakId, Stage, CanRestore, CapturedCount -AutoSize
+
+# 3. The full journal export (JSON) — safe to move to a USB/support folder:
+Export-WtHistory -Path "$env:USERPROFILE\Desktop\wt-journal-export.json"
+# too (TUI) in the report dialog: E exports the batch report; C copies the visible report.
+```
+
+The failed stage, original error and mutation flag for each failure are exactly the fields the
+new failure-first report prints (stage, error, "Mutation occurred", recovery record counts), and
+the same fields are in `Export-WtHistory`'s journal rows (`records`, `stage`, `messages`,
+`outcome`). Do not delete or edit `state.json`; the entry is the only evidence of what ran.
+
+## 19. Optional restart after a batch (executed on Linux; the real reboot **not** executed)
+
+**Work.** `Private/Restart.ps1` owns the feature: `Get-WtRestartRequirementInternal` classifies
+a selection as Reboot / Application / Unknown / None (three different statements, never
+collapsed), `Test-WtRestartAvailable` probes the platform and the mechanism, `Invoke-WtRestartRequest`
+is the single OS-facing call (`shutdown /r /t 0`, no `/f`, no forced flags — the one seam a test
+replaces), `Get-WtRestartEligibilityInternal` is the pure verdict with reason codes,
+`Enter-WtRestartOwnership`/`Exit-WtRestartOwnership` make duplicate scheduling impossible, and
+`Add-WtOperationNoteInternal` records the outcome on the journal entry. `Public/Restart.ps1`
+exposes `Test-WtRestartRequest` (may this invocation restart, and why not) and
+`Invoke-WtBatchRestart` (eligibility, countdown, one request, outcome), which the command line
+uses and the interface calls with its own paintable countdown, so the rules cannot drift.
+The dialog engine gained a countdown contract (`-Countdown`, `-TimeoutSeconds`, `-TimeoutFormat`,
+`-QuitCancels`): the note row is repainted once per second through the differential renderer,
+`Enter`/`Space` are inert while it runs, `Esc` cancels and `Q` cancels and quits. The review
+screen shows the toggle (`R`, default OFF), the requirement of the selection and the warning;
+the confirmation repeats it.
+
+**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1) — `tests/Restart.Tests.ps1`**
+
+| Check | Evidence |
+|---|---|
+| Explicit opt-in, default OFF | "keeps the option off by default and refuses it for a preview or dry run"; eligibility returns ineligible with no reasons when nothing was requested |
+| Successful changed batch | "allows a clean batch with at least one applied change"; "requests the restart once when the countdown expires" (adapter mocked, counted once) |
+| All-unchanged batch | "refuses a batch whose entries are all unchanged" (`NoChange`) |
+| Failed, cancelled, skipped, partial, unsupported | "refuses failed, cancelled, skipped, partial and unsupported outcomes" (per status) |
+| Journal failure after mutation | "refuses a journal that did not record every stage"; a repaired stage stays eligible |
+| Verification and compensation | "refuses verification mismatches and compensating restoration" |
+| Countdown cancellation and quit | "runs the countdown, cancels on Escape and never asks the operating system" (Escape key through the injected key source; adapter count 0); the dialog returns `Quit` for Q |
+| Duplicate scheduling prevention | "allows exactly one owner at a time"; "refuses duplicate scheduling" (`Busy`, adapter not called) |
+| Permission denial and OS request failure | "reports a denied or failed OS request separately from the batch result" (`failed`, message kept, apply status untouched); "reports a failed request without changing the batch result" |
+| WhatIf and preview rejection | "refuses a preview, a read-only invocation and an unsupported platform"; live smoke: `-RestartAfterApply -WhatIf -Id ...` and `-RestartAfterApply -List` both exit with the usage error |
+| Separation of apply and restart outcomes | the two tests above assert the batch result object is unchanged after a restart failure |
+| Requirement classes stay distinct | "keeps a full restart, an application restart, none and unknown apart"; four distinct labels |
+| No forced restart, one request site | "never forces applications to close and keeps the request in one place" (source-level: no `/f`, no `-Force`, one `Invoke-WtRestartRequest`) |
+
+**Not executed.** The real reboot: no Windows host was available, and this task explicitly
+forbids rebooting the development machine. `Invoke-WtRestartRequest` is therefore covered by a
+mock in every test; on a disposable Windows VM the smoke test is
+`pwsh -File WindowsTweaker.ps1 -Id <tweak> -RestartAfterApply` with `-CountdownSeconds` left at
+its default, watching the real `shutdown.exe` request and the event log entry.
+
+**Patch release.** `ModuleVersion` is now `1.0.5`, and the packages were rebuilt locally with
+`tools/New-ReleasePackage.ps1 -Version 1.0.5` (four archives, worker handshake, 149 file hashes,
+`version` / `engineVersion` `1.0.5` in both manifests and `ModuleVersion` `1.0.5` inside each
+archive). The published `v1.0.0` release and tag were not touched, and nothing was pushed or
+published.
 
 ## Not executed here (Windows-only integration checks)
 

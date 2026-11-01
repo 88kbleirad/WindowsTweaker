@@ -120,6 +120,7 @@ Describe 'Public surface and command definitions' {
             'Get-WtChangePreview', 'Get-WtChangeConflict', 'Get-WtDrift', 'Get-WtOperation',
             'Get-WtSession', 'Close-WtSession', 'Get-WtInterruptedOperation', 'Get-WtRestorePlan',
             'Export-WtHistory', 'Undo-WtSession', 'Export-WtDiagnostics',
+            'Test-WtRestartRequest', 'Invoke-WtBatchRestart',
             'Measure-WtNetworkDiagnostics', 'Compare-WtMeasurements',
             'Export-WtReport', 'Get-WtLanguage', 'Set-WtLanguage', 'Get-WtString',
             'Start-WtTui', 'Start-WtGui'

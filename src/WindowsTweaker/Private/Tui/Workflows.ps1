@@ -69,6 +69,28 @@ function Update-WtTuiOperation
     $Events = @(Receive-WtWorkerEvent -Worker $State.Worker)
     $Finished = $false
 
+    # The worker keeps the authoritative batch counters; mirror them so the progress panel
+    # advances even if a result event is still queued behind a slow provider. Older call
+    # sites (tests, other shells) may build an operation state without a Progress table:
+    # synthesize one from the legacy Finished counter so it keeps working.
+    if (-not $State.Operation.Progress)
+    {
+        $State.Operation.Progress = @{
+            Completed = [int]$State.Operation.Finished
+            Changed = 0
+            Unchanged = 0
+            Failed = 0
+            Partial = 0
+            Cancelled = 0
+            Skipped = 0
+        }
+    }
+
+    if ($State.Worker.Cancel -and $State.Worker.Cancel.Progress)
+    {
+        $State.Operation.Progress = $State.Worker.Cancel.Progress
+    }
+
     foreach ($WorkerEvent in $Events)
     {
         switch ($WorkerEvent.Kind)
@@ -84,15 +106,28 @@ function Update-WtTuiOperation
                 $Status = [string]$WorkerEvent.Result.Status
                 $State.Operation.Results = @($State.Operation.Results + $WorkerEvent.Result)
                 $State.Operation.Events = @($State.Operation.Events + (Get-WtString -Key 'Tui.Busy.Result' -Arguments @($WorkerEvent.Label, (Get-WtString -Key "Op.$Status"))))
+
+                $State.Operation.Progress.Completed = [int]$State.Operation.Progress.Completed + 1
+                switch ($Status)
+                {
+                    'succeeded' { $State.Operation.Progress.Changed++ }
+                    'unchanged' { $State.Operation.Progress.Unchanged++ }
+                    'failed' { $State.Operation.Progress.Failed++ }
+                    'partial' { $State.Operation.Progress.Partial++ }
+                    default { $State.Operation.Progress.Skipped++ }
+                }
             }
             'error'
             {
                 $State.Operation.Failures = @($State.Operation.Failures + $WorkerEvent)
                 $State.Operation.Events = @($State.Operation.Events + (Get-WtString -Key 'Tui.Busy.Failed' -Arguments @($WorkerEvent.Label, [string]$WorkerEvent.Message)))
+                $State.Operation.Progress.Completed = [int]$State.Operation.Progress.Completed + 1
+                $State.Operation.Progress.Failed = [int]$State.Operation.Progress.Failed + 1
             }
             'cancelled'
             {
                 $State.Operation.Events = @($State.Operation.Events + (Get-WtString -Key 'Tui.Busy.Skipped' -Arguments @($WorkerEvent.Label)))
+                $State.Operation.Progress.Cancelled = [int]$State.Operation.Progress.Cancelled + 1
             }
             'stopped'
             {
@@ -155,7 +190,6 @@ function Get-WtTuiResultReport
         [Parameter(Mandatory = $false)][bool]$Preview = $false,
         [Parameter(Mandatory = $false)][int]$Skipped = 0
     )
-
     $Lines = [System.Collections.Generic.List[string]]::new()
     $Restarts = [System.Collections.Generic.List[string]]::new()
     $Tone = 'Success'
@@ -310,6 +344,151 @@ function Get-WtTuiResultReport
 
 <#
 .SYNOPSIS
+    Builds the concise batch summary shown above the failure-first list.
+.DESCRIPTION
+    Counts come from the authoritative batch counters (tweak-level, not provider
+    operations). Unchanged, failed, partial and skipped/cancelled are shown separately;
+    "applied" is the count of changes that reached the system (verified or not).
+#>
+function Get-WtTuiBatchSummary
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][int]$Total = 0,
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @(),
+        [Parameter(Mandatory = $false)][int]$Skipped = 0,
+        [Parameter(Mandatory = $false)][int]$Cancelled = 0
+    )
+
+    $Changed = @($Results | Where-Object { $_.Status -eq 'succeeded' }).Count
+    $Unchanged = @($Results | Where-Object { $_.Status -eq 'unchanged' }).Count
+    $Failed = @($Results | Where-Object { $_.Status -eq 'failed' }).Count + @($Failures).Count
+    $Partial = @($Results | Where-Object { $_.Status -eq 'partial' }).Count
+    $Verified = @($Results | Where-Object { $_.Verified -eq $true }).Count
+
+    # Failed/partial rows where the journal could not keep up; everything in the list is
+    # already from a completed item, so "applied" never counts pending rows.
+    $Uncertain = @($Results | Where-Object { $_.Journal -and $_.Journal.StopBatch }).Count
+
+    return [pscustomobject]@{
+        Total = [int]$Total
+        Changed = [int]$Changed
+        Verified = [int]$Verified
+        Unchanged = [int]$Unchanged
+        Failed = [int]$Failed
+        Partial = [int]$Partial
+        Cancelled = [int]$Cancelled
+        Skipped = [int]$Skipped
+        UncertainJournal = [int]$Uncertain
+    }
+}
+
+<#
+.SYNOPSIS
+    Renders the failure-first report lines for a completed batch.
+.DESCRIPTION
+    Failures (and partial/incomplete-journal rows) come first, each with the tweak id,
+    its localized name, the failed stage, the original error, whether a mutation occurred,
+    verification/compensation state and recovery availability. Successful rows follow and
+    are clearly separated; all lines are visible in the scrollable message view.
+#>
+function Get-WtTuiFailureFirstLines
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @(),
+        [Parameter(Mandatory = $false)][int]$Skipped = 0
+    )
+
+    $Lines = [System.Collections.Generic.List[string]]::new()
+
+    # The worker-level failures (exceptions outside a result) are always first: they are
+    # the least inspectable failures, so they get the top slot.
+    foreach ($Failure in $Failures)
+    {
+        $Lines.Add((Get-WtString -Key 'Tui.Result.WorkerFailure' -Arguments @([string]$Failure.Message)))
+    }
+
+    $Problems = @($Results | Where-Object { $_.Status -in 'failed', 'partial' -or ($_.Journal -and $_.Journal.StopBatch) })
+    $Problems = @($Problems | Sort-Object @{ Expression = { $_.Status -eq 'failed' }; Descending = $true }, @{ Expression = { $_.TweakId } })
+
+    foreach ($Result in $Problems)
+    {
+        $Status = [string]$Result.Status
+        $Lines.Add("")
+        $Lines.Add((Get-WtString -Key 'Tui.Result.FailureHeader' -Arguments @($Result.TweakId, (Get-WtString -Key "Op.$Status"))))
+
+        $Name = try { [string](Get-WtText -Value (Get-WtTweakInternal -Id $Result.TweakId).Name) } catch { '' }
+        if ($Name) { $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureName') + ": $Name") }
+
+        $Journal = $Result.Journal
+        if ($Journal)
+        {
+            if ($Journal.UncertainStage)
+            {
+                $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureStage') + ": $($Journal.UncertainStage)")
+            }
+            if ($Journal.Message)
+            {
+                $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureError') + ": $($Journal.Message)")
+            }
+            $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureMutation') + ": $(if ($Journal.MutationStarted) { Get-WtString -Key 'Common.Yes' } else { Get-WtString -Key 'Common.No' })")
+            if ($Journal.DurableRecords -gt 0 -or $Journal.InMemoryRecords -gt 0)
+            {
+                $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureRecovery') + ": $($Journal.DurableRecords)/$($Journal.InMemoryRecords)")
+            }
+        }
+
+        if ($Result.Verification)
+        {
+            $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureVerification') + ": " +
+                (Get-WtString -Key 'Tui.Result.FailureVerifiedCount' -Arguments @($Result.Verification.Verified, $Result.Verification.Mismatched)))
+        }
+
+        if ($Result.Compensation -and $Result.Compensation.Attempted)
+        {
+            $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureCompensation') + ": " +
+                (Get-WtString -Key 'Tui.Result.FailureVerifiedCount' -Arguments @($Result.Compensation.Succeeded, $Result.Compensation.Failed)))
+        }
+
+        foreach ($Message in @($Result.Messages | Where-Object { $_ }))
+        {
+            $Lines.Add("  - $Message")
+        }
+    }
+
+    $Successes = @($Results | Where-Object { $_.Status -notin 'failed', 'partial' -and -not ($_.Journal -and $_.Journal.StopBatch) })
+    if ($Successes.Count -gt 0)
+    {
+        $Lines.Add("")
+        $Lines.Add((Get-WtString -Key 'Tui.Result.SuccessHeader'))
+        foreach ($Result in $Successes)
+        {
+            $Status = [string]$Result.Status
+            $Operations = @($Result.Operations)
+            $Lines.Add((Get-WtString -Key 'Tui.Result.Line' -Arguments @($Result.TweakId, (Get-WtString -Key "Op.$Status"), $Operations.Count)))
+            foreach ($Message in @($Result.Messages | Where-Object { $_ }))
+            {
+                $Lines.Add("  - $Message")
+            }
+        }
+    }
+
+    if ($Skipped -gt 0)
+    {
+        $Lines.Add("")
+        $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Skipped' -Arguments @($Skipped)))
+    }
+
+    return $Lines.ToArray()
+}
+
+<#
+.SYNOPSIS
     Collects the worker's final output and shows the per-item report.
 #>
 function Complete-WtTuiOperation
@@ -323,11 +502,28 @@ function Complete-WtTuiOperation
     $Results = @($Outcome.Results | ForEach-Object { $_.Result })
     $Failures = @($Outcome.Failures)
 
-    $Report = Get-WtTuiResultReport -Results $Results -Failures $Failures -Preview ([bool]$Operation.Preview) -Skipped ([int]$Operation.Skipped)
-    $Lines = @($Report.Lines)
-    $Tone = [string]$Report.Tone
-    $Failed = [int]$Report.Failed
-    $Uncertain = [int]$Report.Uncertain
+    $Progress = $Operation.Progress
+    $Summary = Get-WtTuiBatchSummary -Total $Operation.Total -Results $Results -Failures $Failures `
+        -Skipped ([int]$Operation.Skipped) -Cancelled ([int]$Progress.Cancelled)
+
+    # The restart decision is made after the report on both paths (clean and failed), and
+    # the requirement was captured when the batch started (the pending set is empty by now).
+    $RestartSkipped = [int]$Operation.Skipped
+    $RestartRequirement = if (@($Operation.Keys) -contains 'RestartRequirement') { [string]$Operation.RestartRequirement } else { '' }
+
+    $Lines = [System.Collections.Generic.List[string]]::new()
+    $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Total' -Arguments @(
+            $Summary.Total, $Summary.Changed, $Summary.Unchanged, $Summary.Failed, $Summary.Partial, ($Summary.Cancelled + $Summary.Skipped))))
+    $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Verified' -Arguments @($Summary.Verified)))
+    if ($Summary.UncertainJournal -gt 0)
+    {
+        $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.UncertainJournal' -Arguments @($Summary.UncertainJournal)))
+    }
+    $Lines.Add('')
+    foreach ($Line in (Get-WtTuiFailureFirstLines -Results $Results -Failures $Failures -Skipped ([int]$Operation.Skipped)))
+    {
+        $Lines.Add($Line)
+    }
 
     $Title = if ($Operation.Preview)
     {
@@ -342,16 +538,77 @@ function Complete-WtTuiOperation
         Get-WtString -Key 'Tui.Result.Title'
     }
 
-    if ($Failed -gt 0 -or $Uncertain -gt 0)
+    $Failed = $Summary.Failed
+    $Tone = if ($Failed -gt 0 -or $Summary.UncertainJournal -gt 0) { 'Error' } elseif ($Summary.Changed -gt 0) { 'Success' } else { 'Warning' }
+
+    # Export (e) and copy (c) are explicit, never automatic; export writes a bounded JSON
+    # report beside the journal and is the exact, read-only way to retrieve the failure
+    # details of this batch.
+    $ResultsForExport = $Results
+    $FailuresForExport = $Failures
+    $OnExport = {
+        param ($Overlay)
+
+        $Path = Join-Path (Get-WtDataRoot) ("batch-report-{0}.json" -f (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss'))
+        $Payload = [ordered]@{
+            exportedUtc = (Get-Date).ToUniversalTime().ToString('o')
+            total = $Summary.Total
+            changed = $Summary.Changed
+            verified = $Summary.Verified
+            unchanged = $Summary.Unchanged
+            failed = $Summary.Failed
+            partial = $Summary.Partial
+            cancelled = $Summary.Cancelled
+            skipped = $Summary.Skipped
+            uncertainJournal = $Summary.UncertainJournal
+            results = @($ResultsForExport | ForEach-Object {
+                    [ordered]@{
+                        tweakId = [string]$_.TweakId
+                        status = [string]$_.Status
+                        operationId = [string]$_.OperationId
+                        historyId = [string]$_.HistoryId
+                        verified = $_.Verified
+                        verification = $_.Verification
+                        compensation = $_.Compensation
+                        journal = $_.Journal
+                        messages = @($_.Messages)
+                    }
+                })
+            workerFailures = @($FailuresForExport)
+        }
+        try
+        {
+            Write-WtTextFile -Path $Path -Value (ConvertTo-WtJson -InputObject $Payload -Depth 16)
+            return (Get-WtString -Key 'Tui.Result.Exported' -Arguments @($Path))
+        }
+        catch
+        {
+            return (Get-WtString -Key 'Tui.Result.ExportFailed' -Arguments @($_.Exception.Message))
+        }
+    }.GetNewClosure()
+
+    $OnCopy = {
+        param ($Overlay)
+
+        try
+        {
+            Set-Clipboard -Value (@($Lines.ToArray()) -join [System.Environment]::NewLine)
+            return (Get-WtString -Key 'Tui.Result.Copied')
+        }
+        catch
+        {
+            return (Get-WtString -Key 'Tui.Result.CopyFailed')
+        }
+    }.GetNewClosure()
+
+    if ($Failed -gt 0 -or $Summary.UncertainJournal -gt 0)
     {
         $State.Operation = $null
         Sync-WtTuiCatalog -State $State
 
-        # One status line: the persistence failure when there is one (it is the reason the rest
-        # of the batch was not attempted), otherwise the count of failed items.
-        $StatusText = if ($Uncertain -gt 0 -and $Report.Primary)
+        $StatusText = if ($Summary.UncertainJournal -gt 0)
         {
-            [string]$Report.Primary
+            Get-WtString -Key 'Msg.Journal.OutcomeNotDurable'
         }
         else
         {
@@ -359,7 +616,8 @@ function Complete-WtTuiOperation
         }
 
         Set-WtTuiStatus -State $State -Text $StatusText -Tone 'StatusError'
-        Show-WtTuiMessage -State $State -Title $Title -Lines $Lines -Tone 'Error'
+        Show-WtTuiMessage -State $State -Title $Title -Lines $Lines.ToArray() -Tone 'Error' -OnExport $OnExport -OnCopy $OnCopy
+        Invoke-WtTuiRestart -State $State -Results $Results -Failures $Failures -Skipped $RestartSkipped -Requirement $RestartRequirement
         if ($State.ExitPending) { $State.Exit = $true }
         return
     }
@@ -382,21 +640,153 @@ function Complete-WtTuiOperation
     $State.Operation = $null
     Sync-WtTuiCatalog -State $State
 
-    $Summary = if ($Operation.Preview)
+    $SummaryLine = if ($Operation.Preview)
     {
         Get-WtString -Key 'Tui.Preview.Done' -Arguments @($Results.Count)
     }
     else
     {
-        Get-WtString -Key 'Tui.Result.Done' -Arguments @($Results.Count)
+        Get-WtString -Key 'Tui.Result.Done' -Arguments @($Summary.Total)
     }
 
-    Set-WtTuiStatus -State $State -Text $Summary -Tone $(if ($Operation.Preview) { 'StatusInfo' } else { 'StatusOk' })
-    Show-WtTuiMessage -State $State -Title $Title -Lines $Lines -Tone $(if ($Tone -eq 'Success') { 'Success' } else { 'Warning' })
+    Set-WtTuiStatus -State $State -Text $SummaryLine -Tone $(if ($Operation.Preview) { 'StatusInfo' } else { 'StatusOk' })
+    Show-WtTuiMessage -State $State -Title $Title -Lines $Lines.ToArray() -Tone $Tone -OnExport $OnExport -OnCopy $OnCopy
+
+    # Only now, with the report shown and the batch closed, may an enabled restart begin its
+    # countdown. A preview can never reach here with the flag set (Start-WtTuiOperation
+    # refuses it), and a failed or uncertain batch is refused by the eligibility rules.
+    if (-not $Operation.Preview)
+    {
+        Invoke-WtTuiRestart -State $State -Results $Results -Failures $Failures -Skipped $RestartSkipped -Requirement $RestartRequirement
+    }
 
     # A quit requested while the operation was running is honoured only now, so the
     # terminal is restored after the last result has been reported.
     if ($State.ExitPending) { $State.Exit = $true }
+}
+
+$Script:WtTuiRestartCountdown = $null
+
+<#
+.SYNOPSIS
+    Paints the restart countdown and returns what the user decided.
+.DESCRIPTION
+    A message dialog whose note line carries the remaining seconds: one row is repainted per
+    second through the differential renderer, so the countdown causes no flicker, no header
+    corruption and no full redraw. Esc cancels; Q cancels and asks the application to quit.
+    The dialog owns the timer - the operating system is asked only when it expires.
+.OUTPUTS
+    A hashtable with Outcome: Expired, Cancelled or Quit.
+#>
+function Show-WtTuiRestartCountdown
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][int]$Applied = 0,
+        [Parameter(Mandatory = $false)][int]$Unchanged = 0
+    )
+
+    $Context = $Script:WtTuiRestartCountdown
+    if (-not $Context)
+    {
+        $Script:WtTuiRestartCountdown = $null
+        return @{ Outcome = 'Cancelled' }
+    }
+
+    $State = $Context.State
+    $Planned = (Get-Date).AddSeconds([int]$Context.Seconds)
+
+    $Lines = @(
+        (Get-WtString -Key 'Tui.Restart.Applied' -Arguments @($Applied, $Unchanged)),
+        (Get-WtRestartRequirementLabelInternal -Requirement $(if ($Context.Requirement) { [string]$Context.Requirement } else { 'Unknown' })),
+        (Get-WtString -Key 'Tui.Restart.At' -Arguments @($Planned.ToString('HH:mm:ss'))),
+        (Get-WtString -Key 'Tui.Restart.OpenApps')
+    )
+
+    $Overlay = New-WtDialogOverlay -Kind 'message' -Title (Get-WtString -Key 'Tui.Restart.Title') -Body $Lines `
+        -Tone 'Warning' -Icon 'Status.RestartRequired' -Buttons @((Get-WtString -Key 'Tui.Restart.Cancel')) `
+        -TimeoutSeconds ([int]$Context.Seconds) -TimeoutFormat (Get-WtString -Key 'Tui.Restart.Countdown') -Countdown -QuitCancels
+
+    $null = Show-WtTuiDialog -State $State -Overlay $Overlay
+
+    if ($Overlay.TimedOut) { return @{ Outcome = 'Expired' } }
+    if ($Overlay.Result -eq 'quit') { return @{ Outcome = 'Quit' } }
+    return @{ Outcome = 'Cancelled' }
+}
+
+<#
+.SYNOPSIS
+    Turns an enabled restart into a restart, or explains why it did not happen.
+.DESCRIPTION
+    Presentation over the one implementation of the restart (Invoke-WtBatchRestart, which
+    the command line uses too): the rules, the ownership of a single pending restart and the
+    single OS-facing request live there. This function only paints the countdown inside the
+    cell grid and turns the outcome into status lines and dialogs.
+
+    It runs after the batch report, never from a finally block. A refusal or a failure never
+    changes what the batch did: the apply outcome and the restart outcome are reported
+    separately.
+#>
+function Invoke-WtTuiRestart
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @(),
+        [Parameter(Mandatory = $false)][int]$Skipped = 0,
+        [Parameter(Mandatory = $false)][string]$Requirement = '',
+        [Parameter(Mandatory = $false)][int]$Seconds = 60
+    )
+
+    $Requested = [bool]$State.RestartRequested
+    $State.RestartRequested = $false
+
+    if (-not $Requested) { return }
+
+    # One batch, one authorisation: the flag is spent here whatever the outcome. The context
+    # the countdown paints from is module state because the countdown runs inside the shared
+    # implementation, and only one restart may be pending at a time.
+    $Script:WtTuiRestartCountdown = @{ State = $State; Requirement = $Requirement; Seconds = $Seconds }
+    try
+    {
+        $Outcome = Invoke-WtBatchRestart -Results $Results -Failures $Failures -Skipped $Skipped -Requirement $Requirement `
+            -CountdownSeconds $Seconds -Countdown { param ($Applied, $Unchanged) Show-WtTuiRestartCountdown -Applied $Applied -Unchanged $Unchanged }
+    }
+    finally
+    {
+        $Script:WtTuiRestartCountdown = $null
+    }
+
+    switch ([string]$Outcome.Outcome)
+    {
+        'requested'
+        {
+            Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Restart.Requested') -Tone 'StatusWarn'
+        }
+        'cancelled'
+        {
+            Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Restart.Cancelled') -Tone 'StatusInfo'
+            if ([string]$Outcome.Message -eq 'Quit') { $State.Exit = $true }
+        }
+        'failed'
+        {
+            Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Restart.Failed' -Arguments @([string]$Outcome.Message)) -Tone 'StatusError'
+            Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Tui.Restart.Title') -Lines @(
+                (Get-WtString -Key 'Tui.Restart.Failed' -Arguments @([string]$Outcome.Message)),
+                (Get-WtString -Key 'Tui.Restart.Manual')
+            ) -Tone 'Warning' -Icon 'Status.Warning'
+        }
+        default
+        {
+            $Lines = @($Outcome.Lines)
+            if (@($Outcome.Reasons) -contains 'Unavailable') { $Lines += (Get-WtString -Key 'Tui.Restart.Manual') }
+            Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Restart.Blocked') -Tone 'StatusWarn'
+            Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Tui.Restart.Title') -Lines $Lines -Tone 'Warning' -Icon 'Status.Warning'
+        }
+    }
 }
 
 <#
@@ -537,6 +927,18 @@ function Start-WtTuiOperation
         $DryRun = $true
     }
 
+    # A preview, a dry run or a rollback batch never restarts: nothing was written by a
+    # preview, a dry run says so in its own status, and a restore is not an apply. The
+    # request is refused here, at the point the batch is created, so the rest of the code
+    # can trust the flag.
+    $RestartRequirement = Get-WtRestartRequirementInternal -Entries @($Items)
+    if ($State.RestartRequested -and ($DryRun -or $Kind -ne 'apply'))
+    {
+        $State.RestartRequested = $false
+        Write-WtRestartRecord -Event 'blocked' -Message 'refused for a preview, dry run or rollback batch'
+        Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Restart.NotWithPreview') -Tone 'StatusWarn'
+    }
+
     $Worker = Get-WtTuiWorker -State $State
     $State.Operation = @{
         Kind       = $Kind
@@ -549,6 +951,16 @@ function Start-WtTuiOperation
         Events     = @()
         Results    = @()
         Failures   = @()
+        RestartRequirement = $RestartRequirement
+        Progress   = @{
+            Completed = 0
+            Changed = 0
+            Unchanged = 0
+            Failed = 0
+            Partial = 0
+            Cancelled = 0
+            Skipped = 0
+        }
     }
 
     try
@@ -654,6 +1066,24 @@ function Show-WtTuiPendingReview
 
         $Warnings = @(Get-WtTuiPendingWarnings -State $State)
         $Lines = @(Get-WtString -Key 'Tui.Pending.ReviewHint')
+
+        # The restart decision is part of the review, not a hidden global: the state of the
+        # option, what the selection requires, and the key that toggles it are all visible.
+        # The three requirement answers stay distinct - a full restart is not the same
+        # statement as "restart Explorer", and neither is the same as "unknown".
+        $PendingEntries = @($State.Pending.Keys | ForEach-Object { $State.Pending[$_] })
+        $Requirement = Get-WtRestartRequirementInternal -Entries $PendingEntries
+        $Availability = Test-WtRestartAvailable
+
+        $Lines += ''
+        $Lines += (Get-WtString -Key 'Tui.Restart.Option' -Arguments @(
+                $(if ($State.RestartRequested) { Get-WtString -Key 'Tui.Restart.On' } else { Get-WtString -Key 'Tui.Restart.Off' })))
+        $Lines += (Get-WtRestartRequirementLabelInternal -Requirement $Requirement)
+        $Lines += (Get-WtString -Key 'Tui.Restart.Hint')
+        if (-not $Availability.Available)
+        {
+            $Lines += (Get-WtString -Key 'Tui.Restart.Unavailable' -Arguments @((Get-WtString -Key 'Cli.Restart.Unsupported')))
+        }
 
         $Prerequisites = @()
         $Satisfied = @()
@@ -768,6 +1198,25 @@ function Show-WtTuiPendingReview
             if ($Key.Name -ne 'Char') { return $false }
 
             $Character = ([string]$Key.Char).ToLowerInvariant()
+
+            # 'r' toggles the automatic restart for this batch. It is refused (with the
+            # reason) when the platform cannot restart, so the option never claims an
+            # ability the machine does not have.
+            if ($Character -eq 'r')
+            {
+                if (-not $State.RestartRequested -and -not (Test-WtRestartAvailable).Available)
+                {
+                    Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Restart.Unavailable' -Arguments @((Get-WtString -Key 'Cli.Restart.Unsupported'))) -Tone 'StatusWarn'
+                    return $true
+                }
+
+                $State.RestartRequested = -not $State.RestartRequested
+                Set-WtTuiStatus -State $State -Text $(if ($State.RestartRequested) { Get-WtString -Key 'Tui.Restart.Enabled' } else { Get-WtString -Key 'Tui.Restart.Disabled' })
+                $Overlay.Accepted = $true
+                $Overlay.Result = $null
+                return $true
+            }
+
             if ($Character -eq 'x')
             {
                 $Id = [string]$Overlay.List.Items[[int]$Overlay.List.Cursor].Payload
@@ -829,6 +1278,16 @@ function Show-WtTuiPendingReview
         if ($State.DryRun)
         {
             $ConfirmLines += (Get-WtString -Key 'Tui.Pending.DryRunNote')
+        }
+
+        # The last thing the user sees before the batch starts says what will happen to the
+        # machine afterwards.
+        $ConfirmLines += (Get-WtString -Key 'Tui.Restart.Option' -Arguments @(
+                $(if ($State.RestartRequested) { Get-WtString -Key 'Tui.Restart.On' } else { Get-WtString -Key 'Tui.Restart.Off' })))
+        if ($State.RestartRequested)
+        {
+            $ConfirmLines += (Get-WtRestartRequirementLabelInternal -Requirement $Requirement)
+            $ConfirmLines += (Get-WtString -Key 'Tui.Restart.OpenApps')
         }
 
         $ConfirmLines += (Get-WtString -Key 'Tui.Preview.Revalidated')

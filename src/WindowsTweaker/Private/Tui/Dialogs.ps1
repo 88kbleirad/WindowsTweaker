@@ -35,7 +35,13 @@ function New-WtDialogOverlay
         [Parameter(Mandatory = $false)][scriptblock]$OnKey,
         [Parameter(Mandatory = $false)][string]$EmptyText = '',
         [Parameter(Mandatory = $false)][int]$DetailsHeight = 4,
-        [Parameter(Mandatory = $false)][string]$Icon = ''
+        [Parameter(Mandatory = $false)][string]$Icon = '',
+        [Parameter(Mandatory = $false)][scriptblock]$OnExport,
+        [Parameter(Mandatory = $false)][scriptblock]$OnCopy,
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 0,
+        [Parameter(Mandatory = $false)][string]$TimeoutFormat = '',
+        [Parameter(Mandatory = $false)][switch]$Countdown,
+        [Parameter(Mandatory = $false)][switch]$QuitCancels
     )
 
     $List = $null
@@ -87,6 +93,17 @@ function New-WtDialogOverlay
         Confirm   = $(if ($Choices.Count -gt 0) { $Choices.Count - 1 } else { 0 })
         Scroll    = 0
         OnKey     = $OnKey
+        OnExport  = $OnExport
+        OnCopy    = $OnCopy
+        Note      = ''
+        # Countdown contract: the dialog owns the timer (the OS is never asked to count
+        # down), the note line shows the remaining seconds, and the loop ends itself when
+        # the time is up. Enter/Space are deliberately inert while a countdown runs.
+        TimeoutSeconds = [int]$TimeoutSeconds
+        TimeoutFormat  = $TimeoutFormat
+        Counting       = [bool]$Countdown
+        QuitCancels    = [bool]$QuitCancels
+        TimedOut  = $false
         Result    = $null
         Accepted  = $false
         Cancelled = $false
@@ -508,6 +525,11 @@ function Add-WtDialogToScreen
     {
         Set-WtScreenText -Screen $Screen -Row $FooterRow -Column $Left -Text (Format-WtText -Text ($Overlay.Buttons -join '   ') -Width $Layout.BodyWidth) -Style 'DialogHint' -MaxWidth $Layout.BodyWidth
     }
+
+    if ($Overlay.Note)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Bottom -Column $Left -Text (Format-WtText -Text $Overlay.Note -Width ($Layout.Width - 4)) -Style 'DialogHint' -MaxWidth ($Layout.Width - 4)
+    }
 }
 
 <#
@@ -529,15 +551,48 @@ function Show-WtTuiDialog
     $State.Overlay = $Overlay
     $State.Screen.Dirty = $true
 
+    # The countdown lives here, inside the application: the remaining seconds are painted
+    # into the note line (only when the displayed value changes, so differential rendering
+    # repaints one row per second), and the loop ends itself when it reaches zero. Nothing
+    # is scheduled with the operating system while the countdown runs.
+    $Deadline = if ($Overlay.Counting) { [datetime]::UtcNow.AddSeconds([math]::Max(0, [int]$Overlay.TimeoutSeconds)) } else { $null }
+    $Shown = -1
+
     try
     {
         while (-not ($Overlay.Accepted -or $Overlay.Cancelled))
         {
+            if ($Deadline)
+            {
+                $Remaining = [int][math]::Ceiling(($Deadline - [datetime]::UtcNow).TotalSeconds)
+                if ($Remaining -lt 0) { $Remaining = 0 }
+
+                if ($Remaining -ne $Shown)
+                {
+                    $Shown = $Remaining
+                    if ($Overlay.TimeoutFormat)
+                    {
+                        $Overlay.Note = [string]::Format($Overlay.TimeoutFormat, $Remaining)
+                    }
+                    $State.Screen.Dirty = $true
+                }
+
+                if ($Remaining -le 0)
+                {
+                    $Overlay.TimedOut = $true
+                    $Overlay.Accepted = $true
+                    break
+                }
+            }
+
             $Key = Invoke-WtTuiFrame -State $State
             if ($null -eq $Key)
             {
                 if ($State.Exit)
                 {
+                    # A quit while a countdown runs cancels it: the restart must never be
+                    # left behind by an interface that is going away.
+                    $Overlay.Cancelled = $true
                     return $null
                 }
 
@@ -584,15 +639,45 @@ function Read-WtDialogKey
     {
         'message'
         {
+            # During a countdown the only decisions are "wait" and "cancel": Enter and
+            # Space are inert so a key pressed out of habit cannot restart the machine
+            # earlier than the countdown the user already agreed to.
+            $Counting = [bool]$Overlay.Counting
+
             switch ($Key.Name)
             {
                 'Up' { $Overlay.Scroll = [math]::Max(0, $Overlay.Scroll - 1) }
                 'Down' { $Overlay.Scroll = $Overlay.Scroll + 1 }
                 'PageUp' { $Overlay.Scroll = [math]::Max(0, $Overlay.Scroll - 8) }
                 'PageDown' { $Overlay.Scroll = $Overlay.Scroll + 8 }
-                'Enter' { $Overlay.Accepted = $true; $Overlay.Result = $true }
-                'Space' { $Overlay.Accepted = $true; $Overlay.Result = $true }
+                'Home' { $Overlay.Scroll = 0 }
+                'End' { $Overlay.Scroll = 2147483647 }
+                'Enter'
+                {
+                    if (-not $Counting) { $Overlay.Accepted = $true; $Overlay.Result = $true }
+                }
+                'Space'
+                {
+                    if (-not $Counting) { $Overlay.Accepted = $true; $Overlay.Result = $true }
+                }
                 'Escape' { $Overlay.Cancelled = $true; $Overlay.Result = $null }
+                'Char'
+                {
+                    $Character = ([string]$Key.Char).ToLowerInvariant()
+                    if ($Counting -and $Character -eq 'q' -and $Overlay.QuitCancels)
+                    {
+                        $Overlay.Cancelled = $true
+                        $Overlay.Result = 'quit'
+                    }
+                    elseif (-not $Counting -and $Character -eq 'e' -and $Overlay.OnExport)
+                    {
+                        $Overlay.Note = [string](& $Overlay.OnExport $Overlay)
+                    }
+                    elseif (-not $Counting -and $Character -eq 'c' -and $Overlay.OnCopy)
+                    {
+                        $Overlay.Note = [string](& $Overlay.OnCopy $Overlay)
+                    }
+                }
                 default { }
             }
         }
@@ -905,10 +990,18 @@ function Show-WtTuiMessage
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Title = '',
         [Parameter(Mandatory = $false)][AllowEmptyCollection()][string[]]$Lines = @(),
         [Parameter(Mandatory = $false)][ValidateSet('Default', 'Warning', 'Error', 'Success')][string]$Tone = 'Default',
-        [Parameter(Mandatory = $false)][string]$Icon = ''
+        [Parameter(Mandatory = $false)][string]$Icon = '',
+        [Parameter(Mandatory = $false)][scriptblock]$OnExport,
+        [Parameter(Mandatory = $false)][scriptblock]$OnCopy
     )
 
-    $Overlay = New-WtDialogOverlay -Kind 'message' -Title $Title -Body $Lines -Tone $Tone -Icon $Icon -Buttons @((Get-WtString -Key 'Tui.CloseHint'))
+    $Buttons = @((Get-WtString -Key 'Tui.CloseHint'))
+    if ($OnExport -or $OnCopy)
+    {
+        $Buttons += Get-WtString -Key 'Tui.Result.Hint'
+    }
+
+    $Overlay = New-WtDialogOverlay -Kind 'message' -Title $Title -Body $Lines -Tone $Tone -Icon $Icon -Buttons $Buttons -OnExport $OnExport -OnCopy $OnCopy
     $null = Show-WtTuiDialog -State $State -Overlay $Overlay
     return
 }

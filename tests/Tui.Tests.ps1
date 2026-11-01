@@ -840,14 +840,14 @@ Describe 'Backend workflows and results' {
 
             Update-WtTuiOperation -State $State
 
-            # One primary failure, in the status line and at the top of the report, and the
-            # remaining change is reported as not attempted instead of failing again.
-            $State.Status.Text | Should -Be 'The recovery records for 1 target(s) could not be written to the state store'
+            # One primary status line, and the failure-first report shows the failing tweak,
+            # the mutation flag and the skipped remainder.
+            $State.Status.Text | Should -Match 'applied and not finalized'
             $Script:ShownTone | Should -Be 'Error'
-            @($Script:ShownLines | Where-Object { $_ -match 'Journal persistence failed' }).Count | Should -Be 1
-            @($Script:ShownLines | Where-Object { $_ -match 'Not attempted after the batch stopped: 1' }).Count | Should -Be 1
-            @($Script:ShownLines | Where-Object { $_ -match 'Journal stages not written: 1' }).Count | Should -Be 1
-            ($Script:ShownLines -join "`n") | Should -Match 'only in this process'
+            @($Script:ShownLines -join "`n") | Should -Match ([regex]::Escape('Privacy.AdvertisingId'))
+            @($Script:ShownLines -join "`n") | Should -Match 'Mutation occurred'
+            @($Script:ShownLines -join "`n") | Should -Match 'skipped/cancelled 1'
+            @($Script:ShownLines -join "`n") | Should -Match 'only in this process'
 
             # Nothing was dropped from the pending set: the failed change and the one that was
             # never attempted both stay there for inspection.

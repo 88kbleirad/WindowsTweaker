@@ -101,6 +101,9 @@ function New-WtTuiState
         ExitPending  = $false
         EmptyFrames  = 0
         ForceRepaint = $true
+        # Automatic restart for the current batch only: off at startup, spent by the batch
+        # that used it, never written to the settings file.
+        RestartRequested = $false
         # Drift/interrupted counts for the Overview pane are expensive (they read the
         # store), so they are cached and refreshed on a bounded cadence instead of being
         # recomputed on every key press while that pane is open.
@@ -784,9 +787,9 @@ function Format-WtTweakRow
         default { Get-WtString -Key 'Tui.Impact.Low' }
     }
 
-    $ShowState = $Width -ge 24
-    $ShowTarget = $Width -ge 34
-    $ShowImpact = $Width -ge 46
+    $ShowState = $Width -ge 30
+    $ShowTarget = $Width -ge 40
+    $ShowImpact = $Width -ge 50
 
     # The icon cells are reserved inside the row (and painted over by the caller), so the
     # row keeps its exact width and the state/target/impact columns never move.
@@ -795,9 +798,18 @@ function Format-WtTweakRow
     $TargetWidth = 0
     $ImpactWidth = 0
 
-    if ($ShowState) { $StateWidth = 9; $Used += $StateWidth + 1 }
-    if ($ShowTarget) { $TargetWidth = 9; $Used += $TargetWidth + 1 }
+    if ($ShowState) { $StateWidth = 10; $Used += $StateWidth + 1 }
+    if ($ShowTarget) { $TargetWidth = 14; $Used += $TargetWidth + 1 }
     if ($ShowImpact) { $ImpactWidth = 6; $Used += $ImpactWidth + 1 }
+
+    # The name must never be squeezed below 8 cells; if the fixed columns do not fit,
+    # drop them in the order that hurts least (impact, then target, then state).
+    while (($Width - $Used) -lt 8 -and ($ShowState -or $ShowTarget -or $ShowImpact))
+    {
+        if ($ShowImpact) { $ShowImpact = $false; $Used -= $ImpactWidth + 1; $ImpactWidth = 0 }
+        elseif ($ShowTarget) { $ShowTarget = $false; $Used -= $TargetWidth + 1; $TargetWidth = 0 }
+        elseif ($ShowState) { $ShowState = $false; $Used -= $StateWidth + 1; $StateWidth = 0 }
+    }
 
     $NameWidth = [math]::Max(6, $Width - $Used)
 
@@ -805,7 +817,7 @@ function Format-WtTweakRow
 
     if ($ShowState)
     {
-        $StateLabel = if ($Entry.Supported) { $Entry.State } else { Get-WtString -Key 'Status.Unsupported' }
+        $StateLabel = if ($Entry.Supported) { Get-WtTuiStateLabel -Name $Entry.State } else { Get-WtString -Key 'Status.Unsupported' }
         $Line += ' ' + (Format-WtColumn -Text $StateLabel -Width $StateWidth -Align Right)
     }
 
@@ -1063,7 +1075,7 @@ function Add-WtTuiDetails
         Style = 'ItemMeta'
         Icon  = $(if ($Entry.Privilege -eq 'Admin') { 'Status.AdminRequired' } else { '' })
     })
-    $Sections.Add(@{ Text = "$(Get-WtString -Key 'Tui.Details.State'): $($Entry.State)"; Style = 'ItemMeta'; Icon = (Get-WtStateIconKey -State $Entry.State) })
+    $Sections.Add(@{ Text = "$(Get-WtString -Key 'Tui.Details.State'): $(Get-WtTuiStateLabel -Name $Entry.State)"; Style = 'ItemMeta'; Icon = (Get-WtStateIconKey -State $Entry.State) })
     $Sections.Add(@{ Text = "$(Get-WtString -Key 'Tui.Details.Risk'): $RiskLabel"; Style = 'ItemMeta' })
     $Sections.Add(@{
         Text  = "$(Get-WtString -Key 'Tui.Details.Restart'): $RestartLabel"
@@ -1198,6 +1210,10 @@ function Add-WtTuiDetails
         {
             if ($Row -gt $Bottom) { return }
 
+            # Each painted line owns its row: clear the whole row area first so a shorter
+            # line can never leave stale text from the previous selection behind.
+            Set-WtScreenRegion -Screen $Screen -Row $Row -Column $Column -Width $Width -Height 1 -Style $Section.Style
+
             if ($IconWidth -le 0)
             {
                 Set-WtScreenText -Screen $Screen -Row $Row -Column $Column -Text $Wrapped -Style $Section.Style -MaxWidth $Width
@@ -1246,11 +1262,14 @@ function Add-WtTuiOperation
     $Column = [math]::Floor(($Screen.Width - $Width) / 2) + 1
 
     $Lines = [System.Collections.Generic.List[string]]::new()
-    $Lines.Add((Get-WtString -Key 'Tui.Busy.Item' -Arguments @($Operation.Finished, $Operation.Total)))
+    $Progress = $Operation.Progress
+    $Completed = if ($Progress) { [int]$Progress.Completed } else { [int]$Operation.Finished }
+    $Total = [math]::Max([int]$Operation.Total, $Completed)
+    $Lines.Add((Get-WtString -Key 'Tui.Busy.Item' -Arguments @($Completed, $Total)))
 
     # The bar visualises the same completed-item counts as the line above; it is not a
     # time estimate, and it deliberately cannot move while one native call is running.
-    $Bar = Format-WtIconProgressBar -Icons $State.Icons -Done ([int]$Operation.Finished) -Total ([int]$Operation.Total)
+    $Bar = Format-WtIconProgressBar -Icons $State.Icons -Done $Completed -Total $Total
     if ($Bar) { $Lines.Add($Bar) }
 
     if ($Operation.Active) { $Lines.Add((Get-WtString -Key 'Tui.Busy.Active' -Arguments @($Operation.Active))) }

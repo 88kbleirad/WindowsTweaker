@@ -369,6 +369,12 @@ function Set-WtScreenText
     $X = $Column
     $Index = 0
 
+    # The previous frame may have held longer text at this position: the cells after the
+    # new text are cleared so a shorter line can never leave stale content behind. The
+    # region is limited to the column span requested (or the row width when no MaxWidth
+    # was given), which is what makes replacement idempotent.
+    $ClearTo = $Limit - 1
+
     while ($Index -lt $Display.Length)
     {
         $Character = $Display[$Index]
@@ -414,6 +420,19 @@ function Set-WtScreenText
         }
 
         $X += $CellWidth
+    }
+
+    # Clear only the tail of the span this call owns (from the first cell AFTER the text to
+    # the limit). This never touches cells that belong to an adjacent pane or border, and
+    # it never erases the text that was just written.
+    $StyleBlank = Get-WtStyleId -Theme $Screen.Theme -Name $Style
+    for ($Cell = [math]::Max(0, $X - 1); $Cell -le $ClearTo; $Cell++)
+    {
+        if ($Line.Cells[$Cell] -ne ' ' -or $Line.Styles[$Cell] -ne $StyleBlank)
+        {
+            $Line.Cells[$Cell] = ' '
+            $Line.Styles[$Cell] = $StyleBlank
+        }
     }
 
     $Screen.Dirty = $true
@@ -533,7 +552,10 @@ function Add-WtScreenBox
     {
         $Available = $Width - 4
         $TitleText = Format-WtText -Text $Title -Width $Available
-        Set-WtScreenText -Screen $Screen -Row $Top -Column ($Left + 2) -Text " $TitleText " -Style $TitleStyle -MaxWidth $Available
+        # Only the padded title cells are claimed: the border dashes on both sides of the
+        # title stay in place (the clear-tail rule must not erase them).
+        $Padded = " $TitleText "
+        Set-WtScreenText -Screen $Screen -Row $Top -Column ($Left + 2) -Text $Padded -Style $TitleStyle -MaxWidth $Padded.Length
     }
 
     $Screen.Dirty = $true
@@ -941,6 +963,19 @@ function Write-WtScreenPlain
     try
     {
         try { [Console]::CursorVisible = $false } catch { $null = $_ }
+
+        # If something outside the renderer scrolled the console (external output, host
+        # messages), the absolute coordinates below would paint onto the wrong rows.
+        # Recover by checking the window origin and scrolling back to the top before
+        # painting, so the visible grid and the logical grid agree again.
+        try
+        {
+            if ([Console]::WindowTop -ne 0 -or [Console]::WindowLeft -ne 0)
+            {
+                [Console]::SetWindowPosition(0, 0)
+            }
+        }
+        catch { $null = $_ }
 
         for ($Row = 1; $Row -le $Screen.Height; $Row++)
         {

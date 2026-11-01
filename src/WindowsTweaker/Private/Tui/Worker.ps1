@@ -54,7 +54,19 @@ function New-WtWorker
         Runspace   = $Runspace
         PowerShell = $PowerShell
         Queue      = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
-        Cancel     = [hashtable]::Synchronized(@{ Requested = $false; Active = $null })
+        Cancel     = [hashtable]::Synchronized(@{
+            Requested = $false
+            Active = $null
+            Progress = @{
+                Completed = 0
+                Changed = 0
+                Unchanged = 0
+                Failed = 0
+                Partial = 0
+                Cancelled = 0
+                Skipped = 0
+            }
+        })
         Handle     = $null
         Kind       = $null
         Total      = 0
@@ -148,6 +160,13 @@ function Start-WtWorkerTask
     $Worker.Cancel.Requested = $false
     $Worker.Cancel.Active = $null
 
+    # The progress counters live on the shared cancel table from creation; reset them here
+    # so a reused worker starts a new batch with clean tallies.
+    foreach ($Key in @('Completed', 'Changed', 'Unchanged', 'Failed', 'Partial', 'Cancelled', 'Skipped'))
+    {
+        $Worker.Cancel.Progress[$Key] = 0
+    }
+
     $PowerShell = $Worker.PowerShell
     [void]$PowerShell.AddScript({
         param ($ModulePath, $Kind, $Items, $DryRun, $Queue, $Cancel, $StatePath, $LogDirectory)
@@ -172,6 +191,7 @@ function Start-WtWorkerTask
             if ($Cancel.Requested)
             {
                 $Queue.Enqueue(@{ Kind = 'cancelled'; Id = $Item.Id; HistoryId = $Item.HistoryId; Index = $Index; Total = $Total })
+                $Cancel.Progress.Cancelled = [int]$Cancel.Progress.Cancelled + 1
                 continue
             }
 
@@ -202,6 +222,18 @@ function Start-WtWorkerTask
                 $Result = if ($Kind -eq 'rollback') { Undo-WtTweak @Parameters } else { Invoke-WtTweak @Parameters }
                 $Queue.Enqueue(@{ Kind = 'result'; Id = $Item.Id; HistoryId = $Item.HistoryId; Label = $Item.Label; Index = $Index; Total = $Total; Result = $Result })
 
+                # One authoritative progress counter: completed items (including unchanged and
+                # failed ones) advance the total; outcome runs are split for the summary.
+                $Cancel.Progress.Completed = [int]$Cancel.Progress.Completed + 1
+                switch ([string]$Result.Status)
+                {
+                    'succeeded' { $Cancel.Progress.Changed++ }
+                    'unchanged' { $Cancel.Progress.Unchanged++ }
+                    'failed' { $Cancel.Progress.Failed++ }
+                    'partial' { $Cancel.Progress.Partial++ }
+                    default { $Cancel.Progress.Skipped++ }
+                }
+
                 # The engine sets this flag for every result; Test-WtJournalStopRequired is the
                 # in-module form of the same test. A runspace can only call the module's exported
                 # functions, so the flag is read here instead of calling that helper.
@@ -211,6 +243,7 @@ function Start-WtWorkerTask
                     # either. Stop the batch here: the remaining items are reported as skipped
                     # instead of repeating the same failure for every one of them.
                     $Cancel.Active = $null
+                    $Cancel.Progress.Skipped = [int]$Cancel.Progress.Skipped + ($Total - $Index)
                     $Queue.Enqueue(@{ Kind = 'stopped'; Id = $Item.Id; HistoryId = $Item.HistoryId; Label = $Item.Label; Index = $Index; Total = $Total; Skipped = ($Total - $Index) })
                     $Queue.Enqueue(@{ Kind = 'done'; Index = $Index; Total = $Total })
                     return
@@ -219,6 +252,8 @@ function Start-WtWorkerTask
             catch
             {
                 $Queue.Enqueue(@{ Kind = 'error'; Id = $Item.Id; HistoryId = $Item.HistoryId; Label = $Item.Label; Index = $Index; Total = $Total; Message = $_.Exception.Message })
+                $Cancel.Progress.Completed = [int]$Cancel.Progress.Completed + 1
+                $Cancel.Progress.Failed = [int]$Cancel.Progress.Failed + 1
             }
 
             $Cancel.Active = $null

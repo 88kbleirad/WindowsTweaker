@@ -240,6 +240,9 @@ $PublicFunctions = @(
     'Get-WtRestorePlan'
     'Export-WtHistory'
     'Undo-WtSession'
+    # optional restart after a completed batch
+    'Test-WtRestartRequest'
+    'Invoke-WtBatchRestart'
     'Export-WtDiagnostics'
     'Measure-WtNetworkDiagnostics'
     'Compare-WtMeasurements'

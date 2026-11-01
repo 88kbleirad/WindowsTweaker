@@ -156,6 +156,36 @@ written: `Test-WtJournalRestorable` accepts an entry with records and outcome
 reached the store). An entry whose capture never reached the store has no records at all and
 is never considered restorable — no original value is invented for it.
 
+## Optional restart after a batch
+
+`-RestartAfterApply` (command line) and `R` in the pending review (interface) authorize one
+restart for one batch. The authorisation is spent by that batch, is never written to
+`settings.json`, and is refused when the invocation cannot produce the state a restart would
+be for (a preview or a dry run, a read-only switch) or when the platform cannot restart.
+
+A restart is attempted only when every one of these holds, and refusal is the default:
+
+* at least one change was applied (`succeeded`; an all-unchanged batch never restarts),
+* no result is failed, partial, cancelled, skipped, unsupported or a worker-level exception,
+* read-back verification found no mismatch and compensating restoration did not run,
+* the journal recorded every stage (`Journal.StopBatch` false, no uncertain stage) and the
+  note about the restart reached the store,
+* no operation and no other restart is active, and the platform probe says a restart is
+  possible.
+
+Refusals, cancellations and failures are recorded as their own events (`preference`,
+`scheduled`, `cancelled`, `requested`, `failed`, `blocked`, `unavailable`) in the structured
+log under the operation name `Restart`, and — best effort, never fatal — as a message on the
+operation's journal entry. A restart request being accepted is recorded as exactly that: the
+tool does not claim Windows rebooted, and nothing re-applies a tweak after boot.
+
+The countdown runs inside the application (60 s, one screen row per second, `Esc` cancels,
+`Q` cancels and quits), so the operating system is asked once, when it expires; an
+application crash therefore leaves no unexpected restart pending. Nothing is force-closed
+(`shutdown /r /t 0`, never `/f`), so open applications with unsaved work can delay or prevent
+the restart, which the countdown says. A denied or failed request keeps the completed results
+and prints the manual command; the apply outcome and the restart outcome are never merged.
+
 ## What the guarantees are (and are not)
 
 * **Compensation is not atomic rollback.** Windows offers no transaction across registry,

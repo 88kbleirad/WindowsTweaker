@@ -36,11 +36,28 @@ From the param block (`WindowsTweaker.ps1:263-312`). Dispatch runs in a fixed or
 | `-State` | string | Target state; defaults to the tweak's declared default | `-State Disabled` |
 | `-Arguments` | hashtable | Parameters for tweaks that declare them | `-Arguments @{ InterfaceIndex = @(7); ServerAddresses = @('1.1.1.1') }` |
 | `-IncludeRestorePoint` | switch | Create a System Restore point first (supplementary; needs elevation and System Protection) | `-Id Privacy.AdvertisingId -State Disabled -IncludeRestorePoint` |
+| `-RestartAfterApply` | switch | Restart the machine once after the batch, only when every change was applied, verified and fully recorded | `-Preset privacy-hardening -RestartAfterApply` |
 | `-WhatIf` | common switch | Dry run: lists every operation that would run, writes nothing, captures no state | `-Id Privacy.AdvertisingId -State Disabled -WhatIf` |
 | `-Rollback` | switch | Roll back the newest captured change of `-Id` | `-Id Privacy.AdvertisingId -Rollback` |
 | `-HistoryId` | string | Roll back one captured change instead of the newest (id from the `HistoryId` column of `-History`) | `-HistoryId 3f2a1c9e8b7d4a5f9c0e1d2b3a4f5e6d -Rollback` |
 
 A rollback with no captured change reports "No captured state" and exits non-zero rather than pretending to succeed. `Network.DnsOverHttps` and `Maintenance.AdapterPowerSaving` are real tweaks that refuse to run without explicit `-Arguments`.
+
+### Restarting after the batch
+
+`-RestartAfterApply` is opt-in per invocation and is never remembered. It applies to `-Id` and `-Preset` (the two switches that write), and is refused - as a usage error, exit `2`, never silently ignored - with `-WhatIf` and with every read-only switch, and on a platform that cannot restart.
+
+The restart happens only when the whole batch finished cleanly: at least one change applied, nothing failed, cancelled, skipped or unsupported, no worker exception, verification and compensation clean, every journal stage recorded, and nothing else running. A batch of unchanged entries does not restart. A refusal, a cancellation or a failed request never changes what the batch did: the apply outcome and the restart outcome are reported separately, and the manual command is printed.
+
+The countdown (60 s) runs inside this process, so the operating system is asked exactly once, when it expires and only if a console that can deliver a cancellation is attached; `Escape` cancels it. Nothing is force-closed, so unsaved work can delay or prevent the restart. The same rules and the same single adapter are used by the terminal interface's `R` toggle in the review screen.
+
+```powershell
+pwsh -File WindowsTweaker.ps1 -Id Privacy.AdvertisingId -State Disabled -RestartAfterApply
+pwsh -File WindowsTweaker.ps1 -Preset explorer-usability -RestartAfterApply
+pwsh -File WindowsTweaker.ps1 -Id Privacy.AdvertisingId -RestartAfterApply -WhatIf   # refused
+```
+
+`Test-WtRestartRequest` answers "may this invocation restart, and why not"; `Invoke-WtBatchRestart` performs the restart for a finished batch (eligibility, countdown, one request) and returns the outcome separately from the batch result.
 
 ### Presets
 
