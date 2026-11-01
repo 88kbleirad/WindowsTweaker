@@ -243,6 +243,11 @@ $PublicFunctions = @(
     # optional restart after a completed batch
     'Test-WtRestartRequest'
     'Invoke-WtBatchRestart'
+    # read-only licensing & activation diagnostics
+    'Get-WtLicensingDiagnostics'
+    'Get-WtLicensingHealth'
+    'Export-WtLicensingDiagnostics'
+    'Request-WtLicensingActivation'
     'Export-WtDiagnostics'
     'Measure-WtNetworkDiagnostics'
     'Compare-WtMeasurements'

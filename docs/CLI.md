@@ -118,6 +118,7 @@ See [SANITY-SCAN.md](SANITY-SCAN.md), [RECOMMENDATIONS.md](RECOMMENDATIONS.md), 
 | `-Ascii` | switch | ASCII frame characters instead of box drawing (also forces ASCII icons) | `-Ascii` |
 | `-RuntimeReport` | switch | Print the runtime profile, every capability with its reason and the validated range. Read-only, identical on both runtimes | `-RuntimeReport` |
 | `-Icons` | `Auto` (default), `Unicode`, `NerdFont`, `ASCII`, `None` | Icon display mode; no font is installed or detected | `-Icons ASCII` |
+| `-PerfProfile` | `Auto` (default), `Balanced`, `Low-resource` | TUI performance profile: presentation and read-only collection only | `-PerfProfile Low-resource` |
 
 Language precedence: `-Language`, then the choice saved from the interface, then `WT_LANG`, then the supported UI culture, then English; an unsupported explicit value resolves to English so a typo stays visible. Changing the language never applies a tweak.
 
@@ -178,6 +179,8 @@ All optional; each overrides a default otherwise derived from the data root. The
 | `WT_SETUP_USER_ID` | Identity bound into a resume registration | `Private/SetupPlans.ps1:507` |
 | `WT_WORKER_PATH` | Explicit worker binary; the worker is never resolved through `PATH` | `Private/Worker/WorkerClient.ps1:38` |
 | `WT_TUI_INPUT_TRACE` | `1`/`true`/`yes` enables the key-press trace, as `-InputDiagnostics` does | `Private/Tui/Tui.ps1:2277` |
+| `WT_TUI_PERF_DIAGNOSTICS` | `1`/`true`/`yes` enables the bounded performance-diagnostics ring (durations, no typed text) | `Private/Tui/Perf.ps1` |
+| `WT_TUI_PERF_PROFILE` | `Auto`, `Balanced`, `Low-resource`; same as `-PerfProfile` | `Private/Tui/PerfProfile.ps1` |
 
 ## State, log and settings locations
 

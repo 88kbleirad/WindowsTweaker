@@ -401,7 +401,8 @@ function Get-WtTuiFailureFirstLines
     (
         [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
         [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @(),
-        [Parameter(Mandatory = $false)][int]$Skipped = 0
+        [Parameter(Mandatory = $false)][int]$Skipped = 0,
+        [Parameter(Mandatory = $false)][object]$State = $null
     )
 
     $Lines = [System.Collections.Generic.List[string]]::new()
@@ -422,8 +423,31 @@ function Get-WtTuiFailureFirstLines
         $Lines.Add("")
         $Lines.Add((Get-WtString -Key 'Tui.Result.FailureHeader' -Arguments @($Result.TweakId, (Get-WtString -Key "Op.$Status"))))
 
-        $Name = try { [string](Get-WtText -Value (Get-WtTweakInternal -Id $Result.TweakId).Name) } catch { '' }
+        # The localized name is resolved through the definition row; a definition that is
+        # gone is reported by id and never invented.
+        $Name = ''
+        try
+        {
+            $Tweak = Get-WtTweakInternal -Id $Result.TweakId
+            if ($Tweak) { $Name = [string](Get-WtText -Value $Tweak.Name) }
+        }
+        catch { $Name = '' }
         if ($Name) { $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureName') + ": $Name") }
+
+        # The requested state is part of the request, not of the journal entry.
+        $RequestedState = ''
+        if ($State -and @($State.Keys) -contains 'BatchRequests')
+        {
+            foreach ($Request in @($State.BatchRequests))
+            {
+                if ([string]$Request.Id -eq [string]$Result.TweakId) { $RequestedState = [string]$Request.Target; break }
+            }
+        }
+        if (-not $RequestedState -and @($Result.PSObject.Properties.Name) -contains 'State')
+        {
+            $RequestedState = [string]$Result.State
+        }
+        if ($RequestedState) { $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureRequested') + ": $RequestedState") }
 
         $Journal = $Result.Journal
         if ($Journal)
@@ -451,9 +475,25 @@ function Get-WtTuiFailureFirstLines
 
         if ($Result.Compensation -and $Result.Compensation.Attempted)
         {
+            # A compensated failure stays a failed operation; the compensation outcome is its
+            # own fact and is reported as such.
             $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureCompensation') + ": " +
                 (Get-WtString -Key 'Tui.Result.FailureVerifiedCount' -Arguments @($Result.Compensation.Succeeded, $Result.Compensation.Failed)))
         }
+
+        # The current observed state of the first target, or "unknown" when it cannot be
+        # read. This is evidence, never a verdict on whether the rest of the batch worked.
+        try
+        {
+            $Target = @($Result.targets | Select-Object -First 1)
+            if (@($Target).Count -gt 0 -and $Target[0].identity)
+            {
+                $Live = Get-WtTargetState -Identity ([string]$Target[0].identity)
+                $Current = if ($Live.ValueKind -eq 'Unreadable') { Get-WtString -Key 'Tui.Result.CurrentUnknown' } else { ConvertTo-WtTargetDisplayValue -Value $Live.Value -ValueKind $Live.ValueKind }
+                $Lines.Add("  " + (Get-WtString -Key 'Tui.Result.FailureCurrent') + ": $Current")
+            }
+        }
+        catch { $null = $_ }
 
         foreach ($Message in @($Result.Messages | Where-Object { $_ }))
         {
@@ -512,6 +552,8 @@ function Complete-WtTuiOperation
     $RestartRequirement = if (@($Operation.Keys) -contains 'RestartRequirement') { [string]$Operation.RestartRequirement } else { '' }
 
     $Lines = [System.Collections.Generic.List[string]]::new()
+    $JobId = if (@($Operation.Keys) -contains 'JobId') { [string]$Operation.JobId } else { '' }
+    $Lines.Add((Get-WtTuiResultScopeLine -Kind 'batch' -JobId $JobId))
     $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Total' -Arguments @(
             $Summary.Total, $Summary.Changed, $Summary.Unchanged, $Summary.Failed, $Summary.Partial, ($Summary.Cancelled + $Summary.Skipped))))
     $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Verified' -Arguments @($Summary.Verified)))
@@ -520,7 +562,7 @@ function Complete-WtTuiOperation
         $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.UncertainJournal' -Arguments @($Summary.UncertainJournal)))
     }
     $Lines.Add('')
-    foreach ($Line in (Get-WtTuiFailureFirstLines -Results $Results -Failures $Failures -Skipped ([int]$Operation.Skipped)))
+    foreach ($Line in (Get-WtTuiFailureFirstLines -Results $Results -Failures $Failures -Skipped ([int]$Operation.Skipped) -State $State))
     {
         $Lines.Add($Line)
     }
@@ -603,7 +645,10 @@ function Complete-WtTuiOperation
 
     if ($Failed -gt 0 -or $Summary.UncertainJournal -gt 0)
     {
+        # Failures stay in the queue for an explicit retry review; successes are cleared.
+        # The report is drawn before anything is dropped so it reflects the batch as run.
         $State.Operation = $null
+        Sync-WtTuiBatchPending -State $State -Results $Results -Failures $Failures
         Sync-WtTuiCatalog -State $State
 
         $StatusText = if ($Summary.UncertainJournal -gt 0)
@@ -622,19 +667,13 @@ function Complete-WtTuiOperation
         return
     }
 
-    # Everything the user asked for is in place: drop only those entries from the pending
-    # set, and keep anything that failed, was reported unsupported, or whose journal record
-    # is incomplete (that one needs inspection before it is retried).
+    # Everything the user asked for is in place: the reviewed requests that succeeded (or
+    # were already in the requested state) are cleared by revision; failures and anything
+    # that was never part of this batch stay. Clearing a request never undoes a change -
+    # it only records that the intent is satisfied.
     if ($Operation.Kind -eq 'apply' -and -not $Operation.Preview)
     {
-        foreach ($Result in $Results)
-        {
-            if ($null -eq $Result) { continue }
-            if ($Result.Status -in 'succeeded', 'unchanged', 'dryrun')
-            {
-                [void]$State.Pending.Remove([string]$Result.TweakId)
-            }
-        }
+        Sync-WtTuiBatchPending -State $State -Results $Results -Failures $Failures
     }
 
     $State.Operation = $null
@@ -791,6 +830,89 @@ function Invoke-WtTuiRestart
 
 <#
 .SYNOPSIS
+    Reconciles the pending queue against one finished batch.
+.DESCRIPTION
+    The pending queue is the user's *intent*, not the batch history. After a batch:
+
+      * a reviewed request that finished as succeeded or unchanged is cleared - but only
+        when the pending entry still carries the same revision the batch executed, so a
+        request the user edited while the batch ran survives;
+      * a request that failed, was skipped, cancelled or left uncertain stays in the queue,
+        where it can only be re-run through an explicit, fresh review (the fingerprint is
+        invalidated, so revalidation is unavoidable);
+      * requests that were never part of this batch are untouched.
+
+    Clearing a request never implies that its change was undone or that anything was
+    rolled back: it only records that the *intent* is satisfied. Failures are left in the
+    journal and in the report; the queue is not a place to hide them.
+#>
+function Sync-WtTuiBatchPending
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @()
+    )
+
+    $Planned = @($State.BatchRequests)
+    $State.BatchRequests = @()
+
+    foreach ($Request in $Planned)
+    {
+        $Id = [string]$Request.Id
+        if (-not $Id -or -not $State.Pending.Contains($Id)) { continue }
+
+        # The current pending entry must be the very request this batch executed.
+        $Current = $State.Pending[$Id]
+        if ([string]$Current.Revision -ne [string]$Request.Revision) { continue }
+
+        $Result = @($Results | Where-Object { $null -ne $_ -and [string]$_.TweakId -eq $Id }) | Select-Object -First 1
+        $Status = if ($Result) { [string]$Result.Status } else { '' }
+
+        # A failure, a skip, a cancellation and an uncertain outcome keep the request, with
+        # its fingerprint cleared so a retry needs a fresh review. An unchanged request is
+        # satisfied and leaves the queue.
+        if ($Status -in 'succeeded', 'unchanged')
+        {
+            [void]$State.Pending.Remove($Id)
+            continue
+        }
+
+        if ($Status -in 'failed', 'partial', 'unsupported', 'skipped', '', $null)
+        {
+            $Current.Fingerprint = $null
+            $State.Screen.Dirty = $true
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+    Returns the localized scope line for a results dialog.
+.DESCRIPTION
+    Every summary names its scope so a counter can never be mistaken for another surface:
+    a batch is "the batch that just finished", a session is the current session, and the
+    history view is all operations. The job id is included when known.
+#>
+function Get-WtTuiResultScopeLine
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param
+    (
+        [Parameter(Mandatory = $false)][string]$Kind = 'batch',
+        [Parameter(Mandatory = $false)][string]$JobId = ''
+    )
+
+    if ($Kind -eq 'session') { return (Get-WtString -Key 'Tui.Result.Scope.Session' -Arguments @($JobId)) }
+    if ($Kind -eq 'history') { return (Get-WtString -Key 'Tui.Result.Scope.History') }
+    return (Get-WtString -Key 'Tui.Result.Scope.Batch' -Arguments @($JobId))
+}
+
+<#
+.SYNOPSIS
     Handles keys while an operation is running.
 .DESCRIPTION
     Only cancellation is accepted. Selection and application keys are ignored so no
@@ -901,11 +1023,16 @@ function Start-WtTuiOperation
     }
     else
     {
+        # The batch executes the *reviewed plan*: the pending entries as they are at this
+        # moment, frozen with the revision they had when the review produced the fingerprint.
+        # A request edited after the batch started is a different request (a new revision) and
+        # is never cleared by a completion that lost the race.
         foreach ($Key in $State.Pending.Keys)
         {
             $Entry = $State.Pending[$Key]
             $Items += @{
                 Id          = $Entry.Id
+                Revision    = [string]$Entry.Revision
                 HistoryId   = $null
                 Target      = $Entry.Target
                 Arguments   = $Entry.Arguments
@@ -914,6 +1041,14 @@ function Start-WtTuiOperation
                 Origin      = 'manual'
             }
         }
+        $State.BatchRequests = @($Items | ForEach-Object {
+                @{
+                    Id = [string]$_.Id
+                    Revision = [string]$_.Revision
+                    Target = [string]$_.Target
+                    Arguments = $_.Arguments
+                }
+            })
     }
 
     if ($Items.Count -eq 0)
@@ -943,6 +1078,7 @@ function Start-WtTuiOperation
     $State.Operation = @{
         Kind       = $Kind
         Preview    = [bool]$Preview
+        JobId      = [guid]::NewGuid().ToString('n')
         Total      = $Items.Count
         Started    = 0
         Finished   = 0
@@ -2075,11 +2211,25 @@ function Invoke-WtTuiRestore
     $Items = @()
     foreach ($Entry in $State.History)
     {
+        # A tweak that was renamed, retired or removed shows its stable id; the current
+        # catalog name is used when it still exists, and nothing is invented for a missing
+        # definition.
+        $Name = [string]$Entry.TweakId
+        try
+        {
+            $Tweak = Get-WtTweakInternal -Id $Entry.TweakId
+            if ($Tweak) { $Name = [string](Get-WtText -Value $Tweak.Name) }
+        }
+        catch { $null = $_ }
+
+        $OutcomeLabel = Get-WtString -Key "Op.$($Entry.Outcome)"
+        if ($OutcomeLabel -like '[Op.*') { $OutcomeLabel = [string]$Entry.Outcome }
+
         $Items += @{
-            Label    = $Entry.TweakId
-            Right    = if ($Entry.RolledBack) { Get-WtString -Key 'Tui.History.RolledBack' } else { Get-WtString -Key "Op.$($Entry.Outcome)" }
+            Label    = $Name
+            Right    = if ($Entry.RolledBack) { Get-WtString -Key 'Tui.History.RolledBack' } else { $OutcomeLabel }
             Payload  = $Entry
-            Filter   = "$($Entry.TweakId) $($Entry.State) $($Entry.Outcome) $($Entry.Timestamp)"
+            Filter   = "$Name $($Entry.TweakId) $($Entry.State) $($Entry.Outcome) $($Entry.Timestamp)"
             Disabled = $false
             Checked  = $false
         }
@@ -2089,9 +2239,11 @@ function Invoke-WtTuiRestore
         param ($Item)
 
         $Entry = $Item.Payload
+        $StateLabel = Get-WtTuiStateLabel -Name $Entry.State
         @(
+            (Get-WtString -Key 'Tui.Details.Tweak') + ": $($Entry.TweakId)",
             (Get-WtString -Key 'Tui.Col.Time') + ": $($Entry.Timestamp)",
-            (Get-WtString -Key 'Tui.Col.State') + ": $($Entry.State)",
+            (Get-WtString -Key 'Tui.Col.State') + ": $StateLabel",
             (Get-WtString -Key 'Tui.Details.Records') + ": $($Entry.RecordCount)",
             $(if ($Entry.Irreversible) { Get-WtString -Key 'Tui.Restore.Irreversible' } else { Get-WtString -Key 'Tui.Restore.Restorable' })
         )
@@ -2648,6 +2800,79 @@ function Show-WtTuiIconPicker
             Set-WtTuiStatus -State $State -Tone 'StatusOk' -Text (Get-WtString -Key 'Tui.Status.Icons' -Arguments @($Labels[$Mode]))
         }
     }
+}
+
+<#
+.SYNOPSIS
+    Lets the user choose the TUI performance profile for the session.
+.DESCRIPTION
+    The profile only tunes presentation and read-only collection cadence; it is saved as an
+    explicit, per-user preference like the icon mode, and the interface restart picks it up
+    again. Auto is the default answer: Balanced for a virtual terminal, Low-resource for a
+    classic console without virtual terminal processing.
+#>
+function Show-WtTuiProfilePicker
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Labels = @{
+        'Auto'         = Get-WtString -Key 'Tui.Profile.Mode.Auto'
+        'Balanced'     = Get-WtString -Key 'Tui.Profile.Mode.Balanced'
+        'Low-resource' = Get-WtString -Key 'Tui.Profile.Mode.Low'
+    }
+    $Notes = @{
+        'Auto'         = Get-WtString -Key 'Tui.Profile.AutoNote'
+        'Balanced'     = Get-WtString -Key 'Tui.Profile.BalancedNote'
+        'Low-resource' = Get-WtString -Key 'Tui.Profile.LowNote'
+    }
+
+    $Saved = Get-WtTuiProfilePreference
+    $Current = [string]$State.PerformanceProfile
+
+    $Items = @()
+    foreach ($Name in Get-WtTuiProfiles)
+    {
+        $Items += @{
+            Label    = $Labels[$Name]
+            Right    = if ($Name -eq $Current) { Get-WtString -Key 'Tui.State.Current' } else { '' }
+            Checked  = ($Name -eq $Saved)
+            Disabled = $false
+            Payload  = $Name
+            Filter   = "$Name $($Labels[$Name])"
+        }
+    }
+
+    $Details = {
+        param ($Item)
+        @($Notes[$Item.Payload])
+    }
+
+    $Effective = Get-WtTuiProfileEffective -Preference $Saved -UseVt ([bool]$State.UseVt)
+    $Lines = @(
+        (Get-WtString -Key 'Tui.Profile.Hint'),
+        (Get-WtString -Key 'Tui.Profile.Effective' -Arguments @($Labels[$Effective]))
+    )
+
+    $Result = Select-WtTuiItem -State $State -Title (Get-WtString -Key 'Tui.Profile.Title') -Lines $Lines -Items $Items `
+        -Details $Details -DetailsHeight 3 -Searchable
+    if ($null -eq $Result -or -not $Result.Value)
+    {
+        return
+    }
+
+    $Picked = [string]$Result.Value
+    Set-WtTuiProfilePreference -Profile $Picked | Out-Null
+
+    # Apply for this session immediately; the knobs are re-resolved and the screen is
+    # fully repainted so the density change is visible at once.
+    $Effective = Get-WtTuiProfileEffective -Requested $Picked -Preference $Picked -UseVt ([bool]$State.UseVt)
+    $State.PerformanceProfile = $Effective
+    $State.ProfileKnobs = Get-WtTuiProfileKnobs -Profile $Effective
+    $State.FrameTimeoutMs = [int]$State.ProfileKnobs.FrameTimeoutMs
+    $State.ForceRepaint = $true
+
+    Set-WtTuiStatus -State $State -Tone 'StatusOk' -Text (Get-WtString -Key 'Tui.Profile.Set' -Arguments @($Labels[$Picked], $Labels[$Effective]))
 }
 
 <#

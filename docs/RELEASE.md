@@ -2,9 +2,10 @@
 
 This document is the exact procedure for producing and publishing a WindowsTweaker release.
 Everything in the "Local packaging" section is a repository tool and runs offline. Release
-`v1.0.0` is published (tag `v1.0.0`); module version `1.0.5` (the optional restart after a
-batch, [VALIDATION.md](VALIDATION.md) section 19) is packaged locally and **not published**, and
-its `dist/` output sits beside the preserved `v1.0.0` files under `dist/v1.0.0/`.
+`v1.0.0` is published (tag `v1.0.0`); module version `1.0.6` (the batch-state/TUI profile work
+and the licensing & activation diagnostics workspace, [VALIDATION.md](VALIDATION.md) section 20)
+is packaged locally and **not published**, and its `dist/` output sits beside the preserved
+`v1.0.0` files under `dist/v1.0.0/`.
 The `v1.0.0` archives were downloaded, SHA-256-verified and staged by the bootstrap during the
 launcher fixes ([VALIDATION.md](VALIDATION.md) sections 13, 14 and 15). Adding a release does not
 change either bootstrap file, and changing a bootstrap file does not require a new release: neither
@@ -126,5 +127,6 @@ against `dist/manifest.json` before trusting the run.
 | Packaging module version `1.0.3` after the TUI responsiveness fix | **Executed**: four archives rebuilt with `tools/New-ReleasePackage.ps1 -Version 1.0.3`, each validated (worker handshake, 147 file hashes), `version`/`engineVersion` `1.0.3` in both manifests and `ModuleVersion` `1.0.3` inside each archive. Not published, and the `v1.0.0` tag and release were not touched. |
 | Packaging module version `1.0.4` after the rendering/batch-report fix | **Executed**: four archives rebuilt with `tools/New-ReleasePackage.ps1 -Version 1.0.4`, each validated (worker handshake, 147 file hashes), `version`/`engineVersion` `1.0.4` in both manifests and `ModuleVersion` `1.0.4` inside each archive. Not published, and the `v1.0.0` tag and release were not touched. |
 | Packaging module version `1.0.5` after the optional-restart feature | **Executed**: four archives rebuilt with `tools/New-ReleasePackage.ps1 -Version 1.0.5`, each validated (worker handshake, 149 file hashes), `version`/`engineVersion` `1.0.5` in both manifests and `ModuleVersion` `1.0.5` inside each archive. Not published, and the `v1.0.0` tag and release were not touched. |
+| Packaging module version `1.0.6` after the batch-state/TUI profile fix and the licensing workspace | **Executed**: four archives rebuilt with `tools/New-ReleasePackage.ps1 -Version 1.0.6`, each validated (worker handshake, 155 file hashes), `version`/`engineVersion` `1.0.6` in both manifests and `ModuleVersion` `1.0.6` inside each archive. Not published, and the `v1.0.0` tag and release were not touched. |
 | A real end-to-end run of the published command on Linux: release resolution, asset download, SHA-256 check, staging, launch into the terminal interface | **Executed** for the published `v1.0.0` during the launcher fix - `bootstrap/bootstrap.ps1` resolved `releases/latest`, downloaded `WindowsTweaker-linux-x64-v1.0.0.zip`, verified its hash against `checksums.txt`, staged it and started the interface (`docs/VALIDATION.md` section 13) |
 | The same end-to-end run on a Windows host (Windows PowerShell 5.1 and PowerShell 7) in a real console | **NOT executed** - no Windows host was available. Both 5.1 failures (the BOM parse failure and the synchronous `ReadAsStream` call) were reported from the field and reproduced on PowerShell 7.6.9 with the identical error text (`docs/VALIDATION.md` sections 13, 14 and 15). |

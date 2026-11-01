@@ -189,7 +189,11 @@ function Stop-WtMonitorSession
 function Update-WtMonitorWorkspace
 {
     [CmdletBinding()]
-    param ([Parameter(Mandatory = $true)][hashtable]$Monitor)
+    param
+    (
+        [Parameter(Mandatory = $true)][hashtable]$Monitor,
+        [Parameter(Mandatory = $false)][double]$Cadence = 1.0
+    )
 
     $Collector = $Monitor.Collector
     if (-not $Collector -or -not $Collector.Running) { return }
@@ -199,8 +203,14 @@ function Update-WtMonitorWorkspace
     $NowMs = [int64]($Now.ToUniversalTime() - [datetime]::new(1970,1,1,0,0,0,[datetimekind]::Utc)).TotalMilliseconds
     $MonoMs = $Collector.Watch.ElapsedMilliseconds
 
+    # The cadence multiplier stretches the collection intervals (a presentation/read-only
+    # knob). The collector's own timestamps still gate the work; persistence is per-sample,
+    # so required recovery boundaries are untouched.
+    $FastThreshold = [double]$Collector.FastSeconds * [math]::Max(0.25, $Cadence)
+    $SlowThreshold = [double]$Collector.SlowSeconds * [math]::Max(0.25, $Cadence)
+
     # Fast schedule.
-    if (($Now - $Collector.LastFast).TotalSeconds -ge $Collector.FastSeconds)
+    if (($Now - $Collector.LastFast).TotalSeconds -ge $FastThreshold)
     {
         $Cycle = Invoke-WtMonitorCycle -Backend $Collector.Backend -CpuState $Collector.CpuState -Adapter $Collector.Adapter -NowMs $NowMs -MonotonicMs $MonoMs
         $snapshots = @(@{ Kind='Fast'; Samples=@($Cycle.Samples); Backend=$Cycle.Backend; Reason=$Cycle.Reason })
@@ -213,7 +223,7 @@ function Update-WtMonitorWorkspace
     }
 
     # Slow schedule.
-    if (($Now - $Collector.LastSlow).TotalSeconds -ge $Collector.SlowSeconds)
+    if (($Now - $Collector.LastSlow).TotalSeconds -ge $SlowThreshold)
     {
         $Cycle = Invoke-WtMonitorCycle -Backend $Collector.Backend -Slow -Disk $Collector.Disk -NowMs $NowMs -MonotonicMs $MonoMs
         $snapshots = @(@{ Kind='Slow'; Samples=@($Cycle.Samples); Backend=$Cycle.Backend; Reason=$Cycle.Reason })
@@ -1082,9 +1092,11 @@ function Show-WtTuiMonitor
     {
         while ($true)
         {
-            Update-WtMonitorWorkspace -Monitor $Monitor
+            $MonitorCadence = if (@($State.Keys) -contains 'ProfileKnobs') { [double]$State.ProfileKnobs.MonitorCadence } else { 1.0 }
+            Update-WtMonitorWorkspace -Monitor $Monitor -Cadence $MonitorCadence
 
-            $Key = Invoke-WtTuiFrame -State $State
+            $MonitorTimeout = if (@($State.Keys) -contains 'FrameTimeoutMs') { [int]$State.FrameTimeoutMs } else { 40 }
+            $Key = Invoke-WtTuiFrame -State $State -TimeoutMs $MonitorTimeout
             if ($null -eq $Key)
             {
                 if ($State.Exit)
@@ -1096,7 +1108,9 @@ function Show-WtTuiMonitor
 
             $Batch = 0
             $Escaped = $false
-            while ($Key -and $Batch -lt 16 -and -not $State.Exit -and -not $Escaped)
+            $MonitorBatchMax = if (@($State.Keys) -contains 'ProfileKnobs') { [int]$State.ProfileKnobs.MaxKeyBatch } else { 16 }
+            $MonitorBatchWatch = [System.Diagnostics.Stopwatch]::StartNew()
+            while ($Key -and $Batch -lt $MonitorBatchMax -and $MonitorBatchWatch.ElapsedMilliseconds -lt 150 -and -not $State.Exit -and -not $Escaped)
             {
                 switch ($Key.Name)
                 {

@@ -70,6 +70,28 @@ jobs:
           go-version-file: worker/go.mod
           cache-dependency-path: worker/go.sum
 
+      - name: Install the validation modules
+        shell: pwsh
+        run: |
+          # The gate needs both: PSScriptAnalyzer for phases 4 and 5, Pester for phase 6.
+          foreach ($Name in @('Pester', 'PSScriptAnalyzer')) {
+            if (-not (Get-Module -ListAvailable $Name)) {
+              Install-Module $Name -Force -Scope CurrentUser -SkipPublisherCheck -Confirm:$false -ErrorAction Stop
+            }
+          }
+
+      - name: Full validation gate (must pass before anything is packaged)
+        shell: pwsh
+        run: |
+          # The project's own gate: AST parse, catalog and insight invariants, PSScriptAnalyzer,
+          # the Windows PowerShell 5.1 compatibility gate, the whole Pester suite and the dry-run
+          # proof. It exits non-zero unless every executed check passed, so a red gate stops the
+          # job here and nothing is packaged or published from a tree that failed its own gate.
+          pwsh -NoProfile -File ./tools/Invoke-Validation.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "tools/Invoke-Validation.ps1 exited with $LASTEXITCODE. Refusing to package or publish."
+          }
+
       - name: Package and validate (builds all four workers)
         shell: pwsh
         run: |

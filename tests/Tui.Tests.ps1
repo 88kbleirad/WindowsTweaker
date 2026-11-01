@@ -1360,7 +1360,7 @@ Describe 'Icon registry' {
                 Status = @('Enabled', 'Disabled', 'Pending', 'Running', 'Succeeded', 'Failed', 'Warning',
                     'Unsupported', 'Unknown', 'AdminRequired', 'RestartRequired', 'Reversible')
                 Action = @('Search', 'Refresh', 'Select', 'Preview', 'Apply', 'Restore', 'Import', 'Export',
-                    'Cancel', 'Quit')
+                    'Key', 'Cancel', 'Quit')
             }
 
             $Registry = Get-WtIconRegistry
@@ -1373,7 +1373,7 @@ Describe 'Icon registry' {
                 }
             }
 
-            $Expected.Count | Should -Be 39
+            $Expected.Count | Should -Be 40
             foreach ($Key in $Expected)
             {
                 $Registry.Contains($Key) | Should -BeTrue -Because "$Key must exist in the registry"

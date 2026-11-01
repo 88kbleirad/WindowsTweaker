@@ -122,6 +122,7 @@ Facts worth knowing:
 | `C` | settings that offer several alternatives. The live alternative stays labelled while the pending one is marked `(*)`; `Enter` picks one. Choosing another **replaces** the pending alternative, recomputes dependencies and conflicts, and invalidates the earlier review of that item. Restoring the captured original state is done from the journal (`R`), not here |
 | `V` | verification and recovery: what was applied vs what is live now (matching / changed / unreadable / unsupported), interrupted operations, `R` review and reapply, `U` restore, `E` export the journal, `D` export the diagnostics. Nothing is reapplied automatically |
 | `?` | the full keyboard reference and the safety rules |
+| `Ctrl+P` | open the TUI performance profile picker (Auto / Balanced / Low-resource); presentation-only, never touches power or security |
 | `Esc` | close a dialog; otherwise clear the filter; otherwise return the focus to the list |
 | `Q` (or `Ctrl+C`) | quit. Pending changes and a running operation are raised explicitly - quitting is never silent about either |
 
@@ -189,6 +190,26 @@ requested range exceeds available history.
 The fleet, incident, playbook and support-bundle views (`1`-`4`) exist but are the least
 exercised part of the workspace: [docs/MULTI-HOST.md](MULTI-HOST.md) lists what is wired and
 what is not.
+
+### Licensing workspace (N)
+
+| Key | Action |
+|---|---|
+| `N` | open the licensing & activation diagnostics workspace (also the Overview -> Licensing & Activation Diagnostics row) |
+| `R` | refresh the read-only inventory; the status line confirms it and the `Collected` timestamp changes |
+| `E` | export the redacted report: a preview is shown first, then an export path is asked for, and the file is written only after that |
+| `A` | request activation with the installed license (documented `slmgr /ato`): the purpose, the possible network activity and the required permissions are shown first, and **No** is the highlighted answer |
+| `?` | context help for this workspace |
+| `Esc` | leave the workspace and return to the main interface unchanged |
+
+Everything the workspace shows is read-only: the Windows licensing products, the license status with
+its raw code, the license channel, the grace state, the W32Time state and the component
+availability. The partial product key is **not** displayed by default (the workspace reads the
+redacted view), and a full key, an activation token, a machine identifier or an organization
+hostname is never displayed or exported. `A` is the only key that asks Windows to do something, it
+never runs automatically, and its result is re-read rather than assumed: an accepted command is not
+reported as an activated license. See [docs/VALIDATION.md](VALIDATION.md) section 21 for what was
+validated here and what still needs a Windows host.
 
 ### While an operation is running
 
@@ -318,7 +339,8 @@ Xuất hiện ở: khung nhóm (trước mỗi nhóm), mọi dòng tinh chỉnh 
 | `M` | đề xuất cho một mục tiêu, kèm lý do cho từng mục (được đề xuất, đã đạt, bị loại, chưa rõ, bị chặn). `Trái`/`Phải` đổi mục tiêu, `O` tính lại; cả hai đều không áp dụng gì và không đụng tới lựa chọn bạn tự làm |
 | `C` | các thiết lập có nhiều lựa chọn. `Enter` chọn một lựa chọn; chọn lựa chọn khác sẽ **thay thế** lựa chọn đang chờ, tính lại phụ thuộc và xung đột, và hủy hiệu lực việc xem lại trước đó của mục này. Khôi phục đúng trạng thái đã lưu được làm từ nhật ký (`R`), không phải ở đây |
 | `V` | xác minh và khôi phục: đối chiếu giá trị đã áp dụng với giá trị hiện tại (khớp / đã thay đổi / không đọc được / không hỗ trợ), các thao tác bị gián đoạn, `R` xem lại và áp dụng lại, `U` khôi phục, `E` xuất nhật ký, `D` xuất chẩn đoán. Không có gì được áp dụng lại tự động |
-| `?` | toàn bộ tham khảo bàn phím và các nguyên tắc an toàn |
+| `?` | toàn bộ tham khảo bàn phím và các quy tắc an toàn |
+| `Ctrl+P` | mở trình chọn hồ sơ hiệu năng TUI (Tự động / Cân bằng / Ít tài nguyên); chỉ ảnh hưởng trình bày, không bao giờ đụng đến điện năng hoặc bảo mật |
 | `Esc` | đóng hộp thoại; nếu không thì xóa bộ lọc; nếu không thì đưa con trỏ về danh sách |
 | `Q` (hoặc `Ctrl+C`) | thoát. Thay đổi đang chờ và tác vụ đang chạy đều được nêu rõ - không bao giờ thoát âm thầm |
 
@@ -352,6 +374,26 @@ có vẻ bị bỏ qua:
 ```bash
 pwsh -File WindowsTweaker.ps1 -InputDiagnostics
 ```
+
+### Không gian chẩn đoán cấp phép & kích hoạt (N)
+
+| Phím | Hành động |
+|---|---|
+| `N` | mở không gian chẩn đoán cấp phép & kích hoạt (cũng có ở dòng "Chẩn đoán cấp phép & kích hoạt" trong Tổng quan) |
+| `R` | làm mới tồn kho chỉ-đọc; dòng trạng thái xác nhận và mốc `Thu thập lúc` thay đổi |
+| `E` | xuất báo cáo đã ẩn dữ liệu nhạy cảm: hiện bản xem trước trước, sau đó hỏi đường dẫn, và chỉ ghi tệp sau bước đó |
+| `A` | yêu cầu kích hoạt bằng giấy phép đã cài (`slmgr /ato` theo tài liệu): mục đích, khả năng truy cập mạng và quyền cần có được hiện trước, và nút được chọn mặc định là **Không** |
+| `?` | trợ giúp ngữ cảnh của không gian này |
+| `Esc` | rời không gian, trở lại giao diện chính mà không thay đổi gì |
+
+Mọi thứ không gian này hiển thị đều chỉ-đọc: các sản phẩm cấp phép của Windows, trạng thái cấp
+phép kèm mã gốc, kênh cấp phép, giai đoạn gia hạn, trạng thái W32Time và khả năng của các thành
+phần. Khóa sản phẩm một phần **không** được hiển thị mặc định (không gian đọc bản đã ẩn), và khóa
+đầy đủ, mã thông báo kích hoạt, định danh máy hay tên máy chủ của tổ chức không bao giờ được hiển
+thị hoặc xuất ra. `A` là phím duy nhất yêu cầu Windows làm gì đó, không bao giờ chạy tự động, và
+kết quả được đọc lại thay vì suy đoán: lệnh được chấp nhận không được báo là giấy phép đã kích
+hoạt. Xem [docs/VALIDATION.md](VALIDATION.md) mục 21 để biết phần nào đã được kiểm chứng ở đây và
+phần nào còn cần một máy Windows.
 
 ### Khi một tác vụ đang chạy
 

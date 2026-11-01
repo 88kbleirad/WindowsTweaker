@@ -121,6 +121,7 @@ Describe 'Public surface and command definitions' {
             'Get-WtSession', 'Close-WtSession', 'Get-WtInterruptedOperation', 'Get-WtRestorePlan',
             'Export-WtHistory', 'Undo-WtSession', 'Export-WtDiagnostics',
             'Test-WtRestartRequest', 'Invoke-WtBatchRestart',
+            'Get-WtLicensingDiagnostics', 'Get-WtLicensingHealth', 'Export-WtLicensingDiagnostics', 'Request-WtLicensingActivation',
             'Measure-WtNetworkDiagnostics', 'Compare-WtMeasurements',
             'Export-WtReport', 'Get-WtLanguage', 'Set-WtLanguage', 'Get-WtString',
             'Start-WtTui', 'Start-WtGui'
@@ -298,7 +299,7 @@ Describe 'Localization' {
         # The reverse of the check above: a key that no code references (and that is not
         # part of a family composed at runtime) is dead weight, and dead strings are how a
         # removed interface leaves misleading translations behind.
-        $DynamicFamilies = '^(Restart\.|Rollback\.|Op\.|Status\.|Tui\.State\.|Tui\.Scope\.|Tui\.Privilege\.|Tui\.Impact\.|Tui\.Language\.|Tui\.Help\.|Tui\.Verify\.Status\.|Tweak\.Lifecycle\.|Cat\.|Cap\.Loss\.Kind\.|Quar\.Stage\.|Quar\.Verdict\.|Mon\.Alert\.|Mon\.Dash\.|Mon\.Compare\.Verdict\.|Mon\.Fleet\.Condition\.)'
+        $DynamicFamilies = '^(Restart\.|Rollback\.|Op\.|Status\.|Tui\.State\.|Tui\.Scope\.|Tui\.Privilege\.|Tui\.Impact\.|Tui\.Language\.|Tui\.Help\.|Tui\.Verify\.Status\.|Tweak\.Lifecycle\.|Cat\.|Cap\.Loss\.Kind\.|Quar\.Stage\.|Quar\.Verdict\.|Mon\.Alert\.|Mon\.Dash\.|Mon\.Compare\.Verdict\.|Mon\.Fleet\.Condition\.|Lic\.Status\.)'
 
         $Sources = @(Get-ChildItem -Path (Join-Path $script:RepositoryRoot 'src') -Filter '*.ps1' -File -Recurse |
             Where-Object { $_.FullName -notlike '*/Data/*' }) +

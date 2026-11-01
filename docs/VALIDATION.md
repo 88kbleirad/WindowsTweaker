@@ -21,6 +21,20 @@ One command runs the whole suite:
 pwsh -NoProfile -File tools/Invoke-Validation.ps1     # exit 0: ALL EXECUTED CHECKS PASSED
 ```
 
+## Check tiers: what each class of check proves
+
+Every check in this document belongs to exactly one tier. The tiers are not interchangeable
+and a passing tier never stands in for a later one: a clean static gate says nothing about
+runtime behaviour, a Linux run says nothing about a Windows host, and a skipped live test
+proves nothing at all.
+
+| Tier | What it proves | Where it runs | State in this archive |
+|---|---|---|---|
+| **Static compatibility** | the shipped code parses under Windows PowerShell 5.1 and uses only syntax, commands, parameters and .NET types that exist there; every non-ASCII shipped script carries a UTF-8 BOM; the published launcher is ASCII-only and its text parses as the one-liner delivers it | `tools/Parse-All.ps1`, `tools/Test-Compatibility.ps1` (PSScriptAnalyzer's 5.1 syntax/command/type rules) | **executed** on Linux/PowerShell 7.6.9 (sections 1, 2, 13, 14, 15) |
+| **Linux runtime** | behaviour of the real code paths on PowerShell 7.6.9: engine, journal, catalog, insight, TUI (head-less and in a real pty), worker, packaging | `tools/Invoke-Validation.ps1` phases 6-7 and the per-area runs below | **executed** (sections 3-11, 16-21) |
+| **Live network** | the transport against real GitHub endpoints: release resolution, redirect hops, release metadata, checksum download | 6 opt-in Pester tests behind `WT_BOOTSTRAP_LIVE_TEST=1` | **skipped by default** in this archive (section 12 records the runs that were executed explicitly) |
+| **Unexecuted Windows** | nothing in this archive: these are claims that need a disposable Windows host, 5.1 and 7.6 side by side | manual, per the procedures in section 21 and "Not executed here" | **not executed** (no Windows host was available) |
+
 ## 1. AST parse of every PowerShell script
 
 ```bash
@@ -28,7 +42,7 @@ pwsh -NoProfile -File tools/Parse-All.ps1
 ```
 
 ```
-Files parsed : 146
+Files parsed : 163
 Skipped dirs : reference
 Parse errors : 0
 ```
@@ -72,17 +86,19 @@ pwsh -NoProfile -Command "Invoke-Pester -Path tests"
 ```
 
 The counts below are the ones Pester reports per file; the same command is phase 6 of
-`tools/Invoke-Validation.ps1`.
+`tools/Invoke-Validation.ps1`. This table and the gate summary are the current totals for the
+tree: the "Full suite" rows further down are the snapshots taken when that section's work was
+done, so they are smaller by construction.
 
 | Test file | Tests | Failed | Covers |
 |---|---|---|---|
-| `Tui.Tests.ps1` | 130 | 0 | palette and text metrics (Vietnamese/CJK/emoji widths, NFC normalisation, truncation, wrapping); the four colour depths and the ASCII/Mono fallbacks; the screen grid (box drawing, bottom-right clipping, wide characters, out-of-range writes); the zero-width rules (combining marks, variation selectors, supplementary selectors) applied identically by the width model, the painter and the truncator; the modal confirmation contract (the painted highlight is the value Enter returns, Left/Right/Tab/Shift+Tab cycling, Y/N answering, exactly one boolean out of the helpers, the highlight surviving a redraw and a resize, the four quit paths, the cancelled quit leaving category/filter/cursor/focus untouched); the language lifecycle (immediate switch with the catalog re-localized, both directions, Vietnamese quit confirmation, preference persistence and precedence, the Overview entry, the startup override); text fields swallowing q/l/y/n; the input diagnostic (targets recorded, text masked, nothing drawn); and the console-loss shutdown with terminal restore; the icon registry (the full 39-key vocabulary in every set, the measured slot of each set, the monochrome/PUA glyph rules, mode resolution from switch + terminal + saved preference, the semantic mapping and the colour classes, the count-driven progress bar); icons in the interface (category, list, details, status, dialog and operation-panel surfaces, the `None` and `-Ascii` fallbacks, exact row widths across 6 terminal sizes x 5 modes, frame columns unchanged between modes, the icon column dropped when a pane is too narrow, Vietnamese labels beside the glyphs, the selected-row background variants, the help/quit panel titles, the tone-derived dialog icon, every shortcut still working in the `None` mode); the icon preference (save/read, corrupt-file tolerance, command-line override, the picker switching the mode and repainting); key normalisation (`Up`/`Down`/`Tab`/`Shift+Tab`/`Enter`/`Esc`/`Space`/`Ctrl+C`); text-field editing and scrolling; the ten interface categories and their catalog mapping; focus cycling; the three layouts including a simulated resize that keeps the cursor, the pending set and the filter; global search; search-mode text entry taking precedence over global shortcuts; adding/removing pending changes; refusing to queue an unsupported tweak; the target-state chooser; quit confirmations; help; every dialog type (message, confirm, text with validation, multi-select with filter and protected rows, scrolling); the honest result report; path validation; the worker contract (events, per-item results, cooperative cancellation, one task at a time, safe close); preset validation, round-trip and refusals; the safety assertions (no system mutation, no window, no `Invoke-Expression`/`Add-Type`, terminal restore on every exit path); and localization coverage of every dynamically composed key |
+| `Tui.Tests.ps1` | 132 | 0 | palette and text metrics (Vietnamese/CJK/emoji widths, NFC normalisation, truncation, wrapping); the four colour depths and the ASCII/Mono fallbacks; the screen grid (box drawing, bottom-right clipping, wide characters, out-of-range writes); the zero-width rules (combining marks, variation selectors, supplementary selectors) applied identically by the width model, the painter and the truncator; the modal confirmation contract (the painted highlight is the value Enter returns, Left/Right/Tab/Shift+Tab cycling, Y/N answering, exactly one boolean out of the helpers, the highlight surviving a redraw and a resize, the four quit paths, the cancelled quit leaving category/filter/cursor/focus untouched); the language lifecycle (immediate switch with the catalog re-localized, both directions, Vietnamese quit confirmation, preference persistence and precedence, the Overview entry, the startup override); text fields swallowing q/l/y/n; the input diagnostic (targets recorded, text masked, nothing drawn); and the console-loss shutdown with terminal restore; the icon registry (the full 40-key vocabulary in every set, the measured slot of each set, the monochrome/PUA glyph rules, mode resolution from switch + terminal + saved preference, the semantic mapping and the colour classes, the count-driven progress bar); icons in the interface (category, list, details, status, dialog and operation-panel surfaces, the `None` and `-Ascii` fallbacks, exact row widths across 6 terminal sizes x 5 modes, frame columns unchanged between modes, the icon column dropped when a pane is too narrow, Vietnamese labels beside the glyphs, the selected-row background variants, the help/quit panel titles, the tone-derived dialog icon, every shortcut still working in the `None` mode); the icon preference (save/read, corrupt-file tolerance, command-line override, the picker switching the mode and repainting); key normalisation (`Up`/`Down`/`Tab`/`Shift+Tab`/`Enter`/`Esc`/`Space`/`Ctrl+C`); text-field editing and scrolling; the ten interface categories and their catalog mapping; focus cycling; the three layouts including a simulated resize that keeps the cursor, the pending set and the filter; global search; search-mode text entry taking precedence over global shortcuts; adding/removing pending changes; refusing to queue an unsupported tweak; the target-state chooser; quit confirmations; help; every dialog type (message, confirm, text with validation, multi-select with filter and protected rows, scrolling); the honest result report; path validation; the worker contract (events, per-item results, cooperative cancellation, one task at a time, safe close); preset validation, round-trip and refusals; the safety assertions (no system mutation, no window, no `Invoke-Expression`/`Add-Type`, terminal restore on every exit path); and localization coverage of every dynamically composed key |
 | `Engine.Tests.ps1` | 21 | 0 | state capture, dry run, exact rollback, unchanged detection, missing dependencies, failed operation reporting, service configuration capture, protection-reducing labelling, managed-policy reporting, structured logs, registry key lifecycle, UWP selection rules, selected-adapter DNS changes |
 | `Loading.Tests.ps1` | 17 | 0 | import side effects, detection performs no mutation, loader fails loudly on a syntax error, explicit public surface, private helpers stay private, no duplicate command definitions, catalog metadata/state invariants, string-table parity, referenced-key coverage (both directions: every referenced key exists, every defined key is used), fallback chain, reference material never executed |
 | `Providers.Tests.ps1` | 14 | 0 | operation status aggregation (including dry run outranking "unchanged"), unnamed registry value handling, value comparison semantics, operation result contract |
 | `Cli.Tests.ps1` | 21 | 0 | entry point requirements, `-Status`, `-List`, unknown id, `-Report`, dry run writes nothing, rollback with no captured state, parameterized tweak refusal, `-PresetList`, `-IncludeRestorePoint` (accepted, never implicit), and the refusal to start the interface on a redirected terminal (exit code 2) |
 | `Gui.Tests.ps1` | 9 | 0 | XAML well-formedness, every `FindName` target declared, Catppuccin Mocha palette, square corners, icon font/glyphs, no system-modification logic in the interface, confirmations suppressed in the background runspace, no change when WPF is unavailable |
-| `Journal.Tests.ps1` | 28 | 0 | exact change preview (per-target current/proposed/type/scope/recovery, absent vs unreadable vs empty vs zero, review fingerprint revalidation, `review-required` refusal); conflict detection (same target, key containing a target); the original recovery baseline surviving a repeated apply; journal durability (written before the first mutation, session/origin/sequence/stage/targets, corrupt and empty stores treated as errors and never overwritten, interrupted operations detected, recovery records kept when a restore fails); verified execution and compensation (verification mismatch reported as failure, compensation attempted and its failures reported separately, external change blocks a restore until `-Force`, restored value verified); retired tweaks (apply refused, snapshot still restorable); drift classification (matching/changed/unsupported, never reapplied); session restore in reverse dependency order (`-WhatIf` restores nothing); journal export filters (Json/Csv); schema-1 migration |
+| `Journal.Tests.ps1` | 41 | 0 | exact change preview (per-target current/proposed/type/scope/recovery, absent vs unreadable vs empty vs zero, review fingerprint revalidation, `review-required` refusal); conflict detection (same target, key containing a target); the original recovery baseline surviving a repeated apply; journal durability (written before the first mutation, session/origin/sequence/stage/targets, corrupt and empty stores treated as errors and never overwritten, interrupted operations detected, recovery records kept when a restore fails); verified execution and compensation (verification mismatch reported as failure, compensation attempted and its failures reported separately, external change blocks a restore until `-Force`, restored value verified); retired tweaks (apply refused, snapshot still restorable); drift classification (matching/changed/unsupported, never reapplied); session restore in reverse dependency order (`-WhatIf` restores nothing); journal export filters (Json/Csv); schema-1 migration |
 | `Diagnostics.Tests.ps1` | 14 | 0 | bounded ring, no typed character recorded, home-path and token sanitization, sensitive data keys dropped, bounded/truncated values, export header contents, overwrite refusal, record and size bounds, JSONL re-parsing, summary counts, clear |
 | `Measurements.Tests.ps1` | 14 | 0 | sample and timeout bounds, failed samples retained with their error, raw samples with unit/adapter/target/conditions/timestamps, Min/Max/Median over successful samples, improved/regressed/inconclusive/insufficient per the documented criteria, target/kind/unit mismatch, inputs never mutated, no apply path touched |
 | `Worker.Tests.ps1` | 17 | 0 | worker discovery from the application-controlled path only; `Go` refusing to fall back; `Auto` falling back with a reason; backend preference round-trip; protocol handshake (version, capabilities, limits); incompatible version reported; crashed worker reported; garbage on stdout reported; PowerShell/Go aggregate equivalence (with the documented hard-link difference); Vietnamese file names; access-denied partial results in both backends; cooperative cancellation with the worker still usable afterwards; bounded shutdown without a kill; startup and round-trip overhead |
@@ -98,10 +114,16 @@ The counts below are the ones Pester reports per file; the same command is phase
 | `MultiHost.Tests.ps1` | 10 | 0 | fleet targets and conditions, incident timelines and evidence kinds, read-only playbooks, support-bundle preview/export with redaction and traversal-safe import, and versioned monitoring configuration |
 | `PrivacyPowerTools.Tests.ps1` | 6 | 0 | the privacy summary/activity report shapes, power settings, SRUM history and the Explorer copy-path tweak |
 | `SetupPlans.Tests.ps1` | 10 | 0 | checkpointed setup plans: data-only import, identity-bound resume registrations, refusal on tampering, a failed step stopping the plan, no automatic retry of uncertain steps and bounded reboot counts |
-| **Total** | **542** | **0** | 536 passed, 6 skipped (the opt-in live GitHub, published-launcher and whole-downloader tests) |
+| `Licensing.Tests.ps1` | 19 | 0 | the licensing inventory (status-code mapping, active-product selection, unreadable-provider and non-Windows reporting), the time and component probes, organization-managed configuration (presence only), the activation request (accepted/failed/refused, structured SLMGR code, status re-read after the request), the redacted export, the cache/redaction contract (the partial key survives a redacted read, an earlier caller's records are never blanked, a repeated read of the same shape is still served from the cache) and the workspace render. Every provider is doubled; nothing here activates anything |
+| `Quarantine.Tests.ps1` | 11 | 0 | the quarantine scan, move and manifest durability (the object is moved with its manifest before the store is updated), and restore (identity and hash checks, refusal of a tampered or missing object, the original location restored) |
+| `Restart.Tests.ps1` | 29 | 0 | restart requirement classification (reboot / application / none / unknown kept apart), eligibility gates (pending work, journal integrity, verification, compensation), single-owner scheduling, the adapter contract (no `/f`, no forced close, one request site), the TUI flows and the command-line request path |
+| `TuiBatchResults.Tests.ps1` | 7 | 0 | batch progress counters, the failure-first result summary with scope labelling and per-failure detail, and the localized screen-text replacement |
+| `TuiBatchState.Tests.ps1` | 7 | 0 | batch pending-queue reconciliation against the batch that actually ran (clean batch, failures, requests edited while the batch ran, foreign requests) and the performance-profile knobs (resolution, low-resource selection off a non-VT console, the safety boundary) |
+| `TuiRender.Tests.ps1` | 10 | 0 | screen row invalidation and forced repaint, the row-diff console writers (whole first frame, nothing for an identical frame, only the changed row), key batching and frame coalescing (no key lost, Escape/Enter never dropped) and the performance diagnostics ring |
+| **Total** | **629** | **0** | 623 passed, 6 skipped (the opt-in live GitHub, published-launcher and whole-downloader tests) |
 
-`tools/Invoke-Validation.ps1` phase 5 on this tree reported `Tests passed: 536 | failed: 0 |
-skipped: 6` and ended with `ALL EXECUTED CHECKS PASSED`. The six skipped tests are the live
+`tools/Invoke-Validation.ps1` phase 6 on this tree reported `Tests passed: 623 | failed: 0 |
+skipped: 6` (629 tests in 28 files) and ended with `ALL EXECUTED CHECKS PASSED`. The six skipped tests are the live
 transport and published-command checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access;
 the pre-existing three were run separately and are recorded in section 12, and the
 launcher/downloader checks can only pass once the fixed files are on `main` (sections 14 and 15).
@@ -203,7 +225,7 @@ buttons) and sized so it is not cut off in the layout that shows it.
 
 The verification layer was exercised at three levels on this host (Linux, PowerShell 7.6.9):
 
-* **Automated** - `tests/Journal.Tests.ps1` (24 failure-injection tests), plus the preview,
+* **Automated** - `tests/Journal.Tests.ps1` (41 tests, including the failure-injection cases), plus the preview,
   verification-view and layout-budget tests in `tests/Tui.Tests.ps1`, all green.
 * **API smoke** (`Get-WtChangePreview`, `Get-WtDrift`, `Get-WtOperation`, `Get-WtSession`,
   `Get-WtInterruptedOperation`, `Get-WtRestorePlan`, `Undo-WtSession`, `Export-WtHistory`,
@@ -717,7 +739,7 @@ stops the batch (`Test-WtJournalStopRequired`, used by the interface worker, the
 session restore and the legacy window), and an entry whose capture is on disk stays restorable
 even when its final stage is missing (`Test-WtJournalRestorable`).
 
-**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1)**
+**Executed here (Linux, PowerShell 7.6.9, Pester 6.2.0)**
 
 | Check | Evidence |
 |---|---|
@@ -782,7 +804,7 @@ and writes a median/p95/max summary (plus process CPU share) to the structured l
 (`Start-WtTui -PerfDiagnostics` or `WT_TUI_PERF_DIAGNOSTICS=1`); it never records typed text.
 See [PERFORMANCE.md](PERFORMANCE.md).
 
-**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1)**
+**Executed here (Linux, PowerShell 7.6.9, Pester 6.2.0)**
 
 | Check | Evidence |
 |---|---|
@@ -818,7 +840,7 @@ tweak id, localized name, failed stage, original error, mutation occurred, verif
 compensation and recovery counts; successes follow under a clear header. The report dialog
 supports scroll, Home/End/PageUp/PageDown, copy (C) and explicit export (E) as JSON.
 
-**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1)**
+**Executed here (Linux, PowerShell 7.6.9, Pester 6.2.0)**
 
 | Check | Evidence |
 |---|---|
@@ -902,11 +924,177 @@ mock in every test; on a disposable Windows VM the smoke test is
 `pwsh -File WindowsTweaker.ps1 -Id <tweak> -RestartAfterApply` with `-CountdownSeconds` left at
 its default, watching the real `shutdown.exe` request and the event log entry.
 
-**Patch release.** `ModuleVersion` is now `1.0.5`, and the packages were rebuilt locally with
-`tools/New-ReleasePackage.ps1 -Version 1.0.5` (four archives, worker handshake, 149 file hashes,
-`version` / `engineVersion` `1.0.5` in both manifests and `ModuleVersion` `1.0.5` inside each
+**Patch release.** `ModuleVersion` is now `1.0.6`, and the packages were rebuilt locally with
+`tools/New-ReleasePackage.ps1 -Version 1.0.6` (four archives, worker handshake, 155 file hashes,
+`version` / `engineVersion` `1.0.6` in both manifests and `ModuleVersion` `1.0.6` inside each
 archive). The published `v1.0.0` release and tag were not touched, and nothing was pushed or
 published.
+
+
+## 20. Batch-state reconciliation and TUI performance profile (executed on Linux; Windows guests **not** executed)
+
+**Work.** The pending queue is now reconciled against the batch that actually ran, by reviewed
+request revision: succeeded/unchanged requests are removed, failures stay with their fingerprint
+invalidated (so a retry always goes through a fresh review), and a request edited while the batch
+ran is never cleared. Quit warnings therefore describe exactly the unapplied requests, and
+discarding them never implies undoing applied changes. Result dialogs label their scope (current
+batch / session / all history) and each failure shows tweak id, localized name, requested state,
+failed stage and error, whether mutation occurred, compensation outcome and the current observed
+state. History rows resolve the current catalog name (raw id when the definition is gone) and
+localize state tokens. A terminal performance profile (Auto / Balanced / Low-resource) adjusts
+only presentation and read-only collection: idle redraw cadence, key batch size and elapsed-time
+budget, monitor sampling cadence, and row icons. Auto selects Low-resource for a console without
+virtual terminal processing; a user override exists (Ctrl+P, `-PerfProfile`, WT_TUI_PERF_PROFILE,
+or the saved preference). It never touches power, security, services, networking, guest drivers or
+the hypervisor, and it never alters journal or restart safety.
+
+**Executed here (Linux, PowerShell 7.6.9, Pester 6.2.0)**
+
+| Check | Evidence |
+|---|---|
+| Pending reconciliation (clean batch, failures, newer edits, foreign requests) | `tests/TuiBatchState.Tests.ps1` "Batch pending queue reconciliation" (3 tests) |
+| Quit warnings reflect only actual unapplied requests | "a full clean batch leaves the pending queue empty, so quit warns about nothing"; "after a failed batch the quit warning reflects only the failed request" |
+| Profile resolution and safety boundaries | "never lets a profile touch safety or recovery"; "resolves profiles and chooses low-resource for a non-VT console" |
+| Result reporting scope and failure detail | existing `TuiBatchResults` + failure-first lines extended (requested state, current observed state) |
+| Full suite | 623 passed / 0 failed / 6 skipped (629 tests in 28 files), `ALL EXECUTED CHECKS PASSED` |
+
+**Not executed.** Real Windows guests under QEMU/KVM, VMware and VirtualBox; classic Windows
+Console and Windows Terminal behavior; Windows PowerShell 5.1 conhost rendering. A Linux
+null-sink benchmark does not establish real Windows guest performance; the validation matrix for
+those combinations stays untested here.
+
+**Patch release.** `ModuleVersion` is now `1.0.6`, and the packages were rebuilt locally with
+`tools/New-ReleasePackage.ps1 -Version 1.0.6` (four archives, worker handshake, 155 file hashes,
+`version` / `engineVersion` `1.0.6` in both manifests and `ModuleVersion` `1.0.6` inside each
+archive). The published `v1.0.0` release and tag were not touched, and nothing was pushed or
+published.
+
+## 21. Licensing & activation diagnostics (executed on Linux; no Windows licensing provider was available)
+
+**Work.** A read-only licensing and activation inventory for the module and the terminal
+workspace: the Windows licensing products from CIM/WMI (`SoftwareLicensingProduct`,
+`SoftwareLicensingService`), the license status with its raw code, the channel, grace state and -
+only when a caller explicitly asks for it - the partial product key; the W32Time service state and
+its configured start type; the Software Protection Service and the latest structured activation
+error; and the presence (never the content) of organization-managed activation configuration.
+Three actions exist and all three are explicit: open the workspace, refresh, and request activation
+through the documented `cscript slmgr.vbs /ato`. Activation is never implicit: the workspace shows
+the purpose, the possible network activity and the permission requirement behind a confirmation,
+and the status afterwards is re-read rather than assumed. Exports redact the partial key by
+default. Nothing here installs a key, changes an edition, resets or rearms the licensing store,
+configures KMS, or forges activation data.
+
+**Executed here (Linux runtime tier; PowerShell 7.6.9, Pester 6.2.0)**
+
+| Check | Evidence |
+|---|---|
+| Inventory, status mapping, active-product selection, unreadable-provider and non-Windows reporting | `tests/Licensing.Tests.ps1` "Licensing inventory and status mapping" (5 tests). `ConvertTo-WtLicensingView` maps all seven documented status codes and reports any other code as `Unknown`; an unreadable query is reported as unreadable with its reason instead of as a status |
+| Time and component probes | "Licensing time and components" (3 tests), including a stopped `w32time` reported as a finding with its start type, not as a fault, and the latest `0xC004F074`-style activation error read from the Software Protection Service log |
+| Organization-managed configuration | "Organization-managed configuration" (2 tests): presence and source paths only, never hostnames or keys |
+| Activation request | "Activation request" (3 tests): the documented command is started exactly once with `/ato`, `Accepted` is never equated with activated, the status is re-read afterwards, a failure carries the structured SLMGR code, and the request is refused off Windows |
+| Redacted export | "Licensing export" (2 tests): the partial key becomes `<redacted>`, the serialized JSON never contains it, and the file is only written when a path is given |
+| Cache and redaction contract | "Licensing redaction and the cached inventory" (3 tests), see below |
+| Workspace render | "Licensing TUI workspace rendering": the workspace paints from a read-only state and starts no operation and no worker |
+| Full suite | 623 passed / 0 failed / 6 skipped (629 tests in 28 files), `ALL EXECUTED CHECKS PASSED` |
+
+**Cache and redaction contract (the bug this revision fixes).** `Read-WtLicensingInventory` handed
+its cached object to every caller and the public wrapper blanked `PartialProductKey` on those shared
+records, so a redacted read destroyed the key both in the cache and in the objects an earlier caller
+already held: the answer depended on the order of the calls. Minimal reproduction
+(`Get-WtLicensingDiagnostics` called three times against a doubled provider that exposes `XYZ99`):
+
+```
+before:  call 1 -IncludePartialKey : 'XYZ99'   call 2 default : ''   call 3 -IncludePartialKey : ''       (and call 1's object was mutated)
+after:   call 1 -IncludePartialKey : 'XYZ99'   call 2 default : ''   call 3 -IncludePartialKey : 'XYZ99'   (call 1 still holds 'XYZ99')
+```
+
+The fix has two halves: the cache records which inclusion mode built it and is reused only for that
+same mode, and redaction is applied to copies (`Copy-WtLicensingRedactedRecord`) rather than to the
+cached records. `tests/Licensing.Tests.ps1` pins all three properties - both call orders, the
+records an earlier caller holds, and that a repeated read of the same shape is still served from the
+cache rather than re-querying the provider.
+
+**Gate failures fixed in this revision (static compatibility tier).** The project gate found 12 raw
+failures in this feature - 8 PSScriptAnalyzer warnings, 1 file without a UTF-8 BOM and 3 failing
+tests, which are 11 distinct causes because the missing BOM is both the compatibility-gate failure
+and the assertion in `tests/Compatibility.Tests.ps1`: five empty probe `catch` blocks in
+`Private/Licensing.ps1`, `$Profile` used as an ordinary variable (an automatic variable in
+PowerShell), an unused `$Bottom`, a `$null` comparison written the wrong way round, the workspace
+file carrying a U+2014 without the BOM Windows PowerShell 5.1 needs, `Action.Key` added to the icon
+registry without extending the vocabulary contract in `tests/Tui.Tests.ps1`, and `Lic.Status.*`
+missing from the dead-key detector's runtime-composed families in `tests/Loading.Tests.ps1`. All are
+fixed in the code or in the contract test - nothing was excluded or weakened - and the gate passes.
+
+**Dead code removed.** `$Script:WtLicensingSchemaVersion`, `$Script:WtLicensingCacheUtc` (written,
+never read), `$Script:WtLicensingWorkspace`, the never-called `Get-WtLicensingDocLink` and a
+duplicated identical `Get-Command -Name 'slmgr.vbs'` probe. The `-Refresh` parameter of
+`Invoke-WtLicensingActivationRequest` is deliberately kept: the public `Request-WtLicensingActivation`
+forwards it and the tests call it, and the status after a request is always re-read, so the parameter
+records the caller's intent instead of changing what is reported (the code says so).
+
+**Windows PowerShell 5.1 smoke test (unexecuted Windows tier - run this in a disposable guest).**
+No step below installs a key, changes an edition or requests activation.
+
+```powershell
+# 1. Put the tree on the guest: a checkout, or an extracted release archive
+#    (WindowsTweaker-win-x64-v1.0.6.zip). Do not run the bootstrap for this smoke test: it hands
+#    off to PowerShell 7 when one is installed, and this procedure is about 5.1.
+cd C:\wt\WindowsTweaker                                    # or the extracted dist folder
+$PSVersionTable.PSVersion                                  # must print 5.1.x
+
+# 2. Read-only provider check (what the workspace should be reporting). The ApplicationId below
+#    identifies the Windows license.
+Get-CimInstance SoftwareLicensingProduct |
+  Where-Object { $_.ApplicationId -eq '55c92734-d682-4d71-983e-d6ec3f16059f' } |
+  Select-Object Name, LicenseStatus, LicenseChannel, PartialProductKey
+
+# 3. Start the interface natively on 5.1.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\WindowsTweaker.ps1
+#    (add -PerfProfile Low-resource if the console is a classic one without VT processing)
+
+# 4. Open the licensing workspace: press N, or move to the Overview row
+#    "Licensing & Activation Diagnostics" and press Enter.
+#    Expected: the status summary (Licensed / grace / notification state with its raw code), the
+#    product name and channel, the time-synchronization block, the component block
+#    (slmgr.vbs / Software Protection Service) and the organization-managed activation block.
+#    The frame must stay inside the window; try resizing to a narrow console.
+
+# 5. Read-only refresh: press R a few times.
+#    Expected: the status line says the licensing state was refreshed and the "Collected" timestamp
+#    changes. No prompt appears, no pending change is added, and the frame is otherwise identical.
+
+# 6. Redaction: the partial product key is never shown by default. The workspace reads the redacted
+#    view, so the "Partial product key" line is absent even on a keyed machine. That is the expected
+#    result - it is not a missing value.
+
+# 7. Cache/redaction contract at the API level (the regression the tests pin). Run it in a second
+#    PowerShell window, in ONE session, while the interface keeps running:
+Import-Module C:\wt\WindowsTweaker\src\WindowsTweaker\WindowsTweaker.psd1 -Force
+(Get-WtLicensingDiagnostics -IncludePartialKey).Inventory.Active.PartialProductKey  # e.g. 'ABC12'
+(Get-WtLicensingDiagnostics).Inventory.Active.PartialProductKey                     # must be '' (redacted)
+(Get-WtLicensingDiagnostics -IncludePartialKey).Inventory.Active.PartialProductKey  # must be 'ABC12' again
+#    If the third value is empty, the cache/redaction contract regressed: record the three outputs.
+
+# 8. Vietnamese rendering (optional): restart with -Language vi and reopen the workspace with N;
+#    every label must come from the Vietnamese table (no raw key such as [Lic.Title]).
+
+# 9. Return to the interface: press Esc. Expected: the previous view is repainted with its pending
+#    set, cursor and filter unchanged. Then quit with q and confirm with y (or n to stay).
+
+# 10. Read-only proof: steps 3-9 change nothing. No pending change appears in the interface, and
+#     the state file (state.json under %LOCALAPPDATA%\WindowsTweaker, or WT_STATE_PATH) is not
+#     modified by a refresh. The ONLY step that talks to the system is the activation request:
+#     do NOT press A during a smoke test.
+
+# 11. Record for the validation log: the PowerShell version, the Windows build, the workspace
+#     screen, the three API values from step 7, and whether R left the interface unchanged.
+```
+
+**Not executed (Windows tier).** The licensing providers themselves (`SoftwareLicensingProduct`,
+`SoftwareLicensingService`), `slmgr.vbs`/`cscript` and the real `/ato` exchange, the Software
+Protection Service event log, `w32tm`, and the workspace as rendered by a 5.1 console. Every probe
+above is doubled in the tests, so the mapping and the failure paths are exercised, but no value in
+this archive was read from a real Windows license.
 
 ## Not executed here (Windows-only integration checks)
 
@@ -947,6 +1135,17 @@ before relying on them:
    finishes), but the Windows-side behaviour of those tools could not be observed.
 9. PSScriptAnalyzer's `-Recommended` rule set on Windows PowerShell compatibility
    surfaces (the run above used the checked-in settings file).
+10. The licensing and activation diagnostics against a real Windows license: the CIM/WMI
+   `SoftwareLicensingProduct` and `SoftwareLicensingService` classes, `slmgr.vbs` through
+   `cscript` (including the `/ato` exchange), the Software Protection Service event log and
+   `w32tm`. The providers are doubled in `tests/Licensing.Tests.ps1`, so the mapping,
+   the redaction and the failure paths are exercised, but no value in this archive was read
+   from a real license. Section 21 is the smoke procedure for a guest.
+11. The workspace as rendered by a **Windows PowerShell 5.1 console** (classic conhost, no
+   virtual terminal processing) and by a Windows console font: the licensing workspace is
+   covered by a head-less render test on PowerShell 7.6.9 only.
+12. The cache/redaction contract on a machine that actually exposes a partial product key
+   (section 21 step 7); the three-call sequence is pinned by tests against a doubled provider.
 
 ## Reproducing the cut-over checks
 

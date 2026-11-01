@@ -55,6 +55,7 @@ Handoff details:
 | WPF interface (`-Gui`) | yes (Windows only) | yes (Windows only) | Uses .NET Framework WPF on 5.1 and the same XAML on 7; executed only off Windows for structural checks. |
 | Linux release extraction (executable bit) | n/a | yes (7.3+) | `SetUnixFileMode` is called through reflection only where it exists; Windows never needs it. |
 | Reliability and monitoring (read-only) | yes | yes | No runtime-specific API after the port. |
+| Licensing & activation diagnostics (read-only, one explicit activation request) | yes, **unexecuted** (no 5.1 or Windows host) | yes | Documented Windows interfaces only: `Get-CimInstance` (`SoftwareLicensingProduct` / `SoftwareLicensingService`), `slmgr.vbs` through `cscript.exe`, `Get-Service`, `Get-WinEvent` and `w32tm` - all present on 5.1, and the static gate reports no 5.1 syntax, command, parameter or type finding for the new files (`docs/VALIDATION.md` section 21). Providers are doubled in the tests; the smoke procedure for a guest is in that section. |
 
 ## Audit: what was 5.1-incompatible and how it is handled
 
@@ -100,8 +101,16 @@ re-runs the gate; it fails the build on any finding.
 4. **The handoff inside a real Windows console**: the tests use fake runtimes and mocks for
    discovery/selection/installation, and a real child process for launch, working directory,
    argument quoting and terminal inheritance (executed on Linux).
+5. **The licensing and activation diagnostics against a real Windows license**: the
+   `SoftwareLicensingProduct` / `SoftwareLicensingService` classes, `slmgr.vbs` through
+   `cscript` (including the `/ato` exchange), the Software Protection Service event log and
+   `w32tm`. Every provider is doubled in the tests, so the mapping, the redaction and the
+   failure paths are exercised - but no value in this archive was read from a real license, and
+   the workspace has never been rendered by a 5.1 console. Section 21 of
+   [VALIDATION.md](VALIDATION.md) is the smoke procedure; it deliberately does not request
+   activation.
 
-Rows 1-3 are the ones to run in a disposable Windows VM (5.1 and 7.6 side by side) before
+Rows 1-3 and 5 are the ones to run in a disposable Windows VM (5.1 and 7.6 side by side) before
 claiming them. The exact commands are in [VALIDATION.md](VALIDATION.md).
 
 ## Verifying it yourself

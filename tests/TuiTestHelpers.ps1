@@ -159,6 +159,7 @@ function script:New-WtTestPending
 
     return @{
         Id                = $Entry.Id
+        Revision          = [guid]::NewGuid().ToString('n')
         Target            = $Target
         From              = $Entry.State
         Name              = $Entry.Name
@@ -168,6 +169,7 @@ function script:New-WtTestPending
         Rollback          = $Entry.Rollback
         Irreversible      = $Entry.Irreversible
         ReducesProtection = $Entry.ReducesProtection
+        Fingerprint       = $null
     }
 }
 <#

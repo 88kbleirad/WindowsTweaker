@@ -92,6 +92,7 @@ function Read-WtSettings
         Icons       = 'Auto'
         Language    = ''
         Backend     = 'Auto'
+        Profile     = 'Auto'
     }
 
     if (-not (Test-Path -LiteralPath $Settings.Path))
@@ -133,6 +134,7 @@ function Read-WtSettings
         if ($Names -contains 'icons' -and $Parsed.icons) { $Settings.Icons = [string]$Parsed.icons }
         if ($Names -contains 'language' -and $Parsed.language) { $Settings.Language = [string]$Parsed.language }
         if ($Names -contains 'backend' -and $Parsed.backend) { $Settings.Backend = [string]$Parsed.backend }
+        if ($Names -contains 'profile' -and $Parsed.profile) { $Settings.Profile = [string]$Parsed.profile }
     }
     catch
     {
@@ -171,6 +173,7 @@ function Write-WtSettings
         icons    = [string]$Settings.Icons
         language = [string]$Settings.Language
         backend  = [string]$Settings.Backend
+        profile  = [string]$Settings.Profile
     }
 
     $Json = ConvertTo-WtJson -InputObject $Payload -Depth 8

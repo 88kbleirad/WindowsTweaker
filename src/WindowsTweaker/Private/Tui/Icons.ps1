@@ -29,8 +29,9 @@
 # outcome, or the rollback); the details pane (the category title, the current state, the
 # administrator requirement, the restart requirement, the rollback fidelity and the
 # warning/error sections); the header (brand and the capability notice); the status line;
-# the dialog titles, the dialog list entries and the Yes/No buttons; and the operation
-# panel (title, running item and the progress bar).
+# the dialog titles, the dialog list entries and the Yes/No buttons; the operation
+# panel (title, running item and the progress bar); and the overview workspace rows
+# (monitoring, disk usage, quarantine and licensing - see $Script:WtActionIconKeys).
 #
 # Category.Repairs, Category.Drivers, Category.Printers, Action.Refresh and Action.Select
 # are part of the vocabulary the specification asks for but no surface of this interface
@@ -101,6 +102,7 @@ $Script:WtIconRegistry = [ordered]@{
     'Action.Restore'          = @{ Style = 'IconCategory'; Unicode = '↩'; NerdFont = [char]0xF112; ASCII = '[BACK]' }
     'Action.Import'           = @{ Style = 'IconCategory'; Unicode = '↓'; NerdFont = [char]0xF019; ASCII = '[IN]' }
     'Action.Export'           = @{ Style = 'IconCategory'; Unicode = '↑'; NerdFont = [char]0xF093; ASCII = '[OUT]' }
+    'Action.Key'              = @{ Style = 'IconCategory'; Unicode = '⚿'; NerdFont = [char]0xF084; ASCII = '[KEY]' }
     'Action.Cancel'           = @{ Style = 'IconCategory'; Unicode = '⊘'; NerdFont = [char]0xF00D; ASCII = '[STOP]' }
     'Action.Quit'             = @{ Style = 'IconCategory'; Unicode = '×'; NerdFont = [char]0xF011; ASCII = '[EXIT]' }
 }
@@ -182,6 +184,8 @@ $Script:WtActionIconKeys = @{
     'Verify'      = 'Action.Refresh'
     'DiskUsage'   = 'Category.Dashboard'
     'Quarantine'  = 'Action.Restore'
+    'Monitor'      = 'Category.Dashboard'
+    'Licensing'    = 'Action.Key'
 }
 
 <#
@@ -284,6 +288,55 @@ function Resolve-WtIconMode
     }
 
     return $Mode
+}
+
+<#
+.SYNOPSIS
+    Returns the saved TUI performance profile ('' when nothing valid is saved).
+.DESCRIPTION
+    The profile is a presentation preference, stored in the settings file like the icon
+    mode; it is never a safety or recovery knob.
+#>
+function Get-WtTuiProfilePreference
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ()
+
+    $SavedProfile = [string](Read-WtSettings).Profile
+    foreach ($Name in Get-WtTuiProfiles)
+    {
+        if ([string]::Equals($Name, $SavedProfile, [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            return $Name
+        }
+    }
+    return ''
+}
+
+<#
+.SYNOPSIS
+    Persists the TUI performance profile preference.
+#>
+function Set-WtTuiProfilePreference
+{
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
+    [OutputType([string])]
+    param
+    (
+        [Parameter(Mandatory = $true)][string]$Profile
+    )
+
+    $RequestedProfile = Resolve-WtTuiProfile -Requested $Profile
+    $Settings = Read-WtSettings
+    $Settings.Profile = $RequestedProfile
+
+    if ($PSCmdlet.ShouldProcess($RequestedProfile, 'save the TUI performance profile'))
+    {
+        Write-WtSettings -Settings $Settings
+    }
+
+    return $RequestedProfile
 }
 
 <#

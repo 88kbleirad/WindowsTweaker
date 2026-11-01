@@ -42,6 +42,7 @@ function New-WtTuiState
         [Parameter(Mandatory = $false)][switch]$Ascii,
         [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Unicode', 'NerdFont', 'ASCII', 'None')][string]$Icons = 'Auto',
         [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Go', 'PowerShell')][string]$WorkerBackend = 'Auto',
+        [Parameter(Mandatory = $false)][string]$Profile = '',
         [Parameter(Mandatory = $false)][scriptblock]$KeySource,
         [Parameter(Mandatory = $false)][scriptblock]$SizeSource,
         [Parameter(Mandatory = $false)][switch]$Silent
@@ -63,6 +64,12 @@ function New-WtTuiState
         Set-WtLanguage -Language $Language | Out-Null
     }
 
+    # The performance profile is resolved once and read-only: it tunes presentation knobs
+    # only. Auto picks Low-resource for a console without virtual terminal processing (the
+    # classic Windows console path, which is measurably more expensive per frame).
+    $EffectiveProfile = Get-WtTuiProfileEffective -Requested $Profile -Preference (Get-WtTuiProfilePreference) -UseVt ([bool]$Capability.VirtualTerminal)
+    $ProfileKnobs = Get-WtTuiProfileKnobs -Profile $EffectiveProfile
+
     return @{
         Theme        = $Theme
         Capability   = $Capability
@@ -77,6 +84,11 @@ function New-WtTuiState
         SizeSource   = $SizeSource
         Silent       = [bool]$Silent
         Language     = Get-WtLanguage
+        PerformanceProfile = $EffectiveProfile
+        ProfileKnobs = $ProfileKnobs
+        # The idle frame timeout honours the profile: a slow console gets fewer redraws
+        # without delaying key feedback (the input poll stays independent).
+        FrameTimeoutMs = [int]$ProfileKnobs.FrameTimeoutMs
         Environment  = $null
         Categories   = @()
         CategoryIndex = 0
@@ -408,6 +420,7 @@ function Get-WtTuiOverviewItems
     $Items.Add(@{ Kind = 'Info'; Label = (Get-WtString -Key 'Disk.Title'); Value = ''; Action = 'DiskUsage' })
     $Items.Add(@{ Kind = 'Info'; Label = (Get-WtString -Key 'Quar.Title'); Value = ''; Action = 'Quarantine' })
     $Items.Add(@{ Kind = 'Info'; Label = (Get-WtString -Key 'Mon.Title'); Value = ''; Action = 'Monitor' })
+    $Items.Add(@{ Kind = 'Info'; Label = (Get-WtString -Key 'Lic.Title'); Value = ''; Action = 'Licensing' })
 
     return $Items.ToArray()
 }
@@ -896,8 +909,10 @@ function Add-WtTuiList
                 $Style = 'Pending'
             }
 
-            $IconKey = Get-WtCategoryIconKey -Category $Item.State.Category
-            $IconWidth = Get-WtIconColumnWidth -Icons $State.Icons -Key $IconKey -Width $Width
+            # Row icons are a detail-density knob: Low-resource drops them (the markers and
+            # text columns stay, so a row never becomes unreadable).
+            $IconKey = if ($State.ProfileKnobs.ShowRowIcons) { Get-WtCategoryIconKey -Category $Item.State.Category } else { '' }
+            $IconWidth = if ($IconKey) { Get-WtIconColumnWidth -Icons $State.Icons -Key $IconKey -Width $Width } else { 0 }
             if ($IconWidth -le 0) { $IconKey = '' }
 
             Set-WtScreenRegion -Screen $Screen -Row $Row -Column $Column -Width $Width -Height 1 -Style $Style
@@ -1408,6 +1423,23 @@ function Update-WtTuiView
         return
     }
 
+    # Licensing workspace: same contract, a different canvas.
+    if ($State.Licensing)
+    {
+        Add-WtLicensingView -State $State -License $State.Licensing
+        Add-WtTuiFooter -State $State -Layout $Layout
+
+        if ($State.Overlay)
+        {
+            Add-WtDialogToScreen -Screen $Screen -Overlay $State.Overlay
+        }
+
+        Add-WtTuiOperation -State $State
+
+        $State.ForceRepaint = $false
+        return
+    }
+
     Add-WtTuiHeader -State $State -Layout $Layout
     Add-WtTuiFrame -State $State -Layout $Layout
     Add-WtTuiCategories -State $State -Layout $Layout
@@ -1575,6 +1607,7 @@ function Invoke-WtTuiFrame
 
     $Raw = Read-WtConsoleKey -TimeoutMs $TimeoutMs
     if ($Perf) { $Dispatch.Stop() }
+
     if ($Script:WtConsoleInputLost)
     {
         # The console stopped delivering input (closed pty, detached window). Returning null
@@ -1632,7 +1665,8 @@ function Invoke-WtTuiLoopStep
         [Parameter(Mandatory = $false)][int]$MaxBatch = 32
     )
 
-    $Key = Invoke-WtTuiFrame -State $State
+    $DefaultTimeout = if (@($State.Keys) -contains 'FrameTimeoutMs') { [int]$State.FrameTimeoutMs } else { 40 }
+    $Key = Invoke-WtTuiFrame -State $State -TimeoutMs $DefaultTimeout
     if ($null -eq $Key)
     {
         return
@@ -1640,7 +1674,10 @@ function Invoke-WtTuiLoopStep
 
     $Batch = 0
     $TotalHandlerMs = [double]0
-    while ($Key -and $Batch -lt $MaxBatch -and -not $State.Exit)
+    $MaxBatch = if (@($State.Keys) -contains 'ProfileKnobs') { [int]$State.ProfileKnobs.MaxKeyBatch } else { $MaxBatch }
+    $BatchBudgetMs = if (@($State.Keys) -contains 'ProfileKnobs') { [int]$State.ProfileKnobs.MaxBatchElapsedMs } else { 200 }
+    $BatchWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($Key -and $Batch -lt $MaxBatch -and $BatchWatch.ElapsedMilliseconds -lt $BatchBudgetMs -and -not $State.Exit)
     {
         $Handler = if (Test-WtTuiPerf) { [System.Diagnostics.Stopwatch]::StartNew() } else { $null }
         $null = Invoke-WtTuiKey -State $State -Key $Key
@@ -1756,6 +1793,7 @@ function Invoke-WtTuiKey
             $Target = "control:$Character"
             if ($Character -eq 'c') { Invoke-WtTuiQuit -State $State }
             elseif ($Character -eq 'l') { $State.ForceRepaint = $true }
+            elseif ($Character -eq 'p') { Show-WtTuiProfilePicker -State $State }
         }
         'Char'
         {
@@ -1805,6 +1843,7 @@ function Read-WtTuiGlobalChar
         'm' { Show-WtTuiRecommendations -State $State }
         'c' { Show-WtTuiChoices -State $State }
         'b' { Show-WtTuiMonitor -State $State }
+        'n' { Show-WtTuiLicensing -State $State }
         '?' { Show-WtTuiHelp -State $State }
         'q' { Invoke-WtTuiQuit -State $State }
         default { return 'ignored' }
@@ -2111,8 +2150,10 @@ function Add-WtTuiPending
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Intent = ''
     )
 
+    $Revision = [guid]::NewGuid().ToString('n')
     $State.Pending[$Entry.Id] = @{
         Id        = $Entry.Id
+        Revision  = $Revision
         Target    = $Target
         From      = $Entry.State
         Name      = $Entry.Name
@@ -2125,12 +2166,18 @@ function Add-WtTuiPending
         # The intent of the alternative, when one was chosen: 'WindowsDefault' asks for Windows'
         # own behaviour, which the review must not present as a restoration of the captured state.
         Intent    = $Intent
+        # The reviewed fingerprint the engine revalidates before anything is written. It
+        # exists only after a review, so a replaced alternative never carries a stale one.
     }
 
     if ($State.PresetName)
     {
         $State.PresetName = ''
     }
+
+    # The fingerprint is attached by the review; an entry created or replaced here has no
+    # reviewed state and therefore no fingerprint member at all.
+    $State.Pending[$Entry.Id].Remove('Fingerprint')
 
     Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Tui.Status.Selected' -Arguments @($Entry.Name, $Target))
     $State.Screen.Dirty = $true
@@ -2208,6 +2255,7 @@ function Invoke-WtTuiAction
                 'DiskUsage' { Show-WtTuiDiskExplorer -State $State }
                 'Quarantine' { Show-WtTuiQuarantine -State $State }
                 'Monitor' { Show-WtTuiMonitor -State $State }
+                'Licensing' { Show-WtTuiLicensing -State $State }
                 default { Show-WtTuiOverviewDetails -State $State }
             }
         }
@@ -2464,6 +2512,7 @@ function Start-WtTui
         [Parameter(Mandatory = $false)][switch]$Ascii,
         [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Unicode', 'NerdFont', 'ASCII', 'None')][string]$Icons = 'Auto',
         [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Go', 'PowerShell')][string]$WorkerBackend = 'Auto',
+        [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Balanced', 'Low-resource')][string]$Profile = 'Auto',
         [Parameter(Mandatory = $false)][string]$Preset,
         [Parameter(Mandatory = $false)][switch]$InputDiagnostics,
         [Parameter(Mandatory = $false)][switch]$PerfDiagnostics
@@ -2491,7 +2540,7 @@ function Start-WtTui
         return 2
     }
 
-    $State = New-WtTuiState -Language $Language -DryRun:$DryRun -Colour $Colour -Ascii:$Ascii -Icons $Icons -WorkerBackend $WorkerBackend
+    $State = New-WtTuiState -Language $Language -DryRun:$DryRun -Colour $Colour -Ascii:$Ascii -Icons $Icons -WorkerBackend $WorkerBackend -Profile $Profile
     $Restore = $null
 
     $CancelHandler = [System.ConsoleCancelEventHandler] {
