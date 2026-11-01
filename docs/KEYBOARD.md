@@ -199,6 +199,7 @@ what is not.
 | `R` | refresh the read-only inventory; the status line confirms it and the `Collected` timestamp changes |
 | `E` | export the redacted report: a preview is shown first, then an export path is asked for, and the file is written only after that |
 | `A` | request activation with the installed license (documented `slmgr /ato`): the purpose, the possible network activity and the required permissions are shown first, and **No** is the highlighted answer |
+| `M` | open the external tool: Microsoft Activation Scripts (download, launch and remove on explicit request) |
 | `?` | context help for this workspace |
 | `Esc` | leave the workspace and return to the main interface unchanged |
 
@@ -210,6 +211,29 @@ hostname is never displayed or exported. `A` is the only key that asks Windows t
 never runs automatically, and its result is re-read rather than assumed: an accepted command is not
 reported as an activated license. See [docs/VALIDATION.md](VALIDATION.md) section 21 for what was
 validated here and what still needs a Windows host.
+
+### External tool inside the licensing workspace (M)
+
+| Key | Action |
+|---|---|
+| `M` | open the Microsoft Activation Scripts (external tool) view from the licensing workspace |
+| `V` | view the upstream documentation (`https://massgrave.dev/`) |
+| `D` | download the pinned upstream file: one confirmation, then a background transfer that reports real byte counts, verifies and keeps |
+| `U` | resolve the newest upstream release and offer it as a new pin: the tag, commit and size are shown before anything is downloaded |
+| `L` | launch the verified local copy in its own console (explicit UAC handoff when the session is not elevated) |
+| `R` | remove the local copy, its staging leftover and the provenance record |
+| `?` | the full disclosure (provenance, what runs, what is not offered) |
+| `Esc` | back to the licensing diagnostics |
+
+While this view is open, its own keys replace the main-screen hints in the footer - and while a
+transfer runs, the hint becomes the single key that matters: `Esc` cancels it. A second `D`/`U`
+while one runs is refused. In dry-run mode every one of these keys shows what would happen instead
+of doing it, and a launch is refused before its confirmation dialog. Nothing is downloaded, launched
+or deleted while the view is only being read: every action starts with a dialog that defaults to
+**No**. The tool is not a tweak - it is never part of a preset, a batch, a
+startup task or a monitoring policy, it writes no rollback data, and the registry journal cannot
+undo what it does to licensing state. See [EXTERNAL-TOOLS.md](EXTERNAL-TOOLS.md) for the
+pinned version, the provenance chain and the licence obligations.
 
 ### While an operation is running
 

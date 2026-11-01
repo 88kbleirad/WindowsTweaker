@@ -35,6 +35,13 @@ hoàn tác về đúng trạng thái đã tồn tại - không phải về một
 - **Danh mục khai báo và gói tinh chỉnh cục bộ.** Tinh chỉnh có thể là dữ liệu (JSON) thay vì mã
   PowerShell, và một **gói tinh chỉnh** cục bộ có thể thêm định nghĩa trong không gian tên riêng
   nhưng không thể định nghĩa lại một tinh chỉnh có sẵn.
+- **Chẩn đoán cấp phép & kích hoạt, kèm một công cụ bên ngoài tường minh.** `N` mở khu vực chỉ-đọc
+  về trạng thái cấp phép Windows và Office (sản phẩm đang hoạt động, kênh cấp phép, trạng thái gia
+  hạn, thời gian hệ thống, cấu hình do tổ chức quản lý), xuất báo cáo đã ẩn dữ liệu nhạy cảm, và yêu
+  cầu kích hoạt bằng `slmgr /ato` sau khi nêu rõ mục đích. Trong cùng khu vực đó, `M` mở
+  **Microsoft Activation Scripts** như một công cụ bên ngoài: tải đúng một tệp từ kho chính thức tại
+  một commit cố định, kiểm chứng rồi chạy khi bạn yêu cầu - không nhúng mã, không tự chạy, không nằm
+  trong preset hay batch. Xem [docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
 
 ## Tình trạng và yêu cầu
 
@@ -90,17 +97,18 @@ Muốn biết runtime hiện tại có gì:
 `powershell.exe -NoProfile -File .\WindowsTweaker.ps1 -RuntimeReport` (chỉ đọc, in cả hai thứ
 tiếng Việt và tiếng Anh).
 
-Cách cài bằng `irm | iex` đã có script và giá trị mặc định nay trỏ tới repository thật
-(`88kbleirad/WindowsTweaker`), nhưng **chưa có bản release nào được công bố**: bootstrap gọi
-`releases/latest`, nhận `HTTP 404` và báo lỗi thay vì cài thứ chưa được kiểm chứng. Hãy công bố
-các tệp mô tả trong [docs/RELEASE.md](docs/RELEASE.md), sau đó lệnh một dòng mới chạy được:
+Cách cài bằng `irm | iex` đã có script và giá trị mặc định trỏ tới repository thật
+(`88kbleirad/WindowsTweaker`), và bản release `v1.0.0` đã được công bố: bootstrap gọi
+`releases/latest`, tải archive đúng hệ điều hành/kiến trúc, đối chiếu SHA-256 với `checksums.txt`
+của release, đưa vào thư mục staging rồi mở giao diện. Repository chưa công bố release vẫn nhận
+`HTTP 404` và báo lỗi thay vì cài thứ chưa được kiểm chứng. Lệnh một dòng đã tài liệu hoá:
 
 ```powershell
 irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
 ```
 
 Xem [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) để biết script kiểm chứng những gì, và
-[docs/RELEASE.md](docs/RELEASE.md) để biết cần tải lên những tệp nào.
+[docs/RELEASE.md](docs/RELEASE.md) để biết một bản release gồm những tệp nào.
 
 ## Phím thiết yếu
 
@@ -116,12 +124,50 @@ Xem [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) để biết script kiểm chứng nh
 | `S` / `M` / `C` | quét kiểm tra / đề xuất / các cài đặt có nhiều lựa chọn |
 | `V` | xác minh và khôi phục: lệch cấu hình, thao tác bị ngắt, khôi phục, xuất |
 | `B` | không gian giám sát |
+| `N` | chẩn đoán cấp phép & kích hoạt (trong đó `M` mở công cụ bên ngoài Microsoft Activation Scripts) |
 | `L` / `I` | đổi ngôn ngữ / chọn chế độ biểu tượng |
 | `?` | toàn bộ bảng phím và các nguyên tắc an toàn |
 | `Q` (`Ctrl+C`) | thoát - thay đổi đang chờ và thao tác đang chạy luôn được nêu rõ |
 
 Toàn bộ phím, kể cả phím của không gian giám sát và các hộp thoại, nằm ở
 [docs/KEYBOARD.md](docs/KEYBOARD.md).
+
+## Microsoft Activation Scripts (công cụ bên ngoài)
+
+`N` mở khu vực **Chẩn đoán cấp phép & kích hoạt**; trong đó `M` mở công cụ bên ngoài **Microsoft
+Activation Scripts (MAS)**. WindowsTweaker không nhúng, không sửa và không tự chạy MAS: nó tải đúng
+một tệp từ kho chính thức tại một commit cố định (tag `3.12`, commit
+`40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`), kiểm chứng kích thước, mã blob git của thượng nguồn và
+SHA-256 đã ghi lại, rồi chỉ chạy khi bạn yêu cầu.
+
+Cách dùng:
+
+1. `N` rồi `M` để mở công cụ bên ngoài. Chỉ xem thì không có gì được tải về hay chạy.
+2. `D` tải bản đã cố định; hộp thoại xác nhận mặc định là **Không**. Việc tải chạy nền: giao diện
+   vẫn nhận phím, dòng tiến trình báo đúng số byte đã nhận, `Esc` hủy lần tải đang chạy, và nhấn
+   `D`/`U` lần nữa trong lúc đang tải sẽ bị từ chối. `U` tìm bản phát hành mới hơn và hiện tag,
+   commit, kích thước trước khi tải bất cứ thứ gì.
+3. `L` chạy công cụ trong cửa sổ console riêng. Nếu phiên hiện tại chưa có quyền quản trị, Windows sẽ
+   hiện hộp thoại nâng quyền; từ chối thì không có gì được chạy và không thử lại. WindowsTweaker
+   không gửi phím, không chọn sẵn phương thức kích hoạt và không chạy lệnh kích hoạt nào - bạn tự
+   chọn trong menu của MAS.
+4. Sau khi công cụ kết thúc, WindowsTweaker đọc lại trạng thái cấp phép và nói rõ có đọc được hay
+   không. Mã thoát của tiến trình **không** phải bằng chứng đã kích hoạt.
+5. `R` xóa bản sao trên máy (tệp đã tải, phần tệp tạm còn lại và bản ghi xuất xứ). `V` mở tài liệu
+   thượng nguồn trong trình duyệt. `Esc` quay lại phần chẩn đoán.
+
+Ở chế độ chạy thử (`W` trên màn hình chính), các phím `D`, `U`, `L`, `R` chỉ hiện đúng những gì sẽ
+làm - tệp và URL sẽ tải, dòng lệnh sẽ chạy, danh sách tệp sẽ xóa - và không tải, không chạy, không
+xóa gì; riêng việc chạy công cụ bị từ chối ngay cả khi bạn đã xác nhận.
+
+Lưu ý: MAS có thể thay đổi trạng thái cấp phép của Windows/Office; thời hạn phụ thuộc phương thức bạn
+chọn trong công cụ (không phải mọi phương thức đều có thời hạn, cũng không phải mọi phương thức đều
+vĩnh viễn), và **kích hoạt không đồng nghĩa với quyền sử dụng hợp pháp**. Nhật ký đăng ký của
+WindowsTweaker **không** hoàn tác được thao tác kích hoạt của công cụ này. Công cụ nằm ngoài hoàn toàn
+mọi preset, batch, tác vụ khởi động và chính sách giám sát.
+
+Chi tiết đầy đủ (nguồn gốc, chuỗi kiểm chứng, giấy phép GPL-3.0, các giới hạn đã kiểm chứng):
+[docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
 
 ## Đọc tiếp ở đâu
 

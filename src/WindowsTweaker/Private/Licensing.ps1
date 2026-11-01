@@ -13,10 +13,16 @@
 #   * the CSP/activation endpoint configuration published by Microsoft
 #
 # MAS (Microsoft-Activation-Scripts) is a reference for *flow* only: concise status
-# reporting and troubleshooting structure. None of its code is embedded, executed or
-# ported. This file is independently written. No hardware-identity spoofing, no licensing
-# hooks, no forged activation data, no third-party activation servers, no reset/rearm/
+# reporting and troubleshooting structure. None of its code is embedded or ported. This
+# file is independently written. No hardware-identity spoofing, no licensing hooks, no
+# forged activation data, no third-party activation servers, no reset/rearm/
 # KMS-reconfiguration commands.
+#
+# The one place upstream MAS is involved is deliberate and separate: the licensing workspace
+# offers an explicit external-tool action (Private/ExternalTool.ps1, see
+# docs/EXTERNAL-TOOLS.md) that downloads the upstream file at one pinned commit and launches
+# it as its own process on request. Nothing here calls it, and it never runs as part of a
+# refresh, a diagnostic read or a batch.
 #
 # Privacy: the inventory never contains full product keys, activation tokens, installation
 # identifiers, or organization hostnames. The partial key is shown only where the OS

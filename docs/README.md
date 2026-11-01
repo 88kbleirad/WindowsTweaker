@@ -30,6 +30,7 @@ the evidence and the list of unexecuted checks.
 |---|---|
 | [STATE-JOURNAL.md](STATE-JOURNAL.md) | Journal schema, durability and locking, verification and compensation, drift and interrupted operations, session close |
 | [LIMITATIONS.md](LIMITATIONS.md) | The safety model with its exact scope, then every known limitation, partially reversible action and platform gap |
+| [EXTERNAL-TOOLS.md](EXTERNAL-TOOLS.md) | The one external tool (Microsoft Activation Scripts): upstream version and commit, provenance chain, download and launch behaviour, licence obligations, tests and limits |
 
 ## Diagnostics and recommendations
 

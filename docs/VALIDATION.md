@@ -134,18 +134,22 @@ done, so they are smaller by construction.
 | `PrivacyPowerTools.Tests.ps1` | 6 | 0 | the privacy summary/activity report shapes, power settings, SRUM history and the Explorer copy-path tweak |
 | `SetupPlans.Tests.ps1` | 10 | 0 | checkpointed setup plans: data-only import, identity-bound resume registrations, refusal on tampering, a failed step stopping the plan, no automatic retry of uncertain steps and bounded reboot counts |
 | `Licensing.Tests.ps1` | 19 | 0 | the licensing inventory (status-code mapping, active-product selection, unreadable-provider and non-Windows reporting), the time and component probes, organization-managed configuration (presence only), the activation request (accepted/failed/refused, structured SLMGR code, status re-read after the request), the redacted export, the cache/redaction contract (the partial key survives a redacted read, an earlier caller's records are never blanked, a repeated read of the same shape is still served from the cache) and the workspace render. Every provider is doubled; nothing here activates anything |
+| `ExternalTool.Tests.ps1` | 64 | 0 | the pinned upstream definition (commit, size, blob id, URL that names the commit and not a branch, licence); the HTTPS host allow-list and per-hop redirect validation; the size bound enforced while reading; the verification chain with a fixture (size + git blob id + SHA-256, publish only after verification, provenance contents, a digest mismatch refused, a failed re-download leaving the previous copy intact, staging left empty); provenance state (missing copy, corrupt record falling back to the shipped pin, a user-update pin, a copy that no longer matches); removal touching only this feature's files; the launch plan and its refusals (path outside the directory, another file name, a `%` in the path), no activation switch in the command line, the elevation flag, a refused UAC prompt mapped to a cancellation, a launch failure without a retry, an unverified copy refused, a nested launch refused; the review screen, the workspace hints replacing the main-screen hints, both languages, the ASCII fallback, the licensing entry row, and that viewing or declining downloads nothing; the console handoff (suspend → launch → resume, resume after an unexpected failure, full-frame invalidation). background execution (the reader's progress and cancellation, a cancelled transfer classified and cleaned up, the real runspace task delivering its result and releasing its handle, a second start refused while one runs, a stop reporting what it targets, and a source scan proving the task never writes to the terminal); dry-run and `-WhatIf` refusal at both layers for download, launch and removal, with the launch preview naming the command line; the interface's background flow (start after confirmation, duplicate refused, `Esc` cancels without leaving the view, real byte counts painted, the busy hint, completion and cancellation reporting, resolved-release confirmation). Three further tests read real response headers only, behind `WT_EXTERNAL_TOOL_LIVE_TEST=1`. No test downloads or executes MAS, elevates or reboots |
 | `Quarantine.Tests.ps1` | 11 | 0 | the quarantine scan, move and manifest durability (the object is moved with its manifest before the store is updated), and restore (identity and hash checks, refusal of a tampered or missing object, the original location restored) |
 | `Restart.Tests.ps1` | 29 | 0 | restart requirement classification (reboot / application / none / unknown kept apart), eligibility gates (pending work, journal integrity, verification, compensation), single-owner scheduling, the adapter contract (no `/f`, no forced close, one request site), the TUI flows and the command-line request path |
 | `TuiBatchResults.Tests.ps1` | 7 | 0 | batch progress counters, the failure-first result summary with scope labelling and per-failure detail, and the localized screen-text replacement |
 | `TuiBatchState.Tests.ps1` | 7 | 0 | batch pending-queue reconciliation against the batch that actually ran (clean batch, failures, requests edited while the batch ran, foreign requests) and the performance-profile knobs (resolution, low-resource selection off a non-VT console, the safety boundary) |
 | `TuiRender.Tests.ps1` | 10 | 0 | screen row invalidation and forced repaint, the row-diff console writers (whole first frame, nothing for an identical frame, only the changed row), key batching and frame coalescing (no key lost, Escape/Enter never dropped) and the performance diagnostics ring |
-| **Total** | **629** | **0** | 623 passed, 6 skipped (the opt-in live GitHub, published-launcher and whole-downloader tests) |
+| **Total** | **693** | **0** | 684 passed, 9 skipped (the opt-in live GitHub, published-launcher, whole-downloader and external-tool header tests) |
 
-`tools/Invoke-Validation.ps1` phase 6 on this tree reported `Tests passed: 623 | failed: 0 |
-skipped: 6` (629 tests in 28 files) and ended with `ALL EXECUTED CHECKS PASSED`. The six skipped tests are the live
-transport and published-command checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access;
-the pre-existing three were run separately and are recorded in section 12, and the
-launcher/downloader checks can only pass once the fixed files are on `main` (sections 14 and 15).
+`tools/Invoke-Validation.ps1` phase 6 on this tree reported `Tests passed: 684 | failed: 0 |
+skipped: 9` (693 tests in 30 files) and ended with `ALL EXECUTED CHECKS PASSED`; the same run reported
+`PSScriptAnalyzer: no findings` (phase 4), `COMPATIBILITY GATE PASSED` (phase 5) and `Files parsed: 169,
+Parse errors: 0` (phases 1 and 7). Six of the skipped tests are the live transport and
+published-command checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access - the pre-existing
+three were run separately and are recorded in section 12, and the launcher/downloader checks can only
+pass once the fixed files are on `main` (sections 14 and 15). The other three are the external-tool
+header checks behind `WT_EXTERNAL_TOOL_LIVE_TEST=1`, which were run separately (section 22).
 
 Destructive operations are mocked: the registry, service, scheduled-task, firewall, DNS,
 Appx and Defender seams are replaced by in-memory doubles, so no real system state is
@@ -1115,6 +1119,109 @@ Protection Service event log, `w32tm`, and the workspace as rendered by a 5.1 co
 above is doubled in the tests, so the mapping and the failure paths are exercised, but no value in
 this archive was read from a real Windows license.
 
+## 22. Microsoft Activation Scripts as a pinned external tool (executed on Linux; **no Windows launch** was executed)
+
+`Licensing & Activation` gained one external-tool integration: the upstream activator is downloaded
+at one pinned commit, verified, and launched as its own process when the user asks for that. Full
+description: [EXTERNAL-TOOLS.md](EXTERNAL-TOOLS.md).
+
+### Upstream research (executed, 2026-11-01/02)
+
+* GitHub API on `massgravel/Microsoft-Activation-Scripts`: latest release `3.12`
+  (published 2026-07-04T07:56:17Z). The release carries **no uploaded assets**, so the pinned
+  artifact is the release commit `40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f` and the file
+  `MAS/All-In-One-Version-KL/MAS_AIO.cmd` (761,964 bytes, git blob
+  `33513d90d2c8332d10c713a63e5468be4a78cc23`) - the "direct script" the upstream README documents
+  as its offline method.
+* `LICENSE` in that repository is the **GNU GPL v3** text.
+* The upstream file was fetched **once**, through the module's own transport
+  (`Save-WtExternalToolDownload`) into a staging path, and hashed: 761,964 bytes,
+  SHA-256 `850f979665fb93999acae93f4790c1ff8ed2041532060b7966a121c2d29a0bfa`, git blob
+  `33513d90d2c8332d10c713a63e5468be4a78cc23` - both equal to the values the pin records. The file
+  was **not executed**, and it is not committed (the data directory is not part of the tree).
+* The opt-in live tests then read response **headers only**: the pinned URL still serves the pinned
+  size, a `github.com` URL still redirects to `raw.githubusercontent.com` (an allowed host), and a
+  redirect chain longer than the limit is refused.
+
+### Checks executed
+
+```bash
+pwsh -NoProfile -File tools/Parse-All.ps1              # 169 files parsed, 0 errors
+pwsh -NoProfile -File tools/Test-Compatibility.ps1     # COMPATIBILITY GATE PASSED
+pwsh -NoProfile -Command "Invoke-Pester -Path tests/ExternalTool.Tests.ps1"
+WT_EXTERNAL_TOOL_LIVE_TEST=1 pwsh -NoProfile -Command "Invoke-Pester -Path tests/ExternalTool.Tests.ps1"
+pwsh -NoProfile -File tools/Invoke-Validation.ps1       # the whole gate
+```
+
+| Check | Result |
+|---|---|
+| AST parse of every script (169 files) | 0 errors |
+| PSScriptAnalyzer (src, tests, tools, bootstrap, entry point) | 0 findings; one finding was fixed during the work (`$Error` used as a local variable name in a test) |
+| Windows PowerShell 5.1 compatibility gate | passed: 0 syntax findings, 0 command/type findings, 61 of 61 non-ASCII files carry a UTF-8 BOM, 0 synchronous `HttpContent` accessors, 0 files using `HttpClient` without the assembly load |
+| `tests/ExternalTool.Tests.ps1` (default) | 61 passed, 0 failed, 3 skipped (the opt-in live tests) |
+| `tests/ExternalTool.Tests.ps1` (`WT_EXTERNAL_TOOL_LIVE_TEST=1`) | 64 passed, 0 failed |
+| Background execution (executed) | the reader reports real progress and stops on a cancellation request; a cancelled transfer is classified as cancelled with its staging file removed; the **real runspace task** delivers the backend's result and releases its handle; a second start is refused while one runs; a stop reports what it targets; and a source scan proves the task file cannot paint, prompt or touch the console |
+| Dry run / `-WhatIf` (executed) | `Invoke-WtExternalToolDownload -WhatIf` returns the plan and touches neither network nor disk; `Start-WtExternalTool -WhatIf` refuses and still reports the exact command line; `Remove-WtExternalToolFiles -WhatIf` lists the files it would delete; and the interface refuses `D`, `U`, `L` and `R` in dry-run mode while naming what would run |
+| `tools/Test-ExternalToolSmoke.ps1` (executed here, inert child) | 17 passed, 0 failed, 4 Windows-only: plan (interpreter, `/c`, quoted path, working directory, no activation switch), the platform refusal, the **process seam starting the inert child and observing exit code 7**, the marker file it wrote, full-frame invalidation after the child returned, the licensing re-read (honest "unreadable" off Windows) and the background task plumbing with a refused host |
+| Head-less renders (100x30, 60x16, ASCII mode, EN and VI) | the review screen shows the repository, the pinned tag and commit, the licence, the upstream blob id, the SHA-256, the local status and the five actions; the footer hint is the workspace hint while the view is open, and the licensing hint while the diagnostics are open; a 16-row terminal drops the sections it has no room for instead of drawing over the footer |
+| The whole gate, `tools/Invoke-Validation.ps1` | exit 0: `Files parsed: 169, Parse errors: 0`; `PSScriptAnalyzer: no findings`; `COMPATIBILITY GATE PASSED`; `Tests passed: 684 | failed: 0 | skipped: 9` (693 tests in 30 files); `ALL EXECUTED CHECKS PASSED` |
+| Real pty run (python3 `pty`, 100x34, the actual entry point), EN and VI | 11 of 11 checks in each language: `N` → `M` rendered the view (title, commit, repository, licence, blob id, SHA-256, status, actions); the footer hint was the workspace hint and no main-screen hint followed it; `D` produced the platform notice and created no file; `?` showed the disclosure; `Esc` returned to the licensing diagnostics; the interface left the alternate screen buffer on quit. The pty harness does not assert the *process exit code* (this container keeps the process alive after the interface restores the terminal, identically on the baseline commit); the smoke tool asserts the restore path instead |
+
+### Repeated from a clean copy
+
+The tree was copied to an empty directory (excluding `dist/`, `artifacts/`, `.git/` and the gitignored
+`worker/bin/`), and the checks that cover this feature were run there: `tools/Parse-All.ps1`
+(0 errors), `tools/Test-Compatibility.ps1` (`COMPATIBILITY GATE PASSED`) and
+`Invoke-Pester -Path tests/ExternalTool.Tests.ps1, tests/Loading.Tests.ps1` (78 passed, 0 failed,
+3 skipped - the opt-in live tests) and the smoke tool
+(`tools/Test-ExternalToolSmoke.ps1`, 17 passed, 0 failed, 4 Windows-only). Nothing in this feature
+depends on repository-local build output or on state left behind in the working copy.
+
+### Not executed here
+
+* **The launch on Windows**: the elevation handoff, the child console window, the returned exit code
+  and the licensing re-read after the tool returns. Everything up to the process seam is executed
+  (plan construction, quoting, path validation, the duplicate-launch guard, a cancelled handoff, a
+  launch failure), the seam itself is mocked in the tests and driven for real by the smoke tool's
+  inert child with a POSIX interpreter on this host.
+* A download started from the TUI **on Windows**: the transport was executed manually here and by the
+  opt-in live tests, but not from a Windows session.
+
+### Manual procedure for a disposable Windows VM (not executed here)
+
+Run `tools/Test-ExternalToolSmoke.ps1` first - it uses an inert child, so it can be run before
+anything real is downloaded:
+
+```powershell
+pwsh -NoProfile -File tools\Test-ExternalToolSmoke.ps1                       # plan, launch, own console, exit code, restore
+pwsh -NoProfile -File tools\Test-ExternalToolSmoke.ps1 -Elevate -ExpectUacCancelled   # refuse the UAC prompt
+pwsh -NoProfile -File tools\Test-ExternalToolSmoke.ps1 -ExitCode 0             # a child that succeeds
+```
+
+It must exit 0, and it must report the separate console window, the observed exit code, and the
+interface repainting after the child closed. Then, with the interface:
+
+1. `N`, then `M`. Expect: the pinned version `3.12` and its commit, the repository URL, the licence,
+   and `Not downloaded`.
+2. `D`, confirm **Yes**. Expect: 761,964 bytes and the recorded SHA-256 in the confirmation dialog;
+   a progress line with real byte counts while the transfer runs (press `Esc` once to check the
+   cancellation path, then `D` again); `Downloaded and verified`; a provenance record under
+   `%LOCALAPPDATA%\WindowsTweaker\external-tools\microsoft-activation-scripts\`.
+2b. Press `D` again and immediately `D` a third time: the second press must be refused with the
+   "a transfer is already running" message, never started twice.
+2c. Press `W` (dry run) and then `D`, `U`, `L` and `R`: each must describe what it would do and do
+   nothing - in particular `L` must not start anything even if its dialog is confirmed.
+3. Append a byte to the downloaded file and reopen the view. Expect `Present but does not match the
+   pin`, and `L` refusing to start anything.
+4. Download again, then `L` from a **standard user** session. Expect a UAC prompt. Refusing it must
+   report the refusal and never prompt a second time. Accepting it must open the upstream console;
+   after it is closed, the exit code is reported, the licensing state is re-read, and the dialog says
+   that the exit code is not proof of activation.
+5. `R`: the local copy, its staging leftovers and the provenance record are removed; a licensing
+   change made by the tool is *not* reverted.
+6. Quit the interface and confirm the terminal came back (cursor visible, colour reset, no leftover
+   frame), including on a console without virtual terminal support (`-Colour Mono`).
+
 ## Not executed here (Windows-only integration checks)
 
 The declarative definitions added to `Data/Catalog/builtin.json` are in the same position as the
@@ -1165,6 +1272,12 @@ before relying on them:
    covered by a head-less render test on PowerShell 7.6.9 only.
 12. The cache/redaction contract on a machine that actually exposes a partial product key
    (section 21 step 7); the three-call sequence is pinned by tests against a doubled provider.
+13. The Microsoft Activation Scripts launch on Windows through the interface: the explicit UAC
+   handoff, the child console window, the returned exit code and the licensing re-read after the
+   tool returns. The process seam is mocked in the suite; section 22 has the manual procedure.
+14. A download started from the interface on Windows, and the external-tool view rendered by a
+   classic Windows console (PowerShell 5.1, no virtual terminal support). The view was rendered
+   head-lessly and in a Linux pty only.
 
 ## Reproducing the cut-over checks
 

@@ -102,9 +102,27 @@ function Add-WtLicensingView
     $Managed = if ($License.Org.Managed) { Get-WtString -Key 'Lic.Org.Managed' } else { Get-WtString -Key 'Lic.Org.NotManaged' }
     Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $Managed -Style 'Item' -MaxWidth ($Width - 8)
 
-    # Footer with actions.
-    $Hint = Get-WtString -Key 'Lic.Hint'
-    Set-WtScreenText -Screen $Screen -Row $Height -Column 2 -Text $Hint -Style 'Muted' -MaxWidth ($Width - 4)
+    # External tools. This is the entry point of the upstream activator integration: it is
+    # not a tweak, is never part of a preset or a batch, and is reached only by asking for it.
+    # The section is dropped when the terminal has no row left above the shared footer.
+    $Row += 2
+    $Bottom = $Height - (Get-WtTuiLayout -State $State).FooterRows
+    if ($Row + 1 -le $Bottom)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Tools.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
+        $Row++
+
+        $Tool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+        $Look = Get-WtExternalToolStatusLook -Tool $Tool
+        $Entry = '{0} - {1}' -f (Get-WtString -Key 'Mas.Title'), (Get-WtString -Key (Get-WtExternalToolStatusKey -Status $Tool.Status))
+        Set-WtScreenIconText -Screen $Screen -Row $Row -Column 4 -Width ($Width - 8) -IconKey $Look.IconKey -Text $Entry -Style 'Item'
+        $Row++
+
+        if ($Row -le $Bottom)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Tools.Hint') -Style 'ItemMeta' -MaxWidth ($Width - 8)
+        }
+    }
 }
 
 <#
@@ -247,6 +265,16 @@ function Show-WtTuiLicensing
                         }
                         'e' { Export-WtLicensingReport -State $State -License $License }
                         'a' { Invoke-WtLicensingAction -State $State -License $License }
+                        'm'
+                        {
+                            Show-WtTuiExternalTool -State $State
+
+                            # The external tool view may have re-read the diagnostics (it does
+                            # that after a launch): show what is current instead of the copy
+                            # this loop was holding.
+                            if ($State.Licensing) { $License = $State.Licensing }
+                            $State.Screen.Dirty = $true
+                        }
                         '?' { Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Lic.Title') -Lines @((Get-WtString -Key 'Lic.Help')) }
                     }
                 }

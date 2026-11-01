@@ -1357,6 +1357,24 @@ function Add-WtTuiFooter
     {
         $Hint = Get-WtString -Key 'Tui.Keys.Busy'
     }
+    elseif ($State.ExternalTool)
+    {
+        # A workspace owns the keyboard while it is open, so its own key map replaces the
+        # main-screen hints instead of being read next to them. While a background transfer
+        # runs, the hint names the one key that is meaningful then.
+        $Hint = $(if ($State.ExternalToolTask -and (Test-WtExternalToolTaskBusy -Task $State.ExternalToolTask))
+            {
+                Get-WtString -Key 'Mas.Hint.Busy'
+            }
+            else
+            {
+                Get-WtString -Key 'Mas.Hint'
+            })
+    }
+    elseif ($State.Licensing)
+    {
+        $Hint = Get-WtString -Key 'Lic.Hint'
+    }
     elseif ($State.SearchMode)
     {
         $Hint = Get-WtString -Key 'Tui.Keys.Search'
@@ -1426,7 +1444,17 @@ function Update-WtTuiView
     # Licensing workspace: same contract, a different canvas.
     if ($State.Licensing)
     {
-        Add-WtLicensingView -State $State -License $State.Licensing
+        if ($State.ExternalTool)
+        {
+            # The external tool is a view of the licensing workspace, not a second workspace:
+            # the diagnostics stay loaded underneath, which is what lets the status be re-read
+            # the moment the launched tool returns.
+            Add-WtExternalToolView -State $State -Tool $State.ExternalTool
+        }
+        else
+        {
+            Add-WtLicensingView -State $State -License $State.Licensing
+        }
         Add-WtTuiFooter -State $State -Layout $Layout
 
         if ($State.Overlay)
@@ -2474,6 +2502,122 @@ function Restore-WtTuiTerminal
 }
 
 #endregion Terminal lifecycle
+
+#region Console handoff
+
+<#
+.SYNOPSIS
+    Releases the console before an interactive child process is launched.
+.DESCRIPTION
+    A workspace that runs an external console tool must give the terminal back first: the
+    alternate screen buffer and the hidden cursor belong to this interface, and leaving them
+    in place would leave the user's terminal in a state the child never restores. The
+    sequence is the inverse of what Enter-WtTuiTerminal set up, so the terminal the user
+    returns to is their own.
+
+    The restore token returned by Enter-WtTuiTerminal stays valid and is still applied by
+    the caller that created it (Start-WtTui): this function deliberately does not take a new
+    snapshot, because the state it would capture is already "entered" and re-entering would
+    restore the wrong cursor visibility at the end.
+.OUTPUTS
+    A hashtable with Suspended and Vt, to be passed back to Resume-WtTuiConsole.
+#>
+function Suspend-WtTuiConsole
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Result = @{ Suspended = $true; Vt = $false }
+    $Escape = [char]27
+
+    try { [Console]::ResetColor() } catch { Write-WtLog -Level Debug -Message 'Could not reset the console colours.' -NoConsole }
+    try { [Console]::CursorVisible = $true } catch { Write-WtLog -Level Debug -Message 'Could not show the cursor.' -NoConsole }
+
+    if ($State.UseVt)
+    {
+        try
+        {
+            [Console]::Out.Write("$Escape[0m$Escape[?25h$Escape[?1049l")
+            [Console]::Out.Flush()
+            $Result.Vt = $true
+        }
+        catch
+        {
+            Write-WtLog -Level Warning -Message "Could not leave the alternate screen: $($_.Exception.Message)" -NoConsole
+        }
+    }
+
+    return $Result
+}
+
+<#
+.SYNOPSIS
+    Re-acquires the console after an interactive child process returns.
+.DESCRIPTION
+    Three things are unknown after a child console process: what the terminal now contains,
+    which keys are queued in this console's input buffer, and whether the child left the
+    cursor visible. All three are reset here, and the full frame is invalidated so the next
+    frame repaints every row instead of a diff against stale content.
+
+    Keys typed while the child had focus are drained with a bound: a console that reports
+    keys endlessly (a broken pipe or a scripted input source) must not hang the interface.
+#>
+function Resume-WtTuiConsole
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $false)][object]$Suspended
+    )
+
+    $Escape = [char]27
+    $Entered = $Suspended -and $Suspended.Vt
+
+    if ($Entered)
+    {
+        try
+        {
+            [Console]::Out.Write("$Escape[?1049h$Escape[?25l$Escape[2J$Escape[H")
+            [Console]::Out.Flush()
+        }
+        catch
+        {
+            Write-WtLog -Level Warning -Message "Could not re-enter the alternate screen: $($_.Exception.Message)" -NoConsole
+        }
+    }
+    else
+    {
+        try
+        {
+            [Console]::Clear()
+            [Console]::CursorVisible = $false
+        }
+        catch
+        {
+            Write-WtLog -Level Debug -Message 'Could not clear the console after the external tool.' -NoConsole
+        }
+    }
+
+    $Drained = 0
+    try
+    {
+        while ($Drained -lt 64 -and [Console]::KeyAvailable)
+        {
+            $null = [Console]::ReadKey($true)
+            $Drained++
+        }
+    }
+    catch
+    {
+        Write-WtLog -Level Debug -Message 'The console input buffer could not be drained.' -NoConsole
+    }
+
+    $State.ForceRepaint = $true
+    $State.Screen.Dirty = $true
+}
+
+#endregion Console handoff
 
 <#
 .SYNOPSIS

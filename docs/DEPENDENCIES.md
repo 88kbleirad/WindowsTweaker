@@ -8,9 +8,9 @@
 | PowerShell | **Windows PowerShell 5.1** (included with Windows) and **PowerShell 7.4-7.6** (validated range; 7.6.9 executed) | The runtime differences are handled in `src/WindowsTweaker/Private/Compatibility.ps1`: BOM-less UTF-8 writes, JSON parameters that exist only on 7, platform detection, console VT, worker stdin encoding. `#Requires -Version 5.1` and the module manifest (`PowerShellVersion = '5.1'`, `CompatiblePSEditions = Desktop,Core`) enforce the floor. `tools/Test-Compatibility.ps1` checks the 5.1 API surface statically |
 | PowerShell 6.0-7.3, 7.7+, 8.x, preview | **Untested** | They start and print a notice; the bootstrap never hands off to them. `-RuntimeReport` lists the capabilities of the running one. See [COMPATIBILITY.md](COMPATIBILITY.md) |
 | PowerShell 3.0-5.0 | **Not supported** | `#Requires -Version 5.1` refuses at parse time |
-| Elevation | Per tweak (`-Privilege Admin`) | Machine-wide tweaks report `unsupported` with the reason "Administrator privileges are required" when not elevated; user tweaks keep working |
+| Elevation | Per tweak (`-Privilege Admin`), and an explicit UAC handoff for the external tool | Machine-wide tweaks report `unsupported` with the reason "Administrator privileges are required" when not elevated; user tweaks keep working. The external tool is launched through `Start-Process -Verb RunAs` when the session is not elevated, and a refused prompt cancels the launch |
 | Runtime libraries | None bundled | No LGPO.exe, no WinRT DLLs, no downloaded binaries, no fonts. The only binary a release ships is the optional Go worker built from this repository's own `worker/` source; the modules linked into it are listed with their licences in `THIRD-PARTY-NOTICES.md` |
-| Network access | Only for tweaks that download an official installer, and only outside a dry run, with a publisher signature check | Everything else works offline |
+| Network access | Only for tweaks that download an official installer (outside a dry run, with a publisher signature check), and for the explicit external-tool action in `Licensing & Activation` (one pinned file over HTTPS) | Everything else works offline; the external tool is never fetched during navigation, refresh, startup or diagnostics |
 
 ## Terminal requirements (interactive interface)
 

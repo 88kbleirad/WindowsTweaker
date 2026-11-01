@@ -40,6 +40,28 @@ the compiled Go worker, whose statically linked modules and their licences are l
 "Optional Go worker" below. The WPF interface uses fonts and glyphs already present in
 Windows (`Segoe UI`, `Segoe Fluent Icons`).
 
+## Microsoft Activation Scripts (MAS) - a downloaded external tool, not bundled
+
+`Licensing & Activation` can download and launch **Microsoft Activation Scripts**, a third-party
+Windows/Office activator, as an external tool at the user's explicit request. Details, including
+the pinned commit, are in [docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
+
+* Project: https://github.com/massgravel/Microsoft-Activation-Scripts
+* Licence: **GNU GPL v3** (the `LICENSE` in that repository)
+* Pinned by this repository: tag `3.12`, commit `40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`,
+  file `MAS/All-In-One-Version-KL/MAS_AIO.cmd`, 761,964 bytes,
+  SHA-256 `850f979665fb93999acae93f4790c1ff8ed2041532060b7966a121c2d29a0bfa`
+  (that digest was computed by this project; upstream publishes no checksum or signature)
+
+No MAS source is included in this repository: nothing is copied, ported or linked, and no
+derivative work is created. The file is fetched over HTTPS from the official repository at that
+commit, into the user's own data directory, only when the user asks for it.
+
+**If a distribution ever ships that file**, it distributes a GPL-3.0 work and must meet the GPL-3.0
+obligations for it: ship the licence text, make the corresponding source available under GPL-3.0,
+impose no additional restrictions, and keep it clearly separate from this project's own terms. The
+GPL-3.0 does not apply to WindowsTweaker's own code merely because it can download that file.
+
 ## Reference projects consulted for product ideas
 
 The features added after the initial revision were designed with the following projects as

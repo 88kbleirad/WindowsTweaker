@@ -36,6 +36,13 @@ rolled back to the state that actually existed before - not to a hard-coded defa
 - **Declarative catalogs and local packs.** Tweaks can be data (JSON) instead of PowerShell, and a
   local **tweak pack** can add definitions in its own namespace without being able to redefine a
   built-in tweak.
+- **Licensing and activation diagnostics, plus one explicit external tool.** `N` opens the
+  read-only view of Windows/Office licensing state (active product, licence channel, grace state,
+  system time, organization-managed configuration), exports a redacted report, and can request
+  activation through `slmgr /ato` after stating its purpose. In the same workspace, `M` opens
+  **Microsoft Activation Scripts** as an external tool: one file from its official repository at
+  one pinned commit, verified, and launched only when you ask - no embedded code, nothing
+  automatic, nothing in a preset or a batch. See [docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
 
 ## Status and requirements
 
@@ -90,18 +97,19 @@ To see what the current runtime supports:
 `powershell.exe -NoProfile -File .\WindowsTweaker.ps1 -RuntimeReport` (read-only, printed in
 Vietnamese and English).
 
-`irm | iex` installation exists as a script and its defaults now name the real repository
-(`88kbleirad/WindowsTweaker`), but **no release is published yet**: the bootstrap resolves
-`releases/latest`, gets `HTTP 404` and says so instead of installing anything unverified. Publish
-the archives described in [docs/RELEASE.md](docs/RELEASE.md) and the documented one-liner starts
-working:
+The `irm | iex` installation script and its defaults name the real repository
+(`88kbleirad/WindowsTweaker`), and release `v1.0.0` is published: the bootstrap resolves
+`releases/latest`, downloads the archive for this OS/architecture, verifies its SHA-256 against
+the release's `checksums.txt`, stages it and opens the interface. A repository with no published
+release still gets `HTTP 404` and says so instead of installing anything unverified. The
+documented one-liner:
 
 ```powershell
 irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
 ```
 
 See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) for what that script verifies, and
-[docs/RELEASE.md](docs/RELEASE.md) for what has to be uploaded first.
+[docs/RELEASE.md](docs/RELEASE.md) for what a release consists of.
 
 ## Essential keys
 
@@ -117,11 +125,50 @@ See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) for what that script verifies, and
 | `S` / `M` / `C` | sanity scan / recommendations / settings with several alternatives |
 | `V` | verification and recovery: drift, interrupted operations, restore, export |
 | `B` | monitoring workspace |
+| `N` | licensing and activation diagnostics (inside which `M` opens the Microsoft Activation Scripts external tool) |
 | `L` / `I` | switch language / choose the icon mode |
 | `?` | the full keyboard reference and the safety rules |
 | `Q` (`Ctrl+C`) | quit - pending changes and a running operation are raised explicitly |
 
 Everything, including the monitoring and dialog keys, is in [docs/KEYBOARD.md](docs/KEYBOARD.md).
+
+## Microsoft Activation Scripts (external tool)
+
+`N` opens **Licensing & Activation Diagnostics**; inside it, `M` opens the external tool
+**Microsoft Activation Scripts (MAS)**. WindowsTweaker does not embed, modify or run MAS on its
+own: it downloads exactly one file from the official repository at one pinned commit (tag `3.12`,
+commit `40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`), verifies its size, the upstream git blob id and
+the recorded SHA-256, and runs it only when you ask for that.
+
+How to use it:
+
+1. `N`, then `M`, to open the external tool. Reading the view downloads and starts nothing.
+2. `D` downloads the pinned version; the confirmation dialog defaults to **No**. The transfer runs
+   in the background: the interface keeps taking keys, the progress line reports real byte counts,
+   `Esc` cancels the running transfer, and pressing `D`/`U` again while it runs is refused. `U`
+   resolves the newest upstream release and shows its tag, commit and size before anything is
+   downloaded.
+3. `L` starts the tool in its own console window. When this session is not elevated, Windows shows
+   its own elevation prompt; refusing it starts nothing and nothing is retried. WindowsTweaker
+   sends no keystrokes, preselects no activation method and runs no activation command - you choose
+   inside the MAS menu.
+4. After the tool exits, WindowsTweaker re-reads the licensing state and says whether that read
+   succeeded. The process exit code is **not** proof of activation.
+5. `R` removes the local copy (the downloaded file, any staging leftover and the provenance
+   record). `V` opens the upstream documentation in the browser. `Esc` returns to the diagnostics.
+
+In dry-run mode (`W` on the main screen) `D`, `U`, `L` and `R` only show what would happen - the
+file and URL that would be fetched, the command line that would run, the files that would be
+removed - and nothing is fetched, started or deleted; a launch is refused even after a confirmation.
+
+Note: MAS can change Windows and Office licensing state; how long an activation lasts depends on
+the method you choose inside the tool (not every method is time-limited, and not every method is
+permanent), and **activation is not licence entitlement**. WindowsTweaker's registry journal
+**cannot** roll back the tool's activation actions. The tool is entirely outside every preset,
+batch, startup task and monitoring policy.
+
+Full detail (provenance, verification chain, GPL-3.0 licence, validated limits):
+[docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
 
 ## Where to go next
 
