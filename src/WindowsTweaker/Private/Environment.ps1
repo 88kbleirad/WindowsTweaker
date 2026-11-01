@@ -103,7 +103,7 @@ function Get-WtEnvironmentInternal
 
     try
     {
-        $Environment.Culture = [System.Globalization.CultureInfo]::CurrentUICulture.Name
+        $Environment.Culture = Get-WtCultureName
     }
     catch
     {

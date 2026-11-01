@@ -21,6 +21,13 @@ One command runs the whole suite:
 pwsh -NoProfile -File tools/Invoke-Validation.ps1     # exit 0: ALL EXECUTED CHECKS PASSED
 ```
 
+Its phase 0 builds the worker binary for the host platform when the Go toolchain is available
+(reusing `tools/New-ReleasePackage.ps1 -WorkersOnly`, so the worker is built by one code path
+and one platform table), because the metric-recording tests drive the compiled worker into a
+real SQLite store and `worker/bin/` is gitignored build output: a fresh checkout has no worker
+at all, and those tests fail rather than skip. Without Go the phase reuses an existing binary
+and fails with a clear message when there is none.
+
 ## Check tiers: what each class of check proves
 
 Every check in this document belongs to exactly one tier. The tiers are not interchangeable
@@ -34,6 +41,18 @@ proves nothing at all.
 | **Linux runtime** | behaviour of the real code paths on PowerShell 7.6.9: engine, journal, catalog, insight, TUI (head-less and in a real pty), worker, packaging | `tools/Invoke-Validation.ps1` phases 6-7 and the per-area runs below | **executed** (sections 3-11, 16-21) |
 | **Live network** | the transport against real GitHub endpoints: release resolution, redirect hops, release metadata, checksum download | 6 opt-in Pester tests behind `WT_BOOTSTRAP_LIVE_TEST=1` | **skipped by default** in this archive (section 12 records the runs that were executed explicitly) |
 | **Unexecuted Windows** | nothing in this archive: these are claims that need a disposable Windows host, 5.1 and 7.6 side by side | manual, per the procedures in section 21 and "Not executed here" | **not executed** (no Windows host was available) |
+
+### Runner environment (GitHub Actions, `ubuntu-latest`)
+
+The release workflow runs this same gate on a runner that differs from this machine in ways
+that reached the suite. They are recorded here because each one is a real input to the result,
+and each is handled rather than tolerated:
+
+| Difference | Effect seen in the suite | Handling |
+|---|---|---|
+| The runner's locale is `C.UTF-8`, so .NET reports the **invariant culture** and `CultureInfo.Name` (UI and formatting) is the empty string | the two diagnostics tests that require a recorded culture (the export header and `Get-WtAppVersion`) failed on the empty value even though the culture had been read correctly | `Get-WtCultureName` (`src/WindowsTweaker/Private/Compatibility.ps1`) tries the UI culture, then the formatting culture, and names the invariant culture `Invariant`; the environment snapshot and `Get-WtAppVersion` both use it |
+| `worker/bin/` is gitignored build output, so a clean checkout has **no compiled worker** | metric recording refuses to start without the worker - it is the single SQLite writer - so the two metric-persistence tests failed instead of skipping (deliberately: the SQLite path is covered by running it) | gate phase 0 builds the host worker before the suite; `tools/New-ReleasePackage.ps1 -WorkersOnly` is the single build path |
+| The runner image ships its own PowerShell, Pester and PSScriptAnalyzer | the versions the gate used were not visible in the job log | the "Install the validation modules" step now prints the PowerShell version, the resolved Pester/PSScriptAnalyzer versions and the locale before the gate runs |
 
 ## 1. AST parse of every PowerShell script
 

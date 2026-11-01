@@ -6,6 +6,10 @@
 #   # one platform only (fast path used by tests), with the worker binaries already built:
 #   pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.1 -Platforms linux-x64 -SkipWorkerBuild
 #
+#   # build the worker binaries for the selected platforms and write nothing else (the
+#   # validation gate uses this for the host platform before it runs the test suite):
+#   pwsh -NoProfile -File tools/New-ReleasePackage.ps1 -Version 1.0.1 -Platforms linux-x64 -WorkersOnly
+#
 # Produces, beside each other in -OutDir:
 #   WindowsTweaker-<platform>-v<version>.zip   one per selected platform, or all four
 #   checksums.txt                              SHA-256 per archive (ASCII, `hash  name`)
@@ -48,6 +52,13 @@ param(
 
     # Use the worker binaries already on disk instead of building them.
     [Parameter(Mandatory = $false)][switch]$SkipWorkerBuild,
+
+    # Build the worker binaries for the selected platforms and stop: no archive, no
+    # checksums, no manifest, and no output directory is created. This is the build path the
+    # validation gate uses (the metric-recording tests drive the compiled worker into a real
+    # SQLite store), so the worker is built by exactly one code path with exactly one
+    # platform table.
+    [Parameter(Mandatory = $false)][switch]$WorkersOnly,
 
     [Parameter(Mandatory = $false)][int]$WorkerProtocol = 1
 )
@@ -107,7 +118,11 @@ $OutDir = if ([System.IO.Path]::IsPathRooted($OutDir)) {
 } else {
     [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutDir))
 }
-[System.IO.Directory]::CreateDirectory($OutDir) | Out-Null
+
+# -WorkersOnly builds binaries and nothing else, so it must not create an output directory.
+if (-not $WorkersOnly) {
+    [System.IO.Directory]::CreateDirectory($OutDir) | Out-Null
+}
 
 # SOURCE_DATE_EPOCH makes the manifest timestamps reproducible; without it the current time
 # is used and only the inputs are deterministic.
@@ -155,6 +170,11 @@ if (-not $SkipWorkerBuild) {
             throw "go build failed for $Key (exit $LASTEXITCODE)."
         }
     }
+}
+
+if ($WorkersOnly) {
+    Write-Host "Worker binaries built for: $($SelectedPlatforms -join ', '). Nothing was packaged (-WorkersOnly)."
+    return
 }
 
 # ---- Package ----------------------------------------------------------------

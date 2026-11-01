@@ -82,10 +82,19 @@ publishes only after this step and the test suite succeeded.
 
 ## 4. Publishing (needs authorization)
 
+**Cut the tag from a committed tree.** `v1.0.6` was tagged while the entry-point changes for the
+restart and performance-profile switches were still uncommitted, so the tagged tree shipped a
+string table whose `Cli.Restart.*` keys no code referenced and CI's dead-key check failed on it.
+`git status --porcelain` must be empty before tagging, and the gate must have passed on exactly
+that tree.
+
 Either push a tag whose name is `v<version>` matching `ModuleVersion`, which runs
 `.github/workflows/release.yml`, or run that workflow manually with the version as input. The
-workflow builds the workers, packages, runs `tests/Bootstrap.Tests.ps1` and
-`tests/ReleasePackage.Tests.ps1`, and then uploads the six files with:
+workflow installs the validation modules, runs the **full gate** -
+`pwsh -NoProfile -File tools/Invoke-Validation.ps1`, which builds the host worker itself and
+exits non-zero unless every executed check passed - and only then builds all four workers,
+packages and validates them, runs `tests/Bootstrap.Tests.ps1` and
+`tests/ReleasePackage.Tests.ps1`, and finally uploads the six files with:
 
 ```bash
 gh release create "v$VERSION" \

@@ -317,6 +317,34 @@ function Get-WtRuntimeProfile
 
 <#
 .SYNOPSIS
+    Returns the culture name the interface and the diagnostics report.
+.DESCRIPTION
+    .NET names the invariant culture with an empty string, and a host started under an
+    invariant locale (a build agent with LC_ALL=C, for example) leaves both the UI culture and
+    the formatting culture unnamed. An empty value is not a readable culture: it made the
+    diagnostics header and the environment snapshot look as if the culture had not been read at
+    all, when in fact it had been read correctly. The invariant culture is therefore reported
+    under the name .NET itself uses for it in prose, so the field always carries a fact.
+#>
+function Get-WtCultureName
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ()
+
+    foreach ($Culture in @(
+            [System.Globalization.CultureInfo]::CurrentUICulture,
+            [System.Globalization.CultureInfo]::CurrentCulture))
+    {
+        $Name = [string]$Culture.Name
+        if ($Name) { return $Name }
+    }
+
+    return 'Invariant'
+}
+
+<#
+.SYNOPSIS
     Reports whether the runtime supports one named capability.
 #>
 function Test-WtRuntimeCapability

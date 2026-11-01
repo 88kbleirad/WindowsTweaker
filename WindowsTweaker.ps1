@@ -38,6 +38,16 @@
     extra safety net that needs elevation and System Protection enabled. The terminal
     interface never creates one on its own.
 
+.PARAMETER RestartAfterApply
+    Restart the machine after the batch finishes, once, and only when every change was
+    applied, verified and fully recorded in the journal. Opt-in per invocation, never
+    remembered. Refused together with -WhatIf and with any switch that does not apply
+    changes, and unavailable on a platform that cannot restart. Refused (with the applied
+    changes kept) if anything failed, was cancelled or skipped, if verification or
+    compensating restoration ran, or if the journal could not record a stage. Nothing is
+    force-closed, so unsaved work can delay or prevent the restart. The countdown runs in
+    this process: press Escape to cancel it.
+
 .PARAMETER Preset
     Apply a preset: a shipped or user preset name, or the path of a preset JSON file.
     Every entry is applied through Invoke-WtTweak, so -WhatIf previews the whole preset
@@ -277,10 +287,12 @@ param
     [Parameter(Mandatory = $false)][string]$State,
     [Parameter(Mandatory = $false)][hashtable]$Arguments,
     [Parameter(Mandatory = $false)][switch]$IncludeRestorePoint,
+    [Parameter(Mandatory = $false)][switch]$RestartAfterApply,
     [Parameter(Mandatory = $false)][string]$Preset,
     [Parameter(Mandatory = $false)][switch]$PresetList,
     [Parameter(Mandatory = $false)][string]$PresetExport,
     [Parameter(Mandatory = $false)][ValidateSet('Auto', 'TrueColor', 'Ansi256', 'Ansi16', 'Mono')][string]$Colour = 'Auto',
+    [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Balanced', 'Low-resource')][string]$PerfProfile = 'Auto',
     [Parameter(Mandatory = $false)][switch]$Ascii,
     [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Unicode', 'NerdFont', 'ASCII', 'None')][string]$Icons = 'Auto',
     [Parameter(Mandatory = $false)][switch]$Gui,
@@ -455,6 +467,89 @@ foreach ($Modifier in $DanglingModifiers)
 {
     if ($Modifier.Flag -or -not $Modifier.Value) { continue }
     Write-WtEntryPointUsageError -Message (Get-WtString -Key 'Entry.ModifierNeedsCommand' -Arguments @($Modifier.Modifier, $Modifier.Owner))
+}
+
+# ---- restart after applying ------------------------------------------------------------------
+# The request is validated before any switch runs. A restart makes sense only for the two
+# switches that apply changes (-Id, -Preset); everything else is a read-only or preview
+# invocation, and asking for a restart there is a usage error rather than a silent no-op.
+# The rules themselves live in the module (Test-WtRestartRequest / Invoke-WtBatchRestart),
+# so the command line and the interface cannot drift apart.
+$RestartApplies = [bool]($Id -or $Preset)
+$RestartDecision = Test-WtRestartRequest -Requested:$RestartAfterApply -Preview:$DryRun -ReadOnly:(-not $RestartApplies)
+
+if ($RestartAfterApply -and -not $RestartDecision.Allowed)
+{
+    $ReasonKey = switch ($RestartDecision.Reason)
+    {
+        'preview' { 'Cli.Restart.Preview' }
+        'readonly' { 'Cli.Restart.ReadOnly' }
+        'unsupported' { 'Cli.Restart.Unsupported' }
+        default { 'Cli.Restart.Preview' }
+    }
+
+    Write-WtEntryPointUsageError -Message (Get-WtString -Key 'Cli.Restart.Rejected' -Arguments @((Get-WtString -Key $ReasonKey)))
+}
+
+<#
+.SYNOPSIS
+    Runs the opt-in restart for a finished command-line batch and reports it in words.
+.DESCRIPTION
+    The decision and the countdown live in the module (Invoke-WtBatchRestart); this only
+    prints what happened. The countdown needs a console that can deliver a cancellation, so
+    without one no restart is requested at all - a countdown nobody can stop is worse than
+    no countdown.
+#>
+function Write-WtEntryPointRestart
+{
+    param
+    (
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @(),
+        [Parameter(Mandatory = $false)][int]$Skipped = 0,
+        [Parameter(Mandatory = $false)][string]$Requirement = ''
+    )
+
+    if (-not $RestartAfterApply) { return }
+
+    # First the verdict, so a refused restart explains itself even on a non-interactive
+    # invocation; then, only for an eligible batch, the countdown (which needs a console
+    # that can deliver a cancellation, so without one nothing is requested at all).
+    $Verdict = Invoke-WtBatchRestart -Results $Results -Failures $Failures -Skipped $Skipped -Requirement $Requirement -DryVerdict
+
+    if ($Verdict.Outcome -ne 'eligible')
+    {
+        foreach ($Line in @($Verdict.Lines))
+        {
+            Write-Host ("restart: {0}" -f $Line)
+        }
+        Write-Host (Get-WtString -Key 'Tui.Restart.Manual')
+        return
+    }
+
+    if (-not (Test-WtInteractiveConsole))
+    {
+        Write-Host (Get-WtString -Key 'Cli.Restart.NeedInteractive')
+        Write-Host (Get-WtString -Key 'Tui.Restart.Manual')
+        return
+    }
+
+    $Outcome = Invoke-WtBatchRestart -Results $Results -Failures $Failures -Skipped $Skipped -Requirement $Requirement
+
+    switch ($Outcome.Outcome)
+    {
+        'requested' { Write-Host (Get-WtString -Key 'Cli.Restart.Requested') }
+        'cancelled' { Write-Host (Get-WtString -Key 'Cli.Restart.Cancelled') }
+        'failed' { Write-Host (Get-WtString -Key 'Cli.Restart.Failed' -Arguments @([string]$Outcome.Message)) }
+        default
+        {
+            foreach ($Line in @($Outcome.Lines))
+            {
+                Write-Host ("restart: {0}" -f $Line)
+            }
+            Write-Host (Get-WtString -Key 'Tui.Restart.Manual')
+        }
+    }
 }
 
 # Applies one reviewed preset entry and reports the outcome exactly as the module does.
@@ -649,6 +744,8 @@ switch ($true)
         }
 
         $Failed = 0
+        $BatchResults = [System.Collections.Generic.List[object]]::new()
+        $BatchFailures = [System.Collections.Generic.List[object]]::new()
         foreach ($Entry in $Source.Entries)
         {
             $ApplyParameters = @{ Id = $Entry.Id; State = $Entry.State }
@@ -661,16 +758,23 @@ switch ($true)
             catch
             {
                 Write-Host ("[failed] {0}: {1}" -f $Entry.Id, $_.Exception.Message)
+                $BatchFailures.Add(@{ Message = $_.Exception.Message })
                 $Failed++
                 continue
             }
 
+            $BatchResults.Add($Result)
             Write-WtEntryPointResult -Result $Result
             if ($Result.Status -in 'failed', 'unsupported')
             {
                 $Failed++
             }
         }
+
+        # The restart decision is made after the whole batch has reported, exactly like the
+        # interface does, and its outcome is reported separately from the apply outcomes.
+        Write-WtEntryPointRestart -Results $BatchResults.ToArray() -Failures $BatchFailures.ToArray() `
+            -Requirement (Get-WtRestartRequirementInternal -Entries @($Source.Entries))
 
         Exit-WtEntryPoint -Code ($(if ($Failed -gt 0) { 1 } else { 0 }))
     }
@@ -697,6 +801,10 @@ switch ($true)
         {
             Write-Host ("  - {0}" -f $Message)
         }
+
+        # Single-tweak apply: the same restart rules, one result. -WhatIf is already refused
+        # before any switch runs.
+        Write-WtEntryPointRestart -Results @($Result) -Requirement ([string]$Result.Restart)
 
         # Exit codes are meaningful for automation: 0 success/unchanged/dry run,
         # 1 failure or unsupported, 2 nothing to do. The code leaves through the single exit
@@ -1172,7 +1280,7 @@ switch ($true)
     }
     default
     {
-        $ExitCode = Start-WtTui -Language (Get-WtLanguage) -DryRun:$DryRun -Colour $Colour -Ascii:$Ascii -Icons $Icons -WorkerBackend $WorkerBackend -InputDiagnostics:$InputDiagnostics
+        $ExitCode = Start-WtTui -Language (Get-WtLanguage) -DryRun:$DryRun -Colour $Colour -Ascii:$Ascii -Icons $Icons -WorkerBackend $WorkerBackend -InputDiagnostics:$InputDiagnostics -Profile $PerfProfile
         Exit-WtEntryPoint -Code ([int]$ExitCode)
     }
 }

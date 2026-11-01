@@ -21,6 +21,58 @@ function Write-Phase
     Write-Host ('=' * 78)
 }
 
+Write-Phase '0. Host worker binary (phase 6 drives the compiled worker into SQLite)'
+
+# tests/Monitor.Tests.ps1 starts metric recording through the compiled worker and writes into
+# a real SQLite store, and the worker refuses to fall back: without the binary those two tests
+# fail instead of skipping, by design - the SQLite path is covered by running it. worker/bin/
+# is gitignored build output, so a fresh checkout has no worker at all. Build it for this host
+# through the packaging tool's own build path: one builder and one platform table, no second
+# copy that can drift.
+$WorkerVersion = (Import-PowerShellDataFile -LiteralPath (Join-Path $Root 'src/WindowsTweaker/WindowsTweaker.psd1')).ModuleVersion
+$PreviousTestOnly = $env:WT_BOOTSTRAP_TEST_ONLY
+$env:WT_BOOTSTRAP_TEST_ONLY = '1'
+try
+{
+    . (Join-Path $Root 'bootstrap/implementation.ps1')
+}
+finally
+{
+    if ($null -eq $PreviousTestOnly) { Remove-Item Env:\WT_BOOTSTRAP_TEST_ONLY -ErrorAction Ignore }
+    else { $env:WT_BOOTSTRAP_TEST_ONLY = $PreviousTestOnly }
+}
+
+$HostWorkerKey = Get-WtBootstrapPlatformKey
+$HostWorkerPath = Join-Path $Root ((Get-WtBootstrapPlatform -PlatformKey $HostWorkerKey).WorkerPath)
+$HostWorkerRelative = $HostWorkerPath.Substring($Root.Length).TrimStart('\', '/')
+
+if (Get-Command go -ErrorAction Ignore)
+{
+    # Rebuild whenever Go is available: the tests must exercise a worker built from the Go
+    # sources in this tree, never one left behind by an earlier run.
+    try
+    {
+        $WorkerOutput = & (Join-Path $PSScriptRoot 'New-ReleasePackage.ps1') -Version $WorkerVersion -Platforms $HostWorkerKey -WorkersOnly 2>&1
+        $WorkerOutput | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { throw "the worker build exited with $LASTEXITCODE" }
+        Write-Host ("host worker ({0}): built {1}" -f $HostWorkerKey, $HostWorkerRelative)
+    }
+    catch
+    {
+        Write-Host ("host worker build FAILED: {0}" -f $_.Exception.Message)
+        $Failures.Add('The host worker binary could not be built, so the SQLite metric tests cannot run')
+    }
+}
+elseif (Test-Path -LiteralPath $HostWorkerPath -PathType Leaf)
+{
+    Write-Host ("host worker ({0}): reused {1} (no Go toolchain on PATH)" -f $HostWorkerKey, $HostWorkerRelative)
+}
+else
+{
+    Write-Host ("host worker: MISSING and no Go toolchain on PATH to build {0}" -f $HostWorkerRelative)
+    $Failures.Add('The host worker binary is missing and no Go toolchain is available to build it (docs/WORKER.md)')
+}
+
 Write-Phase '1. AST parse of every PowerShell file'
 
 # The unreviewed reference material is excluded from the parse; everything that can be

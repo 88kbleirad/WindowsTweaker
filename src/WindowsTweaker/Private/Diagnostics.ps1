@@ -378,7 +378,7 @@ function Get-WtAppVersion
         Platform      = $Platform
         OSBuild       = $OsBuild
         OSVersion     = [string]$OsVersion.VersionString
-        Culture       = [System.Globalization.CultureInfo]::CurrentUICulture.Name
+        Culture       = Get-WtCultureName
     }
 }
 

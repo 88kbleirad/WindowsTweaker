@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -65,7 +65,7 @@ jobs:
           "version=$Version" >> $env:GITHUB_OUTPUT
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: worker/go.mod
           cache-dependency-path: worker/go.sum
@@ -79,14 +79,24 @@ jobs:
               Install-Module $Name -Force -Scope CurrentUser -SkipPublisherCheck -Confirm:$false -ErrorAction Stop
             }
           }
+          # Print what the gate will actually run with. A gate failure on the runner has to be
+          # diagnosable from the log alone, and the image ships its own PowerShell and modules.
+          'PowerShell      : {0}' -f $PSVersionTable.PSVersion
+          foreach ($Name in @('Pester', 'PSScriptAnalyzer')) {
+            $Resolved = Get-Module -ListAvailable $Name | Sort-Object Version -Descending | Select-Object -First 1
+            '{0,-15} : {1}' -f $Name, $(if ($Resolved) { $Resolved.Version } else { 'missing' })
+          }
+          'Locale          : LC_ALL={0} LANG={1} culture={2}' -f $env:LC_ALL, $env:LANG, (Get-Culture).Name
 
       - name: Full validation gate (must pass before anything is packaged)
         shell: pwsh
         run: |
-          # The project's own gate: AST parse, catalog and insight invariants, PSScriptAnalyzer,
-          # the Windows PowerShell 5.1 compatibility gate, the whole Pester suite and the dry-run
-          # proof. It exits non-zero unless every executed check passed, so a red gate stops the
-          # job here and nothing is packaged or published from a tree that failed its own gate.
+          # The project's own gate: builds the host worker (phase 0 - the SQLite metric tests
+          # drive the compiled worker), AST parse, catalog and insight invariants,
+          # PSScriptAnalyzer, the Windows PowerShell 5.1 compatibility gate, the whole Pester
+          # suite and the dry-run proof. It exits non-zero unless every executed check passed, so
+          # a red gate stops the job here and nothing is packaged or published from a tree that
+          # failed its own gate.
           pwsh -NoProfile -File ./tools/Invoke-Validation.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "tools/Invoke-Validation.ps1 exited with $LASTEXITCODE. Refusing to package or publish."
