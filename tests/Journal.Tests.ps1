@@ -484,6 +484,371 @@ Describe 'Durable journal' {
     }
 }
 
+Describe 'Atomic store persistence' {
+
+    BeforeEach {
+        & $script:ResetStore
+        & $script:InitializePlatform
+    }
+
+    It 'creates the store on the first write and replaces it on the next one' {
+        InModuleScope WindowsTweaker {
+            # The real System.IO.File.Replace of the running runtime. The first write creates the
+            # file; every write after it has to swap an existing file, which is the call that
+            # threw "The path is not of a legal form." on Windows PowerShell 5.1 and made every
+            # stage update fail.
+            (Test-WtAtomicReplaceSupported) | Should -BeTrue
+
+            $First = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+            $First.Status | Should -Be 'succeeded'
+            $First.Journal.Persisted | Should -BeTrue
+            Test-Path -LiteralPath $env:WT_STATE_PATH | Should -BeTrue
+
+            $Second = Invoke-WtTweak -Id 'Test.JournalThird' -State 'Enabled' -Confirm:$false
+            $Second.Status | Should -Be 'succeeded'
+            $Second.Journal.Persisted | Should -BeTrue
+
+            @(Get-WtOperation -Limit 0).Count | Should -Be 2
+            (Read-WtStateStore).Corrupt | Should -BeFalse
+
+            # No temporary file survives either write.
+            @(Get-ChildItem -LiteralPath (Split-Path -Path $env:WT_STATE_PATH -Parent) -Force |
+                Where-Object { $_.Name -like '*.tmp' }).Count | Should -Be 0
+        }
+    }
+
+    It 'persists a store whose path contains spaces and Vietnamese characters' {
+        InModuleScope WindowsTweaker {
+            $Previous = $env:WT_STATE_PATH
+            try
+            {
+                $Directory = Join-Path $env:WT_DATA_ROOT 'thư mục có dấu cách'
+                $env:WT_STATE_PATH = Join-Path $Directory 'trạng thái.json'
+
+                $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+                $Result.Status | Should -Be 'succeeded'
+                Test-Path -LiteralPath $env:WT_STATE_PATH | Should -BeTrue
+
+                # The second write replaces the file again: the path form is what used to break.
+                $Again = Invoke-WtTweak -Id 'Test.JournalThird' -State 'Enabled' -Confirm:$false
+                $Again.Status | Should -Be 'succeeded'
+                @(Get-WtOperation -Limit 0).Count | Should -Be 2
+                (Read-WtStateStore).Corrupt | Should -BeFalse
+                @(Get-ChildItem -LiteralPath $Directory -Force | Where-Object { $_.Name -like '*.tmp' }).Count | Should -Be 0
+            }
+            finally
+            {
+                $env:WT_STATE_PATH = $Previous
+            }
+        }
+    }
+
+    It 'refuses the write before any mutation when the runtime cannot replace atomically' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtAtomicReplaceSupported { $false }
+
+            $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+
+            $Result.Status | Should -Be 'failed'
+            $Result.Journal.Persisted | Should -BeFalse
+            $Result.Journal.UncertainStage | Should -Be 'planned'
+            $Result.Journal.MutationStarted | Should -BeFalse
+            (Test-WtJournalStopRequired -Result $Result) | Should -BeTrue
+            @($Result.Messages) -join ' ' | Should -Match 'cannot replace a file atomically'
+            $Script:TestWrites | Should -Be 0 -Because 'nothing may be changed when the write path is unusable'
+            Test-Path -LiteralPath $env:WT_STATE_PATH | Should -BeFalse
+        }
+    }
+
+    It 'keeps the previous store and leaves no temporary file behind when the write fails' {
+        InModuleScope WindowsTweaker {
+            Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false | Out-Null
+            $Before = Get-Content -LiteralPath $env:WT_STATE_PATH -Raw
+
+            # A destination whose parent cannot be a directory: the temporary file cannot be
+            # created there, so the write fails where every failure path must fail - without
+            # touching the store that is already on disk.
+            $Blocker = Join-Path $env:WT_DATA_ROOT 'blocked-store'
+            Set-Content -LiteralPath $Blocker -Value 'not a directory' -NoNewline
+
+            { Write-WtAtomicFile -Path (Join-Path $Blocker 'state.json') -Value '{}' } |
+                Should -Throw -ExpectedMessage '*could not be written atomically*'
+
+            (Get-Content -LiteralPath $Blocker -Raw) | Should -Be 'not a directory'
+            (Get-Content -LiteralPath $env:WT_STATE_PATH -Raw) | Should -Be $Before
+            (Read-WtStateStore).Corrupt | Should -BeFalse
+            @(Get-ChildItem -LiteralPath (Split-Path -Path $env:WT_STATE_PATH -Parent) -Force |
+                Where-Object { $_.Name -like '*.tmp' }).Count | Should -Be 0
+        }
+    }
+
+    It 'refuses a locked store without writing, and breaks a stale lock' {
+        InModuleScope WindowsTweaker {
+            $LockPath = "$($env:WT_STATE_PATH).lock"
+            New-WtDirectory -Path $env:WT_DATA_ROOT
+            Set-Content -LiteralPath $LockPath -Value 'pid=1;utc=now' -NoNewline
+
+            $Script:WtStateLockTimeoutMs = 200
+            try
+            {
+                { Write-WtStateStore -Store (Read-WtStateStore) } |
+                    Should -Throw -ExpectedMessage '*locked by another process*'
+            }
+            finally
+            {
+                $Script:WtStateLockTimeoutMs = 5000
+            }
+
+            (Get-Content -LiteralPath $LockPath -Raw) | Should -Be 'pid=1;utc=now' -Because 'a fresh lock is owned by the other process'
+            Test-Path -LiteralPath $env:WT_STATE_PATH | Should -BeFalse
+
+            # A lock older than the stale threshold is broken instead of blocking the store
+            # forever.
+            (Get-Item -LiteralPath $LockPath).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddMinutes(-5)
+            Write-WtStateStore -Store (Read-WtStateStore)
+            (Read-WtStateStore).Corrupt | Should -BeFalse
+            Test-Path -LiteralPath $LockPath | Should -BeFalse
+        }
+    }
+
+    It 'reports denied access without touching the store that is already there' {
+        if ($IsWindows) { Set-ItResult -Skipped -Because 'the read-only directory case is exercised through the write path on Windows'; return }
+
+        InModuleScope WindowsTweaker {
+            Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false | Out-Null
+            $Before = Get-Content -LiteralPath $env:WT_STATE_PATH -Raw
+            $Directory = Split-Path -Path $env:WT_STATE_PATH -Parent
+
+            # No write permission on the directory: the temporary file cannot be created and the
+            # destination cannot be replaced, so the operation must refuse before mutating.
+            [System.IO.File]::SetUnixFileMode($Directory, [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserExecute)
+            try
+            {
+                $Script:TestWrites = 0
+                $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+                $Result.Status | Should -Be 'failed'
+                (Test-WtJournalStopRequired -Result $Result) | Should -BeTrue
+                $Result.Journal.UncertainStage | Should -Be 'planned'
+                $Script:TestWrites | Should -Be 0
+                (Get-Content -LiteralPath $env:WT_STATE_PATH -Raw) | Should -Be $Before
+            }
+            finally
+            {
+                [System.IO.File]::SetUnixFileMode($Directory, [System.IO.UnixFileMode]::UserRead -bor [System.IO.UnixFileMode]::UserWrite -bor [System.IO.UnixFileMode]::UserExecute)
+            }
+        }
+    }
+}
+
+Describe 'Journal persistence failures' {
+
+    BeforeEach {
+        & $script:ResetStore
+        & $script:InitializePlatform
+    }
+
+    It 'changes nothing when the recovery record cannot be written' {
+        InModuleScope WindowsTweaker {
+            $Script:StoreWrites = 0
+            Mock Write-WtAtomicFile {
+                param ($Path, $Value)
+                $Script:StoreWrites++
+                throw 'the store is not writable'
+            }
+
+            $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+
+            $Result.Status | Should -Be 'failed'
+            $Result.Journal.Persisted | Should -BeFalse
+            $Result.Journal.UncertainStage | Should -Be 'planned'
+            $Result.Journal.MutationStarted | Should -BeFalse
+            $Result.Journal.DurableRecords | Should -Be 0
+            $Result.Journal.InMemoryRecords | Should -Be 0
+            (Test-WtJournalStopRequired -Result $Result) | Should -BeTrue
+            $Script:TestWrites | Should -Be 0 -Because 'the way back has to exist before anything is changed'
+            @(Get-WtInterruptedOperation).Count | Should -Be 0
+        }
+    }
+
+    It 'reports a change that reached the system while its recovery record did not' {
+        InModuleScope WindowsTweaker {
+            $Script:StoreWrites = 0
+            Mock Write-WtAtomicFile {
+                param ($Path, $Value)
+                $Script:StoreWrites++
+                if ($Script:StoreWrites -eq 1) { [System.IO.File]::WriteAllText($Path, [string]$Value); return }
+                throw 'the store stopped accepting writes'
+            }
+
+            $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+
+            # The provider double wrote the value: the system really did change.
+            $Script:TestRegistry['HKCU:\Software\WtJournal|Target'].Value | Should -Be 1
+
+            $Result.Status | Should -Be 'partial' -Because 'a change whose record is incomplete is neither completed nor "nothing changed"'
+            $Result.Journal.Persisted | Should -BeFalse
+            $Result.Journal.UncertainStage | Should -Be 'applied'
+            $Result.Journal.FailedStages | Should -Contain 'applied'
+            $Result.Journal.MutationStarted | Should -BeTrue
+            $Result.Journal.DurableRecords | Should -Be 0
+            $Result.Journal.InMemoryRecords | Should -BeGreaterThan 0
+            @($Result.Journal.Records).Count | Should -BeGreaterThan 0 -Because 'the in-memory capture is preserved for the caller'
+            (Test-WtJournalStopRequired -Result $Result) | Should -BeTrue
+            @($Result.Messages) -join ' ' | Should -Match 'exist only in this process'
+
+            # On disk the entry is still the planned one, with no record invented for it.
+            $Entry = @(Get-WtOperation -Limit 10)[0]
+            $Entry.stage | Should -Be 'planned'
+            @($Entry.records).Count | Should -Be 0
+
+            # Nothing is offered for restore - there is no baseline to replay - but the
+            # interrupted operation stays visible for inspection.
+            (Get-WtRollbackCandidate -TweakId 'Test.JournalTarget') | Should -BeNullOrEmpty
+            $Interrupted = @(Get-WtInterruptedOperation -Targets)
+            $Interrupted.Count | Should -Be 1
+            $Interrupted[0].CanRestore | Should -BeFalse
+            @($Interrupted[0].Targets).Count | Should -Be 1
+            $Interrupted[0].Targets[0].Status | Should -Be 'matching' -Because 'the live value shows the change that was applied'
+        }
+    }
+
+    It 'repairs an intermediate stage failure with the following write' {
+        InModuleScope WindowsTweaker {
+            $Script:StoreWrites = 0
+            Mock Write-WtAtomicFile {
+                param ($Path, $Value)
+                $Script:StoreWrites++
+                if ($Script:StoreWrites -eq 2) { throw 'transient failure on the applied stage' }
+                [System.IO.File]::WriteAllText($Path, [string]$Value)
+            }
+
+            $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+
+            $Result.Status | Should -Be 'succeeded'
+            $Result.Journal.Persisted | Should -BeTrue
+            $Result.Journal.FailedStages | Should -Contain 'applied'
+            $Result.Journal.UncertainStage | Should -Be ''
+            $Result.Journal.DurableRecords | Should -BeGreaterThan 0
+            $Result.Journal.InMemoryRecords | Should -Be 0
+            (Test-WtJournalStopRequired -Result $Result) | Should -BeFalse
+            @($Result.Messages) -join ' ' | Should -Match 'repaired'
+
+            $Entry = @(Get-WtOperation -Limit 10)[0]
+            $Entry.stage | Should -Be 'completed'
+            @($Entry.records).Count | Should -BeGreaterThan 0
+        }
+    }
+
+    It 'keeps a capture that is on disk restorable when only the final stage fails' {
+        InModuleScope WindowsTweaker {
+            $Script:TestRegistry['HKCU:\Software\WtJournal|Target'] = @{ Kind = 'DWord'; Value = 0 }
+
+            $Script:StoreWrites = 0
+            Mock Write-WtAtomicFile {
+                param ($Path, $Value)
+                $Script:StoreWrites++
+                if ($Script:StoreWrites -eq 3) { throw 'the final stage could not be written' }
+                [System.IO.File]::WriteAllText($Path, [string]$Value)
+            }
+
+            $Result = Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false
+
+            $Result.Status | Should -Be 'partial'
+            $Result.Journal.UncertainStage | Should -Be 'final'
+            $Result.Journal.DurableRecords | Should -BeGreaterThan 0
+            $Result.Journal.InMemoryRecords | Should -Be 0
+            (Test-WtJournalStopRequired -Result $Result) | Should -BeTrue
+
+            # The capture reached the store, so the operation stays restorable even though its
+            # final stage is missing, and it is reported as interrupted.
+            $Entry = @(Get-WtOperation -Limit 10)[0]
+            $Entry.stage | Should -Be 'applied'
+            @($Entry.records).Count | Should -BeGreaterThan 0
+            (Get-WtRollbackCandidate -TweakId 'Test.JournalTarget').operationId | Should -Be $Result.OperationId
+            @(Get-WtInterruptedOperation).Count | Should -Be 1
+
+            # Restoring replays exactly the captured value (the mock only failed the third write).
+            $Script:TestRegistry['HKCU:\Software\WtJournal|Target'].Value | Should -Be 1
+            $Undo = Undo-WtTweak -Id 'Test.JournalTarget' -Confirm:$false
+            $Undo.Status | Should -Be 'succeeded'
+            $Script:TestRegistry['HKCU:\Software\WtJournal|Target'].Value | Should -Be 0
+        }
+    }
+
+    It 'stops a session restore when a step cannot be recorded' {
+        InModuleScope WindowsTweaker {
+            Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false | Out-Null
+            Invoke-WtTweak -Id 'Test.JournalThird' -State 'Enabled' -Confirm:$false | Out-Null
+
+            # The first restored step cannot be recorded; the second must not be attempted.
+            Mock Undo-WtTweak {
+                param ($HistoryId, [switch]$Force)
+                [pscustomobject]@{
+                    PSTypeName = 'WindowsTweaker.RollbackResult'
+                    TweakId    = 'Test.JournalTarget'
+                    HistoryId  = $HistoryId
+                    Status     = 'partial'
+                    Operations = @()
+                    Messages   = @('the restore was performed but not recorded')
+                    Verification = $null
+                    Journal    = New-WtJournalState -FailedStages @('final') -UncertainStage 'final' -DurableRecords 1 `
+                        -MutationStarted $true -Message 'the restore was performed but not recorded'
+                }
+            }
+
+            $Result = Undo-WtSession -Confirm:$false
+
+            $Result.Status | Should -Be 'partial'
+            @($Result.Steps).Count | Should -Be 1 -Because 'the remaining steps are not attempted'
+            $Result.Skipped | Should -Be 1
+            @($Result.Messages) -join ' ' | Should -Match 'Not attempted after the batch stopped'
+        }
+    }
+
+    It 'decides to stop a batch only for a result whose journal record is incomplete' {
+        InModuleScope WindowsTweaker {
+            # No result at all, and a result from a build that predates the durability report:
+            # neither may stop a batch.
+            (Test-WtJournalStopRequired -Result $null) | Should -BeFalse
+            (Test-WtJournalStopRequired -Result ([pscustomobject]@{ Status = 'succeeded' })) | Should -BeFalse
+
+            # A complete record, including the dry run that writes nothing, never stops a batch.
+            (Test-WtJournalStopRequired -Result ([pscustomobject]@{ Status = 'succeeded'; Journal = (New-WtJournalState -MutationStarted $true) })) | Should -BeFalse
+            (Test-WtJournalStopRequired -Result ([pscustomobject]@{ Status = 'dryrun'; Journal = (New-WtJournalState) })) | Should -BeFalse
+
+            # A record that is missing a stage, whether or not the system was touched, stops it.
+            (Test-WtJournalStopRequired -Result ([pscustomobject]@{ Status = 'partial'; Journal = (New-WtJournalState -FailedStages @('applied') -UncertainStage 'applied' -MutationStarted $true) })) | Should -BeTrue
+            (Test-WtJournalStopRequired -Result ([pscustomobject]@{ Status = 'failed'; Journal = (New-WtJournalState -FailedStages @('planned') -UncertainStage 'planned') })) | Should -BeTrue
+
+            # A failure that a later write repaired leaves nothing to stop for.
+            (Test-WtJournalStopRequired -Result ([pscustomobject]@{ Status = 'succeeded'; Journal = (New-WtJournalState -FailedStages @('applied') -UncertainStage '' -DurableRecords 1) })) | Should -BeFalse
+        }
+    }
+
+    It 'reports a restore that was performed but could not be recorded' {
+        InModuleScope WindowsTweaker {
+            $Script:TestRegistry['HKCU:\Software\WtJournal|Target'] = @{ Kind = 'DWord'; Value = 0 }
+            Invoke-WtTweak -Id 'Test.JournalTarget' -State 'Enabled' -Confirm:$false | Out-Null
+
+            $Script:StoreWrites = 0
+            Mock Write-WtAtomicFile {
+                param ($Path, $Value)
+                $Script:StoreWrites++
+                if ($Script:StoreWrites -ge 1) { throw 'the store stopped accepting writes' }
+            }
+
+            $Result = Undo-WtTweak -Id 'Test.JournalTarget' -Confirm:$false
+
+            $Script:TestRegistry['HKCU:\Software\WtJournal|Target'].Value | Should -Be 0 -Because 'the restore itself was performed'
+            $Result.Status | Should -Be 'partial'
+            $Result.Journal.Persisted | Should -BeFalse
+            (Test-WtJournalStopRequired -Result $Result) | Should -BeTrue
+            @($Result.Messages) -join ' ' | Should -Match 'still reports itself as not rolled back'
+            (Read-WtStateStore).History[0].rolledBack | Should -BeFalse
+        }
+    }
+}
+
 Describe 'Verified execution and compensation' {
 
     BeforeEach {

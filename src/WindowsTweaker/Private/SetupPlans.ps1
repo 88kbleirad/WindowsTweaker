@@ -581,6 +581,22 @@ function Invoke-WtSetupPlanInternal
 
         $Status = [string]$Apply.Status
 
+        # A journal record that could not be written stops the plan: the next step's way back
+        # cannot be stored either, so continuing would stack changes with no recovery data (and
+        # would repeat the same failure for every remaining step).
+        if (Test-WtJournalStopRequired -Result $Apply)
+        {
+            $Results.Add([pscustomobject]@{
+                StepId = [string]$Step.stepId
+                TweakId = $Resolved.Tweak.Id
+                State = $Resolved.State
+                Status = $Status
+                Reason = [string]$Apply.Journal.Message
+            })
+            $StopReason = Get-WtString -Key 'Setup.Plan.Stop.Journal' -Arguments @(($StepIndex + 1))
+            break
+        }
+
         # Uncertain outcomes (verification failed, external change) are never retried.
         if ($Status -in 'failed', 'review-required')
         {

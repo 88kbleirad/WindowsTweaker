@@ -144,7 +144,7 @@ function Read-WtSettings
 
 <#
 .SYNOPSIS
-    Writes the user settings file atomically (temp file + move).
+    Writes the user settings file in one atomic swap.
 .DESCRIPTION
     Refuses to write over a file this build could not have written: a newer settings file holds
     fields this schema does not know, and writing the current schema over it would drop them
@@ -166,12 +166,6 @@ function Write-WtSettings
         throw "The settings file was written by a newer version of WindowsTweaker (schema $ExistingVersion; this build supports $($Script:WtSettingsSchemaVersion)): $Path. Nothing was written; remove the file explicitly to start over."
     }
 
-    $Directory = Split-Path -Path $Path -Parent
-    if ($Directory)
-    {
-        New-WtDirectory -Path $Directory
-    }
-
     $Payload = [ordered]@{
         version  = $Script:WtSettingsSchemaVersion
         icons    = [string]$Settings.Icons
@@ -180,10 +174,11 @@ function Write-WtSettings
     }
 
     $Json = ConvertTo-WtJson -InputObject $Payload -Depth 8
-    $Temp = "$Path.tmp"
 
-    Write-WtTextFile -Path $Temp -Value $Json
-    Move-Item -LiteralPath $Temp -Destination $Path -Force
+    # The same one-swap persistence the state store uses. A presentation file is not recovery
+    # data, but a half-written one is still a file the next run cannot read, and Move-Item -Force
+    # deletes the destination before it moves.
+    Write-WtAtomicFile -Path $Path -Value ($Json + [System.Environment]::NewLine) | Out-Null
 }
 
 <#
@@ -375,8 +370,13 @@ function Exit-WtStateLock
 
 <#
 .SYNOPSIS
-    Writes the state store atomically (temp file + move).
+    Writes the state store in one atomic swap.
 .DESCRIPTION
+    The full document is written to a sibling temporary file, flushed to the device and swapped
+    in with one call (System.IO.File.Replace on an existing store, File.Move for the first one),
+    so an interrupted write leaves either the previous store or the new one. A runtime that
+    cannot do that refuses the write instead of degrading to a plain overwrite.
+
     Refuses to write a store whose FileVersion is newer than this build's schema, with or without
     -Force: -Force repairs a store that could not be parsed, while a newer one is well-formed and
     holds records this build cannot interpret.
@@ -431,39 +431,19 @@ function Write-WtStateStore
     }
 
     $Json = ConvertTo-WtJson -InputObject $Payload -Depth 32
-    $Temp = "$Path.tmp"
 
     $Token = $null
     if (-not $NoLock) { $Token = Enter-WtStateLock -Path $Path }
 
     try
     {
-        # Write, flush to disk, then replace in one step: an interrupted write leaves either
-        # the old file or the new one, never a half-written journal.
-        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
-        $Stream = [System.IO.File]::Open($Temp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        try
-        {
-            $Stream.Write($Bytes, 0, $Bytes.Length)
-            $Stream.Flush($true)
-        }
-        finally
-        {
-            $Stream.Dispose()
-        }
-
-        if ((Get-WtRuntimeProfile).IsWindows -and (Test-Path -LiteralPath $Path))
-        {
-            [System.IO.File]::Replace($Temp, $Path, $null, $true)
-        }
-        else
-        {
-            Move-Item -LiteralPath $Temp -Destination $Path -Force
-        }
+        # Write the complete document, flush it to the device, then swap it in with one call:
+        # an interrupted write leaves either the old store or the new one, never a half-written
+        # journal, and the runtime keeps the old file until the swap has succeeded.
+        Write-WtAtomicFile -Path $Path -Value $Json | Out-Null
     }
     finally
     {
-        Remove-Item -LiteralPath $Temp -Force -ErrorAction Ignore
         Exit-WtStateLock -Token $Token
     }
 }
@@ -606,12 +586,12 @@ function Get-WtRollbackCandidate
         }
 
         return @($Entries |
-            Where-Object { -not $_.rolledBack -and $_.outcome -in 'succeeded', 'partial' -and @($_.records).Count -gt 0 } |
+            Where-Object { Test-WtJournalRestorable -Entry $_ } |
             Select-Object -First 1)
     }
 
     return @($Entries |
-        Where-Object { -not $_.rolledBack -and $_.outcome -in 'succeeded', 'partial' -and @($_.records).Count -gt 0 } |
+        Where-Object { Test-WtJournalRestorable -Entry $_ } |
         Select-Object -First 1)
 }
 

@@ -677,6 +677,129 @@ powershell.exe -NoProfile -Command "Invoke-Pester -Path ./tests/Bootstrap.Tests.
 handshake; `engineVersion` 1.0.1 in both manifests, `ModuleVersion` 1.0.1 inside each archive).
 The published `v1.0.0` release and its tag were not touched, and nothing was pushed or published.
 
+## 16. Journal persistence: the atomic store write and its failure paths (executed on Linux, **not** on Windows PowerShell 5.1)
+
+**Reported from the field (Windows PowerShell 5.1):** `Exception calling 'Replace' with '4'
+argument(s): 'The path is not of a legal form.'`, followed by "The operation journal could not
+record the applied stage" / "... could not be finalized", after a change that had already been
+applied and read back.
+
+**Root cause (reproduced, not inferred).** `Write-WtStateStore` published the store with
+`[System.IO.File]::Replace($Temp, $Path, $null, $true)`. PowerShell converts a plain `$null`
+literal to an empty string when it binds it to a `[string]` parameter, so `File.Replace` received
+`''` as the backup path and .NET rejected the empty path. Reproduced on this host (PowerShell
+7.6.9, .NET 8):
+
+```
+null-literal THREW: System.Management.Automation.MethodInvocationException: Exception calling
+"Replace" with "4" argument(s): "The value cannot be an empty string. (Parameter 'path')"
+NullString::Value: OK; dest updated
+empty-string THREW: ... "The value cannot be an empty string. (Parameter 'path')"
+```
+
+The binding step is the same on every runtime; only the message differs — .NET Framework
+(`Path.GetFullPath("")`, Windows PowerShell 5.1) reports exactly the field's text,
+`The path is not of a legal form.` The consequence explains the whole report: the first write of
+a run *creates* the store (`File.Move`, no replace) and succeeds, so the first tweak is applied
+while its `applied`/final stage writes fail; every later tweak fails *before* mutating because
+the store now exists and its `planned` write has to replace it.
+
+**Fix.** `Private/Compatibility.ps1` now owns the write path: `Test-WtAtomicReplaceSupported`
+(probes the exact overload before anything is written; a runtime without it refuses the write
+instead of degrading to delete-then-move) and `Write-WtAtomicFile` (temporary file in the
+destination's own directory, `Flush($true)`, one `File.Replace` with
+`[System.Management.Automation.Language.NullString]::Value`, `File.Move` for the first write,
+temporary file removed on failure, destination never deleted). `Write-WtStateStore` and
+`Write-WtSettings` both go through it. Journal stages now report their durability
+(`Journal.Persisted/FailedStages/UncertainStage/DurableRecords/InMemoryRecords/Records/
+MutationStarted/StopBatch`), a post-mutation persistence failure yields status `partial` and
+stops the batch (`Test-WtJournalStopRequired`, used by the interface worker, the setup plan, a
+session restore and the legacy window), and an entry whose capture is on disk stays restorable
+even when its final stage is missing (`Test-WtJournalRestorable`).
+
+**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1)**
+
+| Check | Evidence |
+|---|---|
+| The reported failure, on the real API | `[System.IO.File]::Replace($a, $b, $null, $true)` throws `ArgumentException` (empty path); the same call with `NullString::Value` succeeds |
+| First creation and replacement of an existing store | `tests/Journal.Tests.ps1` → "creates the store on the first write and replaces it on the next one" (real `File.Replace`, two operations on disk, no `*.tmp` left) |
+| Paths with spaces and Vietnamese characters | same file → "persists a store whose path contains spaces and Vietnamese characters" (`thư mục có dấu cách/trạng thái.json`, created and replaced) |
+| Paths, temp location and flushing of the helper outside the tests | module smoke run: `Write-WtAtomicFile` created, then replaced, a file under a Vietnamese directory; only the destination remained |
+| A runtime without `File.Replace` | "refuses the write before any mutation when the runtime cannot replace atomically": status `failed`, `UncertainStage = planned`, zero provider writes, no store created |
+| Failure preserves the previous store | "keeps the previous store and leaves no temporary file behind when the write fails" (destination byte-identical, no temp file) |
+| Lock contention and a stale lock | "refuses a locked store without writing, and breaks a stale lock" (fresh lock → clear refusal, nothing written; lock older than the threshold → broken, write succeeds) |
+| Denied access | "reports denied access without touching the store that is already there" (read-only directory: status `failed`, `StopBatch`, no provider write, store byte-identical) |
+| Failure before mutation | "changes nothing when the recovery record cannot be written" (0 provider writes, `UncertainStage = planned`, nothing interrupted on disk) |
+| Failure while saving the `applied` stage after a mutation | "reports a change that reached the system while its recovery record did not": the value *is* written, status `partial`, `UncertainStage = applied`, `DurableRecords = 0`, the in-memory capture is preserved, the on-disk entry stays `planned`, `Get-WtRollbackCandidate` offers nothing, `Get-WtInterruptedOperation -Targets` reports the live value as `matching` |
+| Failure while saving the final stage | "keeps a capture that is on disk restorable when only the final stage fails": `UncertainStage = final`, records durable, on-disk stage `applied`, the restore afterwards replays the captured value |
+| A stage failure repaired by a later write | "repairs an intermediate stage failure with the following write" (`Persisted`, records durable, failure still reported, no batch stop) |
+| Batch termination and one primary failure | worker decision: "decides to stop a batch only for a result whose journal record is incomplete"; interface: "stops the batch, reports one persistence failure and keeps the skipped items pending" (one primary line, `Journal stages not written: 1`, `Not attempted after the batch stopped: 1`, status line = the primary message, pending set unchanged); session restore: "stops a session restore when a step cannot be recorded" |
+| Rollback that happened but could not be recorded | "reports a restore that was performed but could not be recorded" (value restored, status `partial`, on-disk `rolledBack` still false) |
+| Recovery of an interrupted, restorable operation | the two tests above plus the existing interrupted-operation tests; `Test-WtJournalRestorable` is asserted through the rollback candidate, the restore plan and the drift view |
+
+**Not executed.** Every Windows-specific check in this section: the real `File.Replace` on
+Windows PowerShell 5.1 / .NET Framework, the `The path is not of a legal form.` text, a denied
+access through Windows ACLs (the executed denied-access test uses POSIX permission bits), and the
+interface worker end to end (the worker batch-stop test drives the exact event contract in-process
+because a real non-dry-run apply needs a Windows host). To run the persistence tests on a Windows
+host:
+
+```powershell
+powershell.exe -NoProfile -Command "Invoke-Pester -Path ./tests/Journal.Tests.ps1 -Output Detailed"
+pwsh -NoProfile -Command "Invoke-Pester -Path ./tests/Journal.Tests.ps1, ./tests/Tui.Tests.ps1 -Output Detailed"
+```
+
+They use isolated temporary stores (`WT_DATA_ROOT`), doubled providers and no broad preset, so no
+real tweak is applied. A `state.json` written by the defective build is **not** migrated or
+repaired automatically: `Get-WtInterruptedOperation -Targets` reports it read-only
+([STATE-JOURNAL.md](STATE-JOURNAL.md)).
+
+**One constraint the fix had to respect.** The apply/rollback runspaces (the interface worker and
+the WPF window) import the module themselves and can therefore only call its *exported* functions.
+The batch-stop decision is consequently read there as a property the engine sets
+(`$Result.Journal.StopBatch`), never by calling the private helper `Test-WtJournalStopRequired`,
+which is the in-module form of the same test (and the one the module's own batch runners call).
+The same constraint already applied to `Initialize-WtLogging` in those two script blocks; that call
+does not resolve, and it is harmless because `Write-WtLog` initializes logging lazily - left
+unchanged here, and recorded as an observation rather than a fix.
+
+**Patch release.** `ModuleVersion` is now `1.0.3`, and the packages were rebuilt locally with
+`tools/New-ReleasePackage.ps1 -Version 1.0.3` (four archives, worker handshake, 147 file hashes,
+`version` / `engineVersion` `1.0.3` in both manifests and `ModuleVersion` `1.0.3` inside each
+archive). The published `v1.0.0` release and tag were not touched, and nothing was pushed or
+published.
+
+## 17. TUI responsiveness: input-to-render path (executed on Linux; classic Windows console **not** executed)
+
+**Work.** The TUI renderers now diff the cell grid against the previous frame and write only
+changed rows; the plain (classic console / Windows PowerShell 5.1) renderer writes each changed
+row as buffered style segments instead of one per-cell call; unchanged frames write nothing;
+edge navigation and unchanged status/category/focus no longer mark the screen dirty; the main
+and monitor loops batch queued keys between renders (no key dropped, modal dialogs stop the
+batch); and the Overview drift/interrupted counts are cached on a five-second cadence. A
+bounded, opt-in performance ring records dispatch/handler/frame-build/frame-output durations
+and writes a median/p95/max summary (plus process CPU share) to the structured log at exit
+(`Start-WtTui -PerfDiagnostics` or `WT_TUI_PERF_DIAGNOSTICS=1`); it never records typed text.
+See [PERFORMANCE.md](PERFORMANCE.md).
+
+**Executed here (Linux, PowerShell 7.6.9, Pester 5.7.1)**
+
+| Check | Evidence |
+|---|---|
+| Render benchmark (verbatim legacy writers vs current, 120×40, 300 iterations) | navigation ANSI median 3.24 ms → 0.44 ms, static 2.18 → 0.34 ms; navigation plain 1.58 → 0.45 ms, static 1.47 → 0.33 ms; static frames write 0 rows (`tools/Bench-TuiRender.ps1`) |
+| Writer byte/row behavior | `tests/TuiRender.Tests.ps1` "Console writers": first frame written, identical frame writes zero bytes, one mutated row writes a small delta (ANSI byte-counted; plain row-counter) |
+| Row invalidation | first write all rows changed; after write none; only the edited row changed; `Reset-WtScreenDiff` forces all |
+| Key batching | 12 queued arrows handled in one step, few renders, `ItemIndex` advanced by 12, queue empty; Escape/Enter survive a batch |
+| Overview cache | fresh cache used as-is; backdated cache recomputes once |
+| Diagnostics ring | bounded at 1024 samples; percentiles computed |
+| Full suite | 561 passed / 0 failed / 6 skipped (Windows-only skips unchanged) |
+
+**Not executed.** The real classic Windows console and Windows PowerShell 5.1 writing path
+(per-cell `[Console]` calls, conhost rendering, held-key autorepeat on Windows input). The
+plain renderer paths are exercised on a PTY/redirected console here; measurement on the user's
+console should use `Start-WtTui -PerfDiagnostics` and compare the log summary across runs —
+the benchmark's relative deltas transfer, absolute console latencies do not.
+
 ## Not executed here (Windows-only integration checks)
 
 The declarative definitions added to `Data/Catalog/builtin.json` are in the same position as the

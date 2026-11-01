@@ -787,6 +787,76 @@ Describe 'Dialogs' {
 
 Describe 'Backend workflows and results' {
 
+    It 'stops the batch, reports one persistence failure and keeps the skipped items pending' {
+        InModuleScope WindowsTweaker {
+            $State = New-WtTestState
+            Initialize-WtTuiState -State $State
+
+            $Entry = $State.States | Where-Object { $_.Id -eq 'Privacy.AdvertisingId' } | Select-Object -First 1
+            $Second = $State.States | Where-Object { $_.Id -eq 'Privacy.BingSearch' } | Select-Object -First 1
+            $State.Pending[$Entry.Id] = New-WtTestPending -Entry $Entry -Target 'Disabled'
+            $State.Pending[$Second.Id] = New-WtTestPending -Entry $Second -Target 'Disabled'
+
+            # The exact event sequence the worker runspace produces: the first change reached the
+            # system, its journal record did not, and the rest of the batch was never started.
+            $Failed = [pscustomobject]@{
+                TweakId = 'Privacy.AdvertisingId'; State = 'Disabled'; Status = 'partial'; Restart = 'None'
+                Operations = @(); Messages = @('the recovery records exist only in this process')
+                Verified = $true; Compensation = $null
+                Journal = New-WtJournalState -FailedStages @('applied') -UncertainStage 'applied' `
+                    -Records @([pscustomobject]@{ resource = 'Registry' }) -MutationStarted $true `
+                    -Message 'The recovery records for 1 target(s) could not be written to the state store'
+            }
+
+            $Worker = @{
+                Queue    = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
+                Results  = [System.Collections.Generic.List[object]]::new()
+                Failures = [System.Collections.Generic.List[object]]::new()
+                Handle   = $null
+                Total    = 2
+            }
+            $Worker.Queue.Enqueue(@{ Kind = 'start'; Id = $Entry.Id; Label = $Entry.Id; Index = 1; Total = 2 })
+            $Worker.Queue.Enqueue(@{ Kind = 'result'; Id = $Entry.Id; Label = $Entry.Id; Index = 1; Total = 2; Result = $Failed })
+            $Worker.Queue.Enqueue(@{ Kind = 'stopped'; Id = $Entry.Id; Label = $Entry.Id; Index = 1; Total = 2; Skipped = 1 })
+            $Worker.Queue.Enqueue(@{ Kind = 'done'; Index = 1; Total = 2 })
+
+            $State.Worker = $Worker
+            $State.Operation = @{
+                Kind = 'apply'; Preview = $false; Total = 2; Started = 0; Finished = 0
+                Active = $null; Cancelling = $false; Events = @(); Results = @(); Failures = @()
+            }
+
+            $Script:ShownLines = @()
+            $Script:ShownTone = ''
+            Mock Complete-WtWorkerTask {
+                param ($Worker, $TimeoutSeconds)
+                [pscustomobject]@{ Events = @(); Results = @($Worker.Results.ToArray()); Failures = @(); TimedOut = $false }
+            }
+            Mock Show-WtTuiMessage {
+                param ($State, $Title, $Lines, $Tone)
+                $Script:ShownLines = @($Lines)
+                $Script:ShownTone = [string]$Tone
+            }
+
+            Update-WtTuiOperation -State $State
+
+            # One primary failure, in the status line and at the top of the report, and the
+            # remaining change is reported as not attempted instead of failing again.
+            $State.Status.Text | Should -Be 'The recovery records for 1 target(s) could not be written to the state store'
+            $Script:ShownTone | Should -Be 'Error'
+            @($Script:ShownLines | Where-Object { $_ -match 'Journal persistence failed' }).Count | Should -Be 1
+            @($Script:ShownLines | Where-Object { $_ -match 'Not attempted after the batch stopped: 1' }).Count | Should -Be 1
+            @($Script:ShownLines | Where-Object { $_ -match 'Journal stages not written: 1' }).Count | Should -Be 1
+            ($Script:ShownLines -join "`n") | Should -Match 'only in this process'
+
+            # Nothing was dropped from the pending set: the failed change and the one that was
+            # never attempted both stay there for inspection.
+            $State.Pending.Contains($Entry.Id) | Should -BeTrue
+            $State.Pending.Contains($Second.Id) | Should -BeTrue
+            $State.Operation | Should -BeNullOrEmpty
+        }
+    }
+
     It 'reports failures, dry runs and restart requirements honestly' {
         InModuleScope WindowsTweaker {
             $Results = @(
@@ -2473,6 +2543,51 @@ Describe 'Verification and recovery views' {
             Show-WtTuiVerification -State $State
             $State.Overlay | Should -BeNullOrEmpty
             @(Get-WtInterruptedOperationInternal).Count | Should -Be 1 -Because 'inspecting it changes nothing'
+        }
+    }
+
+    It 'shows the live value of every target of an interrupted operation in its details' {
+        InModuleScope WindowsTweaker {
+            # An interruption after the capture reached the store: the entry still holds the
+            # intended value and the capture, and the detail block reports what the system says now.
+            $Entry = New-WtHistoryEntry -TweakId 'Privacy.AdvertisingId' -State 'Disabled'
+            $Entry.stage = 'applied'
+            $Entry.targets = @([pscustomobject]@{
+                    identity = 'reg:HKCU:\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\ADVERTISINGINFO\ENABLED'
+                    label    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo\Enabled'
+                    class    = 'Registry'; kind = 'RegistrySet'
+                    original = @{ valueKind = 'Zero'; value = 0; display = '0'; type = 'DWord' }
+                    intended = @{ kind = 'Set'; value = 0; display = '0'; type = 'DWord' }
+                    captured = $true; verified = $null
+                })
+            Add-WtStateRecord -HistoryEntry $Entry -Record @{
+                resource = 'Registry'; path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo'
+                name = 'Enabled'; keyExisted = $true; valueExisted = $true; kind = 'DWord'; value = 1
+                kindInferred = $false
+            }
+            Add-WtJournalEntry -Entry $Entry | Out-Null
+
+            $State = New-WtTestState
+            Initialize-WtTuiState -State $State
+
+            $Script:DetailLines = @()
+            $Script:SeedOperationId = $Entry.operationId
+            Mock Select-WtTuiItem {
+                param ($State, $Title, $Lines, $Items, $Details, $DetailsHeight, $Searchable, $OnKey, $EmptyText)
+
+                # The view lists every interrupted operation of this store, so the row under test
+                # is selected by its operation id instead of by position.
+                $Under = @($Items | Where-Object { $_.Payload.OperationId -eq $Script:SeedOperationId })[0]
+                $Script:DetailLines = @(& $Details $Under)
+                return $null
+            }
+
+            Show-WtTuiVerification -State $State
+
+            $Text = $Script:DetailLines -join "`n"
+            $Text | Should -Match 'Restorable'
+            $Text | Should -Match ([regex]::Escape('HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo\Enabled'))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Tui.Verify.Status.unreadable')))
         }
     }
 

@@ -548,6 +548,139 @@ function Write-WtTextFile
     }
 }
 
+$Script:WtAtomicReplaceSupport = $null
+
+<#
+.SYNOPSIS
+    Reports whether this runtime can replace a file atomically.
+.DESCRIPTION
+    The state store is persisted by writing a sibling temporary file, flushing it to the
+    device and then swapping it in with System.IO.File.Replace. That is the only API that
+    keeps the previous contents in place until the swap has happened, so a failure can never
+    leave a half-written store behind. .NET Framework (Windows PowerShell 5.1), .NET
+    (PowerShell 7) and Mono provide it; a runtime without it cannot keep the durability the
+    journal promises, and the write path refuses the write instead of falling back to a
+    delete-then-move, which has a window where neither file is complete.
+#>
+function Test-WtAtomicReplaceSupported
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param ()
+
+    if ($null -ne $Script:WtAtomicReplaceSupport)
+    {
+        return [bool]$Script:WtAtomicReplaceSupport
+    }
+
+    # The exact overload the store uses: Replace(string, string, string, bool). Asking for the
+    # method rather than trying a call keeps the probe free of side effects.
+    $Signature = [type[]]@([string], [string], [string], [bool])
+    $Script:WtAtomicReplaceSupport = $null -ne [System.IO.File].GetMethod('Replace', $Signature)
+
+    return [bool]$Script:WtAtomicReplaceSupport
+}
+
+<#
+.SYNOPSIS
+    Writes a file so that either the complete new content or the previous content is there.
+.DESCRIPTION
+    The content is written to a temporary file in the destination's own directory (the only
+    place guaranteed to be on the same filesystem, where a rename is a replacement rather than
+    a copy), flushed to the device, and then published with one call:
+
+      * destination missing - File.Move publishes the new file (this is the first write);
+      * destination present - File.Replace swaps it and keeps the previous content available
+        to the runtime for the duration of the call.
+
+    On any failure the destination is left exactly as it was and only the temporary file is
+    removed, so a failed write can never destroy the file it was replacing. The caller gets an
+    error naming the destination and the reason; nothing here silently degrades to a plain
+    overwrite.
+.PARAMETER Path
+    Destination file. The path is used as a filesystem path (`System.IO.Path.GetFullPath`),
+    which is what every caller passes. A PowerShell provider path such as `HKLM:\...` is not
+    a filesystem path: the runtime either rejects it (.NET Framework) or takes it as a literal
+    relative name (.NET on POSIX), so nothing here accepts one deliberately. The destination's
+    directory is created when it does not exist.
+.PARAMETER Value
+    Exact content to write (BOM-less UTF-8). No newline is added.
+.OUTPUTS
+    [string] the absolute path that was written.
+#>
+function Write-WtAtomicFile
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param
+    (
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Value = ''
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path))
+    {
+        throw 'An atomic write needs a destination path; the path was empty.'
+    }
+
+    $Full = [System.IO.Path]::GetFullPath($Path)
+    $Directory = [System.IO.Path]::GetDirectoryName($Full)
+    if ($Directory) { New-WtDirectory -Path $Directory }
+
+    if (-not (Test-WtAtomicReplaceSupported))
+    {
+        throw "This PowerShell runtime cannot replace a file atomically (System.IO.File.Replace is unavailable), so '$Full' was not written. WindowsTweaker needs it to keep the state store and its recovery records intact; use Windows PowerShell 5.1 or PowerShell 7."
+    }
+
+    $Temp = [System.IO.Path]::Combine($Directory, ".$([System.IO.Path]::GetFileName($Full)).$PID.$([guid]::NewGuid().ToString('n').Substring(0, 8)).tmp")
+
+    try
+    {
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        $Stream = [System.IO.File]::Open($Temp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        try
+        {
+            $Stream.Write($Bytes, 0, $Bytes.Length)
+            # Flush($true) flushes to the device: without it a crash can leave a directory entry
+            # pointing at content that never reached the disk.
+            $Stream.Flush($true)
+        }
+        finally
+        {
+            $Stream.Dispose()
+        }
+
+        if ([System.IO.File]::Exists($Full))
+        {
+            # The backup argument is a TYPED null. A plain $null literal bound to a [string]
+            # parameter is converted to the empty string by PowerShell, and .NET then rejects
+            # the empty path ("The path is not of a legal form." on .NET Framework, "The value
+            # cannot be an empty string." on .NET), which made every write that replaced an
+            # existing store fail.
+            [System.IO.File]::Replace($Temp, $Full, [System.Management.Automation.Language.NullString]::Value, $true)
+        }
+        else
+        {
+            [System.IO.File]::Move($Temp, $Full)
+        }
+
+        return $Full
+    }
+    catch
+    {
+        throw "The file could not be written atomically: $Full. $($_.Exception.Message) (The previous file, if any, is untouched; no recovery data was replaced.)"
+    }
+    finally
+    {
+        # Only the temporary file this call created is removed, and only when the swap did not
+        # publish it. The destination is never deleted here.
+        if ([System.IO.File]::Exists($Temp))
+        {
+            Remove-Item -LiteralPath $Temp -Force -ErrorAction Ignore
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Converts a JSON document to PowerShell objects on any runtime.

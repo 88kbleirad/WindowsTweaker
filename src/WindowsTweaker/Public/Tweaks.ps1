@@ -312,6 +312,11 @@ function Invoke-WtTweak
     # A dry run is not short-circuited here on purpose: every provider reports its own
     # "would change" status, so -WhatIf enumerates exactly which operations would run.
     # -Confirm (without -WhatIf) still stops the whole tweak when the user declines.
+    # Every result carries the durability of its journal record, so a caller can tell an
+    # incomplete record from a complete one without parsing messages. Nothing has been written
+    # yet at this point: nothing can be missing.
+    $Journal = New-WtJournalState
+
     if (-not $WhatIfPreference -and -not $PSCmdlet.ShouldProcess($Id, "apply state '$State'"))
     {
         $Status = Get-WtShouldProcessStatus
@@ -328,6 +333,7 @@ function Invoke-WtTweak
             Rollback   = $Tweak.Rollback
             Irreversible = $Tweak.Irreversible
             CapturedState = $false
+            Journal    = $Journal
         }
     }
 
@@ -376,6 +382,7 @@ function Invoke-WtTweak
                 CapturedState = $false
                 Review        = $Review
                 Preview       = $Review.Preview
+                Journal       = $Journal
             }
         }
     }
@@ -416,7 +423,8 @@ function Invoke-WtTweak
         }
         catch
         {
-            $Message = "The operation journal could not be written, so nothing was changed: $($_.Exception.Message)"
+            $Message = Get-WtString -Key 'Msg.Journal.NotPersisted' -Arguments @($_.Exception.Message)
+            $Journal = New-WtJournalState -FailedStages @('planned') -UncertainStage 'planned' -MutationStarted $false -Message $Message
             Write-WtLog -Level Error -Message $Message -TweakId $Id -Operation 'Apply' -Status 'failed' -Exception $_.Exception
 
             return [pscustomobject]@{
@@ -431,6 +439,7 @@ function Invoke-WtTweak
                 Rollback      = $Tweak.Rollback
                 Irreversible  = $Tweak.Irreversible
                 CapturedState = $false
+                Journal       = $Journal
             }
         }
     }
@@ -467,6 +476,7 @@ function Invoke-WtTweak
     {
         'succeeded' { 'succeeded' }
         'failed' { 'failed' }
+        'partial' { 'partial' }
         'unchanged' { 'unchanged' }
         'dryrun' { 'dryrun' }
         'unsupported' { 'unsupported' }
@@ -477,6 +487,15 @@ function Invoke-WtTweak
     $Verification = $null
     $Compensation = $null
     $Compensated = $false
+
+    # Journal stage bookkeeping. A stage transition is a write of its own; when one fails the
+    # operation keeps going only as far as it must (verification and compensation), and the
+    # record stays incomplete until a later write repairs it.
+    $JournalFailedStages = [System.Collections.Generic.List[string]]::new()
+    $JournalUncertain = ''
+    $JournalDurableRecords = 0
+    $JournalRecordsDurable = $false
+    $JournalMessage = ''
 
     if (-not $DryRun)
     {
@@ -506,10 +525,18 @@ function Invoke-WtTweak
         try
         {
             Update-WtJournalStage -Entry $Entry -Stage 'applied' | Out-Null
+            $JournalDurableRecords = @($Entry.records).Count
+            $JournalRecordsDurable = $true
         }
         catch
         {
-            $Messages += "The operation journal could not record the applied stage: $($_.Exception.Message)"
+            # The system may already have been changed by the providers and the capture exists
+            # only in this process: report that, loudly and once.
+            $JournalFailedStages.Add('applied')
+            $JournalUncertain = 'applied'
+            $JournalMessage = Get-WtString -Key 'Msg.Journal.RecoveryNotDurable' -Arguments @($Captured.Count)
+            $Messages += $JournalMessage
+            Write-WtLog -Level Error -Message $JournalMessage -TweakId $Id -Operation 'Journal' -Status 'failed' -Exception $_.Exception -NoConsole
         }
 
         # Read the supported targets back and say what was actually found.
@@ -551,12 +578,46 @@ function Invoke-WtTweak
         try
         {
             Update-WtJournalStage -Entry $Entry -Stage $Stage -Verification $Verification -Compensation $Compensation | Out-Null
+            $JournalDurableRecords = @($Entry.records).Count
+            $JournalRecordsDurable = $true
+
+            if ($JournalUncertain)
+            {
+                # This write carried the capture and the outcome, so a stage that failed earlier
+                # is no longer missing from the store. The earlier failure stays visible in
+                # FailedStages; it is not reported as an uncertain stage any more.
+                $Repaired = @($JournalFailedStages) -join ', '
+                $JournalUncertain = ''
+                $Messages += Get-WtString -Key 'Msg.Journal.StageRepaired' -Arguments @($Repaired)
+            }
         }
         catch
         {
-            $Messages += "The operation journal could not be finalized: $($_.Exception.Message)"
-            Write-WtLog -Level Error -Message $Messages[-1] -TweakId $Id -Operation 'Journal' -Status 'failed' -NoConsole
+            $JournalFailedStages.Add('final')
+            if (-not $JournalUncertain)
+            {
+                # The capture on disk is complete; what could not be recorded is how the
+                # operation ended, so it stays reported as applied and not finalized.
+                $JournalUncertain = 'final'
+                $JournalMessage = Get-WtString -Key 'Msg.Journal.OutcomeNotDurable'
+                $Messages += $JournalMessage
+            }
+            Write-WtLog -Level Error -Message $JournalMessage -TweakId $Id -Operation 'Journal' -Status 'failed' -Exception $_.Exception -NoConsole
         }
+
+        if ($JournalUncertain)
+        {
+            # The change is on the system and its record is not on disk. Reporting it as
+            # "completed" would be false, and as "nothing changed" would be worse.
+            if ($Status -ne 'failed') { $Status = 'partial' }
+            $Entry.outcome = 'partial'
+            $Entry.messages = @($Messages)
+        }
+
+        $Journal = New-WtJournalState -FailedStages @($JournalFailedStages) -UncertainStage $JournalUncertain `
+            -DurableRecords $JournalDurableRecords `
+            -Records $(if ($JournalRecordsDurable) { $null } else { @($Entry.records) }) `
+            -MutationStarted $true -Message $JournalMessage
     }
 
     foreach ($Operation in $Operations)
@@ -599,6 +660,7 @@ function Invoke-WtTweak
         Verified      = $(if ($Verification) { ($Verification.Mismatched -eq 0 -and $Verification.Verified -gt 0) } else { $null })
         Verification  = $Verification
         Compensation  = $Compensation
+        Journal       = $Journal
     }
 }
 
@@ -642,6 +704,7 @@ function Undo-WtTweak
             Status     = 'unsupported'
             Operations = @()
             Messages   = @($Message)
+            Journal    = (New-WtJournalState)
         }
     }
 
@@ -673,6 +736,7 @@ function Undo-WtTweak
             Messages   = @($Message) + $Details
             Restart    = $Restart
             Plan       = $Plan
+            Journal    = (New-WtJournalState)
         }
     }
 
@@ -686,11 +750,18 @@ function Undo-WtTweak
             Operations = @()
             Messages   = @()
             Restart    = $Restart
+            Journal    = (New-WtJournalState)
         }
     }
 
     $Operations = @(Invoke-WtRollback -HistoryEntry $Entry)
     $Status = Get-WtAggregateStatus -Results $Operations
+
+    # Journal stage bookkeeping: the same rule as for an apply. A restore that happened but
+    # could not be recorded is not reported as fully completed.
+    $JournalFailedStages = [System.Collections.Generic.List[string]]::new()
+    $JournalUncertain = ''
+    $JournalMessage = ''
 
     # Read the restored targets back: a restore that reports success but leaves the value
     # behind is reported as a failure, not as "rolled back".
@@ -715,7 +786,27 @@ function Undo-WtTweak
             # and the marker must survive it.
             $Entry.rolledBack = $true
             $Entry.rolledBackAt = (Get-Date).ToUniversalTime().ToString('o')
-            Set-WtHistoryRolledBack -HistoryId $Entry.historyId | Out-Null
+
+            # The marker is written on its own, and a failure here must not look like a restore
+            # that never happened: the restore is already on the system.
+            $Marked = $false
+            try
+            {
+                $Marked = [bool](Set-WtHistoryRolledBack -HistoryId $Entry.historyId)
+            }
+            catch
+            {
+                $Marked = $false
+                Write-WtLog -Level Error -Message $_.Exception.Message -TweakId $Entry.tweakId -Operation 'Journal' -Status 'failed' -Exception $_.Exception -NoConsole
+            }
+
+            if (-not $Marked)
+            {
+                $JournalFailedStages.Add('rolledBack')
+                $JournalUncertain = 'rolledBack'
+                $JournalMessage = Get-WtString -Key 'Msg.Journal.RestoreNotDurable'
+                $Messages += $JournalMessage
+            }
         }
     }
     elseif ($Status -eq 'failed')
@@ -741,11 +832,36 @@ function Undo-WtTweak
     try
     {
         Update-WtJournalStage -Entry $Entry -Stage $Stage -Verification $Verification | Out-Null
+        if ($JournalUncertain)
+        {
+            $Repaired = @($JournalFailedStages) -join ', '
+            $JournalUncertain = ''
+            $Messages += Get-WtString -Key 'Msg.Journal.StageRepaired' -Arguments @($Repaired)
+        }
     }
     catch
     {
-        $Messages += "The operation journal could not be updated: $($_.Exception.Message)"
+        $JournalFailedStages.Add('final')
+        if (-not $JournalUncertain)
+        {
+            $JournalUncertain = 'final'
+        }
+        $JournalMessage = Get-WtString -Key 'Msg.Journal.RestoreStageNotPersisted'
+        $Messages += $JournalMessage
+        Write-WtLog -Level Error -Message $JournalMessage -TweakId $Entry.tweakId -Operation 'Journal' -Status 'failed' -Exception $_.Exception -NoConsole
     }
+
+    if ($JournalUncertain -and $Status -ne 'failed')
+    {
+        # The system was restored; the record of it is not on disk, so the entry still reads as
+        # "not rolled back" and must not be presented as a finished restore.
+        $Status = 'partial'
+    }
+
+    # For a restore the capture already came from the store, so it is durable whatever happens
+    # to the stage writes below; what can be missing is the record that the restore happened.
+    $JournalFinal = New-WtJournalState -FailedStages @($JournalFailedStages) -UncertainStage $JournalUncertain `
+        -DurableRecords @($Entry.records).Count -MutationStarted $true -Message $JournalMessage
 
     return [pscustomobject]@{
         PSTypeName = 'WindowsTweaker.RollbackResult'
@@ -758,5 +874,6 @@ function Undo-WtTweak
         Origin     = $Origin
         Verification = $Verification
         Plan       = $Plan
+        Journal    = $JournalFinal
     }
 }

@@ -33,6 +33,7 @@
     'Op.unchanged'              = 'không thay đổi'
     'Op.dryrun'                 = 'sẽ thay đổi'
     'Op.review-required'        = 'cần xem lại'
+    'Op.partial'                = 'đã áp dụng, nhật ký chưa đầy đủ'
     'Msg.Applied'                = 'Đã áp dụng và xác minh thay đổi.'
     'Msg.Unchanged'              = 'Đã ở trạng thái yêu cầu; không ghi gì.'
     'Msg.DryRun'                 = 'WhatIf: không có thay đổi nào được ghi.'
@@ -44,6 +45,15 @@
     'Msg.Verified'               = 'Đã xác minh: đọc lại {0} đối tượng và thấy đúng giá trị đã áp dụng.'
     'Msg.VerificationFailed'     = 'Xác minh thất bại với {0} đối tượng: giá trị thực tế không khớp với giá trị đã áp dụng.'
     'Msg.RestoreVerificationFailed' = 'Xác minh thất bại với {0} đối tượng: giá trị khôi phục không khớp với trạng thái đã lưu.'
+
+    # --- journal persistence (Private/Journal.ps1, Public/Tweaks.ps1) ----------------
+    'Msg.Journal.NotPersisted'   = 'Không ghi được nhật ký thao tác, nên chưa có gì thay đổi: {0}'
+    'Msg.Journal.RecoveryNotDurable' = 'Không ghi được bản ghi khôi phục cho {0} mục tiêu vào kho trạng thái; chúng chỉ tồn tại trong phiên này. Hệ thống có thể đã được thay đổi: hãy kiểm tra thao tác trước khi thử lại.'
+    'Msg.Journal.OutcomeNotDurable' = 'Bản ghi khôi phục đã nằm trên đĩa, nhưng giai đoạn kết thúc thao tác không ghi được; thao tác vẫn được báo là đã áp dụng và chưa hoàn tất.'
+    'Msg.Journal.StageRepaired'  = 'Một lần ghi giai đoạn nhật ký đã thất bại và được lần ghi sau sửa lại ({0}); bản ghi đã đầy đủ và lỗi vẫn được báo để minh bạch.'
+    'Msg.Journal.RestoreNotDurable' = 'Đã khôi phục trạng thái đã lưu, nhưng nhật ký không ghi được dấu đã hoàn tác; mục này vẫn báo là chưa hoàn tác.'
+    'Msg.Journal.RestoreStageNotPersisted' = 'Đã thực hiện khôi phục, nhưng giai đoạn nhật ký cuối cùng không ghi được; mục này vẫn báo là chưa hoàn tất.'
+    'Setup.Plan.Stop.Journal'    = 'Bước {0} không ghi được bản ghi nhật ký; các bước còn lại của kế hoạch đã không được thực hiện.'
 
     'Error.WindowsOnly'         = 'WindowsTweaker chỉ chạy trên Windows. Nền tảng hiện tại: {0}.'
     'Error.AdminRequired'       = 'Cần quyền quản trị cho: {0}'
@@ -90,6 +100,7 @@
     'Gui.IrreversibleWarning'   = 'Mục đã chọn không thể hoàn tác hoàn toàn. Tiếp tục?'
     'Gui.NothingPending'        = 'Không có thay đổi nào đang chờ.'
     'Gui.Busy'                  = 'Đang áp dụng thay đổi...'
+    'Gui.BatchStopped'          = 'Ghi nhật ký thất bại; {0} thay đổi còn lại đã không được thực hiện.'
 
     'Restart.None'              = 'không cần khởi động lại'
     'Restart.Explorer'          = 'khởi động lại File Explorer'
@@ -286,6 +297,7 @@
     'Tui.Busy.Hint'             = 'Esc hủy các mục trong hàng đợi; mục đang chạy sẽ kết thúc.'
     'Tui.Busy.AlreadyRunning'   = 'Đang có một tác vụ chạy.'
     'Tui.Busy.Interrupted'      = 'Tác vụ kết thúc mà không có báo cáo hoàn tất.'
+    'Tui.Busy.Stopped'          = 'Ghi nhật ký thất bại; {0} thay đổi còn lại đã không được thực hiện.'
 
     # --- kết quả -----------------------------------------------------------------
     'Tui.Result.Title'          = 'Kết quả'
@@ -295,7 +307,14 @@
     'Tui.Result.Done'           = 'Đã xử lý {0} thay đổi.'
     'Tui.Result.WorkerFailure'  = 'Tiến trình nền báo lỗi: {0}'
     'Tui.Preview.Title'         = 'Xem trước bằng chạy thử'
-    'Tui.Preview.Done'          = 'Chạy thử xong cho {0} thay đổi; không ghi gì cả.'
+    'Tui.Preview.Done'          = 'Chạy thử xong cho {0} thay đổi; không ghi gì.'
+    'Tui.Result.JournalPrimary' = 'Ghi nhật ký thất bại: {0} (giai đoạn: {1}).'
+    'Tui.Result.Summary.Changes' = 'Đã áp dụng {0} thay đổi; {1} được xác minh bằng đọc lại.'
+    'Tui.Result.Summary.Journal' = 'Giai đoạn nhật ký chưa ghi được: {0} thao tác ({1}).'
+    'Tui.Result.Summary.Compensation' = 'Khôi phục bù trừ: đã thử {0}, thất bại {1}.'
+    'Tui.Result.Summary.Recovery' = 'Bản ghi khôi phục: {0} trên đĩa, {1} chỉ trong phiên này.'
+    'Tui.Result.Summary.Skipped' = 'Không thực hiện sau khi dừng lô: {0} thao tác.'
+    'Tui.Result.JournalInspect' = 'Hãy kiểm tra nhật ký và giá trị hiện tại trước khi thử lại: nhấn V, hoặc chạy Get-WtInterruptedOperation -Targets.'
 
     # --- chọn gói Store ----------------------------------------------------------
     'Tui.Uwp.Unavailable'       = 'Mô-đun Appx không khả dụng nên không thể liệt kê gói.'
@@ -389,6 +408,7 @@
     'Tui.Verify.BuildContext'   = 'Bản dựng Windows đã thay đổi kể từ khi áp dụng (đã ghi {0}); đây chỉ là bối cảnh, không phải nguyên nhân được chứng minh.'
     'Tui.Verify.Interrupted'    = '{0}: bị gián đoạn ở giai đoạn {1}'
     'Tui.Verify.InterruptedNote' = 'Thao tác này chưa từng báo giai đoạn cuối; dữ liệu khôi phục đã lưu vẫn còn nguyên.'
+    'Tui.Verify.TargetLive'     = '{0}: hiện tại {1} ({2})'
     'Tui.Verify.CanRestore'     = 'Có thể khôi phục'
     'Tui.Verify.ReapplyTitle'   = 'Áp dụng lại tinh chỉnh này?'
     'Tui.Verify.ReapplyNote'    = 'Thao tác này chỉ chọn {0} trong danh sách để bạn xem lại và áp dụng lại. Không có gì được áp dụng ở bước này.'

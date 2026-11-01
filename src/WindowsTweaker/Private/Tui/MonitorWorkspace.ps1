@@ -1094,11 +1094,15 @@ function Show-WtTuiMonitor
                 continue
             }
 
-            switch ($Key.Name)
+            $Batch = 0
+            $Escaped = $false
+            while ($Key -and $Batch -lt 16 -and -not $State.Exit -and -not $Escaped)
             {
+                switch ($Key.Name)
+                {
                 'Escape'
                 {
-                    break
+                    $Escaped = $true
                 }
                 'Left'
                 {
@@ -1228,7 +1232,14 @@ function Show-WtTuiMonitor
                 }
             }
 
-            if ($Key.Name -eq 'Escape') { break }
+            if ($Key.Name -eq 'Escape') { $Escaped = $true }
+
+                $Batch++
+                if ($State.Overlay -or $State.Operation -or $State.Exit) { break }
+                $Key = Read-WtConsoleKey -TimeoutMs 0
+            }
+
+            if ($Escaped -or $State.Exit) { break }
         }
     }
     finally

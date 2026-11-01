@@ -101,6 +101,10 @@ function New-WtTuiState
         ExitPending  = $false
         EmptyFrames  = 0
         ForceRepaint = $true
+        # Drift/interrupted counts for the Overview pane are expensive (they read the
+        # store), so they are cached and refreshed on a bounded cadence instead of being
+        # recomputed on every key press while that pane is open.
+        OverviewVerify = $null
     }
 }
 
@@ -117,6 +121,11 @@ function Set-WtTuiStatus
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Text = '',
         [Parameter(Mandatory = $false)][string]$Tone = 'StatusInfo'
     )
+
+    if ($State.Status.Text -eq $Text -and $State.Status.Tone -eq $Tone)
+    {
+        return
+    }
 
     $State.Status = @{ Text = $Text; Tone = $Tone }
     $State.Screen.Dirty = $true
@@ -181,6 +190,7 @@ function Sync-WtTuiCatalog
     $State.States = @(Get-WtTweakState)
     $State.History = @(Get-WtHistory -Limit 100)
     $State.DimensionCache = @{}
+    $State.OverviewVerify = $null
     Update-WtTuiCategories -State $State
     Update-WtTuiItems -State $State
     $State.Screen.Dirty = $true
@@ -313,6 +323,15 @@ function Set-WtTuiItemIndex
 
     if ($Index -lt 0) { $Index = 0 }
     if ($Index -ge $Count) { $Index = $Count - 1 }
+
+    if ($Index -eq $State.ItemIndex)
+    {
+        # The visible row did not change (for example an arrow press at the edge of the
+        # list): nothing has to be repainted, and the keyboard must not feel delayed by a
+        # redundant frame.
+        return
+    }
+
     $State.ItemIndex = $Index
 
     $Item = $State.Items[$Index]
@@ -360,9 +379,20 @@ function Get-WtTuiOverviewItems
     $Items.Add(@{ Kind = 'Info'; Label = (Get-WtString -Key 'Tui.Overview.Icons'); Value = $State.IconMode; Action = 'Icons' })
     $Items.Add(@{ Kind = 'Info'; Label = (Get-WtString -Key 'Cli.Language'); Value = (Get-WtString -Key "Tui.Language.$($State.Language)"); Action = 'Language' })
     $Drifted = 0
-    try { $Drifted = @(Get-WtDriftInternal -OnlyDrifted).Count } catch { $Drifted = 0 }
     $Interrupted = 0
-    try { $Interrupted = @(Get-WtInterruptedOperationInternal).Count } catch { $Interrupted = 0 }
+    if (-not $State.OverviewVerify -or (([datetime]::UtcNow - $State.OverviewVerify.Utc).TotalSeconds -ge 5))
+    {
+        try { $Drifted = @(Get-WtDriftInternal -OnlyDrifted).Count } catch { $Drifted = 0 }
+        try { $Interrupted = @(Get-WtInterruptedOperationInternal).Count } catch { $Interrupted = 0 }
+        $State.OverviewVerify = @{ Utc = [datetime]::UtcNow; Drifted = $Drifted; Interrupted = $Interrupted }
+    }
+    else
+    {
+        # The figures from the last refresh are shown as they were measured: the cache is
+        # invalidated by every catalog refresh, so it cannot outlive a re-scan.
+        $Drifted = [int]$State.OverviewVerify.Drifted
+        $Interrupted = [int]$State.OverviewVerify.Interrupted
+    }
 
     $Items.Add(@{
             Kind   = 'Info'
@@ -1409,6 +1439,22 @@ function Invoke-WtTuiFrame
 
     Update-WtTuiOperation -State $State
 
+    # Performance diagnostics (opt-in): a sample is opened for this frame, populated with
+    # the dispatch/construct/output durations, and completed by the caller (the main loop
+    # adds the handler duration; an idle frame is completed here).
+    $Perf = Test-WtTuiPerf
+    if ($Perf)
+    {
+        if ($Script:WtTuiPerfContext)
+        {
+            # A previous frame left a sample without a handler (a dialog consumed the key):
+            # record it as it is instead of losing it.
+            Add-WtTuiPerfSample -Sample $Script:WtTuiPerfContext
+        }
+        $Script:WtTuiPerfContext = New-WtTuiPerfSample
+        $Dispatch = [System.Diagnostics.Stopwatch]::StartNew()
+    }
+
     $Size = if ($State.SizeSource) { & $State.SizeSource } else { Get-WtConsoleSize }
     if ($Size.Width -ne $State.Screen.Width -or $Size.Height -ne $State.Screen.Height)
     {
@@ -1421,9 +1467,25 @@ function Invoke-WtTuiFrame
 
     if ($State.Screen.Dirty -or $State.ForceRepaint)
     {
+        $Perf = Test-WtTuiPerf
+        $Construct = if ($Perf) { [System.Diagnostics.Stopwatch]::StartNew() } else { $null }
+        $RowsWritten = 0
+
+        if ($State.ForceRepaint)
+        {
+            # Ctrl+L and structural changes repaint from scratch; otherwise only rows that
+            # actually differ from the last written frame are emitted.
+            Reset-WtScreenDiff -Screen $State.Screen
+        }
+
         Update-WtTuiView -State $State
+
+        if ($Perf) { $Construct.Stop() }
+
         if (-not $State.Silent)
         {
+            $Output = if ($Perf) { [System.Diagnostics.Stopwatch]::StartNew() } else { $null }
+
             if ($State.UseVt)
             {
                 Write-WtScreen -Screen $State.Screen
@@ -1432,17 +1494,36 @@ function Invoke-WtTuiFrame
             {
                 Write-WtScreenPlain -Screen $State.Screen
             }
+
+            if ($Perf)
+            {
+                $Output.Stop()
+                $RowsWritten = 0
+                for ($Row = 0; $Row -lt $State.Screen.Height; $Row++)
+                {
+                    if ($null -ne $State.Screen.PreviousCells[$Row]) { $RowsWritten++ }
+                }
+            }
         }
         else
         {
             $State.Screen.Dirty = $false
             $State.ForceRepaint = $false
         }
+
+        if ($Perf -and $Script:WtTuiPerfContext)
+        {
+            $Script:WtTuiPerfContext.ConstructMs = $Construct.Elapsed.TotalMilliseconds
+            $Script:WtTuiPerfContext.OutputMs = $(if ($Output) { $Output.Elapsed.TotalMilliseconds } else { 0 })
+            $Script:WtTuiPerfContext.RowsWritten = $RowsWritten
+            $Script:WtTuiPerfContext.Painted = $true
+        }
     }
 
     if ($State.KeySource)
     {
         $Raw = & $State.KeySource
+        if ($Perf) { $Dispatch.Stop() }
         if ($null -eq $Raw)
         {
             # An injected key source that never produces a key would otherwise make a
@@ -1453,29 +1534,122 @@ function Invoke-WtTuiFrame
                 throw 'The injected key source ran out of keys while a dialog was open.'
             }
 
+            if ($Perf)
+            {
+                $Script:WtTuiPerfContext.DispatchMs = $Dispatch.Elapsed.TotalMilliseconds
+                Add-WtTuiPerfSample -Sample $Script:WtTuiPerfContext
+                $Script:WtTuiPerfContext = $null
+            }
+
             return $null
         }
 
         $State.EmptyFrames = 0
+
+        if ($Perf)
+        {
+            $Script:WtTuiPerfContext.DispatchMs = $Dispatch.Elapsed.TotalMilliseconds
+        }
+
         return (ConvertTo-WtKey -Key $Raw)
     }
 
     $Raw = Read-WtConsoleKey -TimeoutMs $TimeoutMs
+    if ($Perf) { $Dispatch.Stop() }
     if ($Script:WtConsoleInputLost)
     {
         # The console stopped delivering input (closed pty, detached window). Returning null
         # forever would look exactly like a frozen dialog, so the loop is told to stop and
         # the caller restores the terminal in its finally block.
         $State.Exit = $true
+
+        if ($Perf)
+        {
+            $Script:WtTuiPerfContext.DispatchMs = $Dispatch.Elapsed.TotalMilliseconds
+            Add-WtTuiPerfSample -Sample $Script:WtTuiPerfContext
+            $Script:WtTuiPerfContext = $null
+        }
+
         return $null
     }
 
     if ($null -eq $Raw)
     {
+        if ($Perf)
+        {
+            $Script:WtTuiPerfContext.DispatchMs = $Dispatch.Elapsed.TotalMilliseconds
+            Add-WtTuiPerfSample -Sample $Script:WtTuiPerfContext
+            $Script:WtTuiPerfContext = $null
+        }
+
         return $null
     }
 
+    if ($Perf)
+    {
+        $Script:WtTuiPerfContext.DispatchMs = $Dispatch.Elapsed.TotalMilliseconds
+    }
+
     return (ConvertTo-WtKey -Key $Raw)
+}
+
+<#
+.SYNOPSIS
+    Advances the interface by one render and one batch of keys.
+.DESCRIPTION
+    The render happens at most once per step; after the first key is handled, further keys
+    that are already waiting are handled without another render in between, and the
+    accumulated work is painted once the queue is empty. Held-arrow navigation therefore
+    coalesces hundreds of autorepeat presses into a few frames instead of painting per
+    key. The batch is bounded, and a modal overlay or a started operation stops it so the
+    screen reflects the new mode before the next key is consumed. No key is ever dropped.
+#>
+function Invoke-WtTuiLoopStep
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $false)][int]$MaxBatch = 32
+    )
+
+    $Key = Invoke-WtTuiFrame -State $State
+    if ($null -eq $Key)
+    {
+        return
+    }
+
+    $Batch = 0
+    $TotalHandlerMs = [double]0
+    while ($Key -and $Batch -lt $MaxBatch -and -not $State.Exit)
+    {
+        $Handler = if (Test-WtTuiPerf) { [System.Diagnostics.Stopwatch]::StartNew() } else { $null }
+        $null = Invoke-WtTuiKey -State $State -Key $Key
+        if ($Handler)
+        {
+            $Handler.Stop()
+            $TotalHandlerMs += $Handler.Elapsed.TotalMilliseconds
+        }
+
+        $Batch++
+
+        # A modal overlay or a started operation changes what must be on screen right now:
+        # stop batching so the frame renders before the next key is consumed.
+        if ($State.Overlay -or $State.Operation)
+        {
+            break
+        }
+
+        $Raw = if ($State.KeySource) { & $State.KeySource } else { Read-WtConsoleKey -TimeoutMs 0 }
+        $Key = if ($null -eq $Raw) { $null } else { ConvertTo-WtKey -Key $Raw }
+    }
+
+    if ((Test-WtTuiPerf) -and $Script:WtTuiPerfContext)
+    {
+        $Script:WtTuiPerfContext.HandlerMs = $TotalHandlerMs
+        Add-WtTuiPerfSample -Sample $Script:WtTuiPerfContext
+        $Script:WtTuiPerfContext = $null
+    }
 }
 
 <#
@@ -1784,6 +1958,13 @@ function Set-WtTuiCategory
     }
 
     if ($Target -lt 0 -or $Target -ge $State.Categories.Count)
+    {
+        return
+    }
+
+    # Re-entering the already-active category with no filter is a no-op: it would rebuild
+    # the same list and reset the cursor for no visible change.
+    if ($Target -eq $State.CategoryIndex -and -not $State.Search -and -not $State.SearchMode)
     {
         return
     }
@@ -2265,7 +2446,8 @@ function Start-WtTui
         [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Unicode', 'NerdFont', 'ASCII', 'None')][string]$Icons = 'Auto',
         [Parameter(Mandatory = $false)][ValidateSet('Auto', 'Go', 'PowerShell')][string]$WorkerBackend = 'Auto',
         [Parameter(Mandatory = $false)][string]$Preset,
-        [Parameter(Mandatory = $false)][switch]$InputDiagnostics
+        [Parameter(Mandatory = $false)][switch]$InputDiagnostics,
+        [Parameter(Mandatory = $false)][switch]$PerfDiagnostics
     )
 
     Initialize-WtLocalization -Language $Language | Out-Null
@@ -2276,6 +2458,12 @@ function Start-WtTui
     $Script:WtConsoleInputLost = $false
     $TraceEnabled = [bool]($InputDiagnostics -or ($env:WT_TUI_INPUT_TRACE -match '^(1|true|yes)$'))
     Set-WtInputTrace -Enabled $TraceEnabled
+
+    # Bounded application-side performance diagnostics (steady-state timing of dispatch,
+    # handlers, frame construction and frame output). On by request only; it records
+    # durations and key names, never typed text.
+    $PerfEnabled = [bool]($PerfDiagnostics -or ($env:WT_TUI_PERF_DIAGNOSTICS -match '^(1|true|yes)$'))
+    Set-WtTuiPerf -Enabled $PerfEnabled
 
     if (-not (Test-WtInteractiveConsole))
     {
@@ -2317,15 +2505,7 @@ function Start-WtTui
 
         while (-not $State.Exit)
         {
-            $Key = Invoke-WtTuiFrame -State $State
-            if ($null -eq $Key)
-            {
-                continue
-            }
-
-            # The key handler's own output is discarded: only the exit code leaves this
-            # function, so the entry point can use it directly.
-            $null = Invoke-WtTuiKey -State $State -Key $Key
+            Invoke-WtTuiLoopStep -State $State
         }
     }
     catch
@@ -2359,6 +2539,11 @@ function Start-WtTui
         }
 
         Close-WtTuiWorker -State $State
+    }
+
+    if ($PerfEnabled)
+    {
+        Write-WtTuiPerfSummary
     }
 
     return 0

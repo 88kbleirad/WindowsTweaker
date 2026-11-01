@@ -83,7 +83,18 @@ function Invoke-WtGuiBatch
             $Parameters = @{ Id = $Item.Id; State = $Item.Target }
             if ($Item.Arguments) { $Parameters.Arguments = $Item.Arguments }
             if ($DryRun) { $Parameters.WhatIf = $true }
-            $Results += Invoke-WtTweak @Parameters
+            $Result = Invoke-WtTweak @Parameters
+            $Results += $Result
+
+            # The journal could not record this change, so it cannot record the next one either:
+            # stop instead of repeating the same failure for every remaining item. The flag is set
+            # by the engine (Test-WtJournalStopRequired is the in-module form of the same test)
+            # because this runspace can only call the module's exported functions.
+            if ($null -ne $Result -and $Result.Journal -and $Result.Journal.StopBatch)
+            {
+                $ProgressQueue.Enqueue((Get-WtString -Key 'Gui.BatchStopped' -Arguments @(($Items.Count - @($Results).Count))))
+                break
+            }
         }
 
         $ProgressQueue.Enqueue('done')

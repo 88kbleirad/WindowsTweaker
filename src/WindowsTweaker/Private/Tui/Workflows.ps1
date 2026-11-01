@@ -94,6 +94,14 @@ function Update-WtTuiOperation
             {
                 $State.Operation.Events = @($State.Operation.Events + (Get-WtString -Key 'Tui.Busy.Skipped' -Arguments @($WorkerEvent.Label)))
             }
+            'stopped'
+            {
+                # The batch stopped because a journal write failed: one line here, one primary
+                # failure in the report, never the same error once per remaining tweak.
+                $State.Operation.Stop = $WorkerEvent
+                $State.Operation.Skipped = [int]$WorkerEvent.Skipped
+                $State.Operation.Events = @($State.Operation.Events + (Get-WtString -Key 'Tui.Busy.Stopped' -Arguments @([int]$WorkerEvent.Skipped)))
+            }
             'done'
             {
                 $Finished = $true
@@ -144,7 +152,8 @@ function Get-WtTuiResultReport
     (
         [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Results = @(),
         [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Failures = @(),
-        [Parameter(Mandatory = $false)][bool]$Preview = $false
+        [Parameter(Mandatory = $false)][bool]$Preview = $false,
+        [Parameter(Mandatory = $false)][int]$Skipped = 0
     )
 
     $Lines = [System.Collections.Generic.List[string]]::new()
@@ -152,6 +161,43 @@ function Get-WtTuiResultReport
     $Tone = 'Success'
     $Failed = 0
     $Changed = 0
+    $Verified = 0
+    $Compensated = 0
+    $CompensationFailed = 0
+    $DurableRecords = 0
+    $InMemoryRecords = 0
+    $Primary = ''
+    $PrimaryTweak = ''
+    $PrimaryStage = ''
+    $Uncertain = 0
+    $UncertainStages = [System.Collections.Generic.List[string]]::new()
+
+    # A journal that could not be written is reported once, at the top, as the reason the batch
+    # stopped - the per-item lines below stay as the detailed, scrollable evidence.
+    foreach ($Result in $Results)
+    {
+        if ($null -eq $Result) { continue }
+        if (-not (Test-WtJournalStopRequired -Result $Result)) { continue }
+
+        $Uncertain++
+        $UncertainStages.Add([string]$Result.Journal.UncertainStage)
+        $DurableRecords += [int]$Result.Journal.DurableRecords
+        $InMemoryRecords += [int]$Result.Journal.InMemoryRecords
+
+        if (-not $Primary)
+        {
+            $Primary = [string]$Result.Journal.Message
+            $PrimaryTweak = [string]$Result.TweakId
+            $PrimaryStage = [string]$Result.Journal.UncertainStage
+        }
+    }
+
+    if ($Primary)
+    {
+        $Lines.Add((Get-WtString -Key 'Tui.Result.JournalPrimary' -Arguments @($PrimaryTweak, $PrimaryStage)))
+        $Lines.Add("  - $Primary")
+        $Tone = 'Error'
+    }
 
     foreach ($Result in $Results)
     {
@@ -183,9 +229,17 @@ function Get-WtTuiResultReport
             $Failed++
             $Tone = 'Error'
         }
-        elseif ($Status -in 'succeeded', 'dryrun')
+        elseif ($Status -in 'succeeded', 'dryrun', 'partial')
         {
             $Changed++
+        }
+
+        if ($Result.Verified -eq $true) { $Verified++ }
+
+        if ($Result.Compensation -and $Result.Compensation.Attempted)
+        {
+            $Compensated++
+            $CompensationFailed += [int]$Result.Compensation.Failed
         }
 
         if ($Result.Restart -and $Result.Restart -ne 'None')
@@ -207,6 +261,35 @@ function Get-WtTuiResultReport
         if ($Tone -eq 'Success') { $Tone = 'Warning' }
     }
 
+    if (-not $Preview -and @($Results).Count -gt 0)
+    {
+        # An honest summary of a batch: what reached the system, what the journal could not
+        # record, what compensating restoration did, and what was never attempted.
+        $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Changes' -Arguments @($Changed, $Verified)))
+
+        if ($Uncertain -gt 0)
+        {
+            $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Journal' -Arguments @($Uncertain, (@($UncertainStages | Select-Object -Unique) -join ', '))))
+            $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Recovery' -Arguments @($DurableRecords, $InMemoryRecords)))
+        }
+
+        if ($Compensated -gt 0)
+        {
+            $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Compensation' -Arguments @($Compensated, $CompensationFailed)))
+        }
+
+        if ($Skipped -gt 0)
+        {
+            $Lines.Add((Get-WtString -Key 'Tui.Result.Summary.Skipped' -Arguments @($Skipped)))
+            if ($Tone -eq 'Success') { $Tone = 'Warning' }
+        }
+
+        if ($Uncertain -gt 0)
+        {
+            $Lines.Add((Get-WtString -Key 'Tui.Result.JournalInspect'))
+        }
+    }
+
     if ($Preview)
     {
         $Lines.Add((Get-WtString -Key 'Msg.DryRun'))
@@ -217,6 +300,10 @@ function Get-WtTuiResultReport
         Tone     = $Tone
         Failed   = $Failed
         Changed  = $Changed
+        Verified = $Verified
+        Uncertain = $Uncertain
+        Skipped  = $Skipped
+        Primary  = $Primary
         Restarts = $Restarts.ToArray()
     }
 }
@@ -236,10 +323,11 @@ function Complete-WtTuiOperation
     $Results = @($Outcome.Results | ForEach-Object { $_.Result })
     $Failures = @($Outcome.Failures)
 
-    $Report = Get-WtTuiResultReport -Results $Results -Failures $Failures -Preview ([bool]$Operation.Preview)
+    $Report = Get-WtTuiResultReport -Results $Results -Failures $Failures -Preview ([bool]$Operation.Preview) -Skipped ([int]$Operation.Skipped)
     $Lines = @($Report.Lines)
     $Tone = [string]$Report.Tone
     $Failed = [int]$Report.Failed
+    $Uncertain = [int]$Report.Uncertain
 
     $Title = if ($Operation.Preview)
     {
@@ -254,18 +342,31 @@ function Complete-WtTuiOperation
         Get-WtString -Key 'Tui.Result.Title'
     }
 
-    if ($Failed -gt 0)
+    if ($Failed -gt 0 -or $Uncertain -gt 0)
     {
         $State.Operation = $null
         Sync-WtTuiCatalog -State $State
-        Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Msg.PartialFailure' -Arguments @($Failed)) -Tone 'StatusError'
+
+        # One status line: the persistence failure when there is one (it is the reason the rest
+        # of the batch was not attempted), otherwise the count of failed items.
+        $StatusText = if ($Uncertain -gt 0 -and $Report.Primary)
+        {
+            [string]$Report.Primary
+        }
+        else
+        {
+            Get-WtString -Key 'Msg.PartialFailure' -Arguments @($Failed)
+        }
+
+        Set-WtTuiStatus -State $State -Text $StatusText -Tone 'StatusError'
         Show-WtTuiMessage -State $State -Title $Title -Lines $Lines -Tone 'Error'
         if ($State.ExitPending) { $State.Exit = $true }
         return
     }
 
     # Everything the user asked for is in place: drop only those entries from the pending
-    # set, and keep anything that failed or was reported unsupported.
+    # set, and keep anything that failed, was reported unsupported, or whose journal record
+    # is incomplete (that one needs inspection before it is retried).
     if ($Operation.Kind -eq 'apply' -and -not $Operation.Preview)
     {
         foreach ($Result in $Results)
@@ -2324,10 +2425,21 @@ function Show-WtTuiVerification
                 return $Out
             }
 
-            @(
+            $Out = @(
                 (Get-WtString -Key 'Tui.Verify.InterruptedNote'),
                 (Get-WtString -Key 'Tui.Verify.CanRestore') + ": $(if ($Payload.CanRestore) { Get-WtString -Key 'Common.Yes' } else { Get-WtString -Key 'Common.No' })"
             )
+
+            # The live value of every target the interrupted operation recorded, read-only. An
+            # operation whose capture never reached the store still shows what it intended, and
+            # reports the difference instead of inventing a baseline.
+            $Row = @(Get-WtInterruptedOperationInternal -Targets -OperationId ([string]$Payload.OperationId)) | Select-Object -First 1
+            foreach ($Target in @($Row.Targets))
+            {
+                $Out += (Get-WtString -Key 'Tui.Verify.TargetLive' -Arguments @($Target.Label, $Target.LiveValue, (Get-WtString -Key "Tui.Verify.Status.$($Target.Status)")))
+            }
+
+            return $Out
         }
 
         $OnKey = {
@@ -2380,7 +2492,7 @@ function Show-WtTuiVerification
         }
 
         $Result = Select-WtTuiItem -State $State -Title (Get-WtString -Key 'Tui.Verify.Title') -Lines $Lines -Items @($Rows.ToArray()) `
-            -Searchable -Details $Details -OnKey $OnKey -DetailsHeight 4 -EmptyText (Get-WtString -Key 'Tui.Verify.Empty')
+            -Searchable -Details $Details -OnKey $OnKey -DetailsHeight 6 -EmptyText (Get-WtString -Key 'Tui.Verify.Empty')
 
         if ($null -eq $Result -or $null -eq $Result.Value)
         {

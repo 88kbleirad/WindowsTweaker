@@ -43,7 +43,7 @@ portable installs).
           "captured": true, "verified": true, "baselineOperationId": "…|absent" }
       ],
       "records": [ { "resource": "Registry", "path": "…", "name": "…", "valueExisted": true, "kind": "DWord", "value": 0 } ],
-      "outcome": "succeeded|failed|unchanged|dryrun|unsupported|skipped|pending",
+      "outcome": "succeeded|partial|failed|unchanged|dryrun|unsupported|skipped|pending",
       "messages": [ "…" ],
       "verification": { "Attempted": true, "Verified": 1, "Mismatched": 0, "Unverifiable": 0, "Rows": [ … ], "VerifiedUtc": "…" },
       "compensation": { "Attempted": true, "Succeeded": 1, "Failed": 0, "Skipped": 0, "Messages": [ … ], "CompensationUtc": "…" },
@@ -80,7 +80,7 @@ file is left exactly as it was. Repair means moving that file aside deliberately
 ## How a write happens
 
 1. `Add-WtJournalEntry` (stage `planned`) is called **before** the first mutation. If it
-   fails, the operation returns `failed` and nothing is changed.
+   fails, the operation returns `failed`, no provider is called and nothing is changed.
 2. The provider writes run; the captured pre-change records are attached to the entry and
    **persisted** (stage `applied`) before verification, so an interruption during
    verification still leaves the recovery data on disk.
@@ -90,9 +90,71 @@ file is left exactly as it was. Repair means moving that file aside deliberately
    (`Invoke-WtCompensation`) and reported separately (stage `compensated` / `failed`).
 5. The final stage is written with the outcome, verification and compensation payloads.
 
-Every write takes the lock, writes a temporary file, flushes it to disk and replaces the
-target atomically (`File.Replace` on Windows, `Move-Item -Force` elsewhere). Two processes
-applying at the same time therefore cannot lose each other's writes.
+## The write path
+
+Every store write takes the lock and then goes through one helper, `Write-WtAtomicFile`:
+
+1. the complete document is written to a temporary file **in the destination's own
+   directory** (the only place guaranteed to be on the same filesystem, where publishing is a
+   rename and not a copy);
+2. the temporary file is flushed to the device (`FileStream.Flush($true)`) before anything is
+   published;
+3. the destination is published in one call: `System.IO.File.Replace` when it already exists
+   (the previous contents stay available to the runtime for the duration of the call), or
+   `System.IO.File.Move` for the first write, which is a plain same-directory rename;
+4. on any failure the destination is left exactly as it was and only the temporary file is
+   removed.
+
+Two details are not decoration:
+
+* **The backup-path argument of `File.Replace` is a typed null**
+  (`[System.Management.Automation.Language.NullString]::Value`). PowerShell converts a plain
+  `$null` literal to an empty string when it binds it to a `[string]` parameter, and .NET then
+  rejects the empty path — `The path is not of a legal form.` on .NET Framework (Windows
+  PowerShell 5.1), `The value cannot be an empty string.` on .NET. That defect made every
+  write that *replaced* an existing store fail, which is every stage write after the first.
+* **A runtime without `File.Replace` refuses the write** (`Test-WtAtomicReplaceSupported`,
+  probed before anything is written) with an explanation naming the file. It never falls back
+  to a delete-then-move or a plain overwrite: those have a window in which neither the old nor
+  the new file is complete, which is exactly what the journal cannot afford.
+
+`settings.json` is written through the same helper.
+
+## Journal stages and failure reporting
+
+A stage transition is its own atomic write, so an interrupted process leaves a store that says
+exactly how far it got. Every apply/rollback result carries a `Journal` object describing the
+truth on disk:
+
+| Field | Meaning |
+|---|---|
+| `Persisted` | every intended stage transition is on disk |
+| `FailedStages` | stages whose write failed, in the order they were attempted |
+| `UncertainStage` | the earliest transition the disk is still missing (`''` when none; a failure repaired by a later write leaves this empty) |
+| `DurableRecords` / `InMemoryRecords` | captured records that survive this process / exist only in it |
+| `Records` | those in-memory records, so a caller can preserve or export them |
+| `MutationStarted` | the providers ran, so the system may already have been changed |
+| `StopBatch` | the caller must stop: this journal cannot be trusted for the next change |
+
+Consequences, and they are deliberate:
+
+* a journal write that fails **before** the first mutation aborts the operation: the way back
+  has to exist before anything is changed;
+* a journal write that fails **after** a mutation does not turn the operation into a success.
+  The status becomes `partial`, the message says the system may already have been changed,
+  and the durable records are distinguished from the ones that exist only in memory;
+* the batch stops (`StopBatch`, `Test-WtJournalStopRequired`). The interface worker, the setup
+  plan, a session restore and the legacy window all use the same decision, so the failure is
+  reported once instead of once per remaining tweak;
+* the operation is never labelled `nothing changed` or `completed` when its record is
+  incomplete. A store that is missing only the final stage keeps `stage: applied` on disk,
+  which `Get-WtInterruptedOperation` reports for inspection.
+
+An entry whose capture is on disk stays restorable even when its final stage was never
+written: `Test-WtJournalRestorable` accepts an entry with records and outcome
+`succeeded`/`partial`, and also one left at stage `applied` (interrupted after the capture
+reached the store). An entry whose capture never reached the store has no records at all and
+is never considered restorable — no original value is invented for it.
 
 ## What the guarantees are (and are not)
 
@@ -124,11 +186,24 @@ Get-WtOperation -Limit 20                  # journal rows, newest first (sequenc
 Get-WtSession                              # sessions with their origins and stages
 Close-WtSession                            # marks this run's session as ended
 Get-WtInterruptedOperation                 # planned/applied operations that never finished
+Get-WtInterruptedOperation -Targets        # ... plus the live value of every target it recorded
 Get-WtDrift -OnlyDrifted                   # recorded vs live, changed rows only
 Get-WtRestorePlan -SessionId <id>          # dependency-aware plan with conflicts
 Export-WtHistory -Path ./journal.json      # explicit export (Json or Csv)
 Export-WtDiagnostics -Path ./diag.jsonl    # explicit export of the diagnostics buffer
 ```
+
+`Get-WtInterruptedOperation -Targets` is the read-only inspection path for a run that stopped
+half way. For every interrupted operation it reports the stage it stopped at, whether a
+capture is available (`CanRestore`), and — with `-Targets` — the intended value against the
+live value of each target it recorded, classified `matching`, `changed`, `unreadable` or
+`unsupported`. Nothing is written and nothing is reconstructed: when the capture never reached
+the store (`CanRestore = $false`, no records), the operation is reported as unrestorable and
+no original value is invented for it.
+
+Do not delete or edit `state.json` to clear such a report: the interrupted entry is the only
+evidence of what the tool did, and removing the file destroys the records of the operations
+that *did* complete.
 
 A session is opened by the first journal entry a run writes and closed by `Close-WtSession`,
 which the interface and the command line call on their way out. Until then the row reads

@@ -391,6 +391,135 @@ function Update-WtJournalStage
 
 <#
 .SYNOPSIS
+    Describes how far an operation's journal record actually got on disk.
+.DESCRIPTION
+    One object is attached to every apply/rollback result so a caller can tell a complete
+    record from an incomplete one without parsing messages:
+
+      Persisted       every intended stage transition is on disk
+      FailedStages    stages whose write failed, in the order they were attempted
+      UncertainStage  the earliest stage transition that never reached the disk ('' when none;
+                      a failure that a later write repaired leaves this empty)
+      DurableRecords  captured records that are on disk and survive this process
+      InMemoryRecords captured records that exist only in this process
+      Records         those in-memory records, so a caller can preserve or export them
+      MutationStarted providers were invoked, so the system may already have been changed
+      Message         the primary failure text (localized)
+      StopBatch       the caller must stop: a journal this incomplete cannot be trusted for
+                      the next operation in the same batch
+
+    An incomplete record is never reported as persisted, and an operation whose record is
+    incomplete is never reported as fully completed.
+#>
+function New-WtJournalState
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][string[]]$FailedStages = @(),
+        [Parameter(Mandatory = $false)][string]$UncertainStage = '',
+        [Parameter(Mandatory = $false)][int]$DurableRecords = 0,
+        [Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Records = @(),
+        [Parameter(Mandatory = $false)][bool]$MutationStarted = $false,
+        [Parameter(Mandatory = $false)][string]$Message = ''
+    )
+
+    # A caller that passes a conditional empty collection can bind $null: filter it out so an
+    # empty collection is always reported as empty and never as "one record".
+    $Failed = @($FailedStages | Where-Object { $null -ne $_ -and "$_" })
+    $Pending = @($Records | Where-Object { $null -ne $_ })
+
+    return [pscustomobject]@{
+        PSTypeName      = 'WindowsTweaker.JournalState'
+        Persisted       = (-not $UncertainStage)
+        FailedStages    = $Failed
+        UncertainStage  = [string]$UncertainStage
+        DurableRecords  = [int]$DurableRecords
+        InMemoryRecords = $Pending.Count
+        Records         = $Pending
+        MutationStarted = [bool]$MutationStarted
+        Message         = [string]$Message
+        StopBatch       = [bool][string]$UncertainStage
+    }
+}
+
+<#
+.SYNOPSIS
+    Reports whether one result means the rest of its batch must stop.
+.DESCRIPTION
+    The single decision every batch runner shares (interface worker, setup plan, session
+    restore, legacy window). A journal that could not be written means the way back for the
+    next change cannot be stored either, so continuing would stack up changes with no
+    recovery information - and would repeat the same failure for every remaining item.
+#>
+function Test-WtJournalStopRequired
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param ([Parameter(Mandatory = $false)][object]$Result)
+
+    if ($null -eq $Result)
+    {
+        return $false
+    }
+
+    if (@($Result.PSObject.Properties.Name) -notcontains 'Journal')
+    {
+        return $false
+    }
+
+    if ($null -eq $Result.Journal)
+    {
+        return $false
+    }
+
+    return [bool]$Result.Journal.StopBatch
+}
+
+<#
+.SYNOPSIS
+    Reports whether an entry still holds a usable, not-yet-reverted capture.
+.DESCRIPTION
+    Restorable means: not a dry run, not already rolled back, and at least one captured
+    record on disk. The stage is deliberately not part of the test - an operation whose
+    final stage was never written (the process died, or the stage write failed) still has
+    its capture on disk, and that capture is exactly what a restore replays. An entry whose
+    capture never reached the disk carries no records and is never restorable: nothing is
+    invented for it, and an operation that only planned a change stays un-restorable.
+#>
+function Test-WtJournalRestorable
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param ([Parameter(Mandatory = $false)][object]$Entry)
+
+    if ($null -eq $Entry)
+    {
+        return $false
+    }
+
+    if ($Entry.dryRun -or $Entry.rolledBack)
+    {
+        return $false
+    }
+
+    if (@($Entry.records).Count -eq 0)
+    {
+        return $false
+    }
+
+    if ([string]$Entry.outcome -in 'succeeded', 'partial')
+    {
+        return $true
+    }
+
+    # No final outcome was recorded: the operation was interrupted after its capture reached the
+    # disk (stage 'applied'), which is precisely the case the capture exists for.
+    return ([string]$Entry.stage -eq 'applied')
+}
+
+<#
+.SYNOPSIS
     Returns the sessions recorded in the store, newest first.
 #>
 function Get-WtSessionRecord
@@ -454,7 +583,11 @@ function Get-WtBaselineEntry
 function Get-WtInterruptedOperationInternal
 {
     [CmdletBinding()]
-    param ()
+    param
+    (
+        [Parameter(Mandatory = $false)][switch]$Targets,
+        [Parameter(Mandatory = $false)][string]$OperationId
+    )
 
     $Store = Read-WtStateStore
     if ($Store.Corrupt)
@@ -465,9 +598,32 @@ function Get-WtInterruptedOperationInternal
     $Rows = [System.Collections.Generic.List[object]]::new()
     foreach ($Entry in @($Store.History))
     {
+        if ($OperationId -and $Entry.operationId -ne $OperationId) { continue }
         if ($Entry.dryRun) { continue }
         if ($Entry.stage -notin 'planned', 'applied') { continue }
         if ($Entry.outcome -in 'unsupported', 'skipped') { continue }
+
+        # Read-only inspection of what the operation was about to write against what the system
+        # reports now. Nothing here changes anything, and a target that never carried a capture
+        # is still described - it is reported, never guessed at.
+        $TargetRows = [System.Collections.Generic.List[object]]::new()
+        if ($Targets)
+        {
+            foreach ($Target in @($Entry.targets))
+            {
+                $Row = Get-WtDriftRow -Target $Target -Entry $Entry
+                $TargetRows.Add([pscustomobject]@{
+                    PSTypeName    = 'WindowsTweaker.InterruptedTarget'
+                    Identity      = [string]$Row.Identity
+                    Label         = [string]$Row.Label
+                    IntendedValue = [string]$Row.IntendedValue
+                    LiveValue     = [string]$Row.LiveValue
+                    LiveValueKind = [string]$Row.LiveValueKind
+                    Status        = [string]$Row.Status
+                    Reason        = [string]$Row.Reason
+                })
+            }
+        }
 
         $Rows.Add([pscustomobject]@{
             PSTypeName    = 'WindowsTweaker.InterruptedOperation'
@@ -481,6 +637,7 @@ function Get-WtInterruptedOperationInternal
             CapturedCount = @($Entry.records).Count
             CanRestore    = (@($Entry.records).Count -gt 0)
             Origin        = $Entry.origin
+            Targets       = @($TargetRows.ToArray())
         })
     }
 
@@ -601,7 +758,7 @@ function Get-WtDriftInternal
     $Seen = @{}
     $Rows = [System.Collections.Generic.List[object]]::new()
 
-    foreach ($Entry in @(Get-WtJournalEntryInternal -TweakId $TweakId -All | Where-Object { -not $_.rolledBack -and -not $_.dryRun -and $_.outcome -in 'succeeded', 'partial' }))
+    foreach ($Entry in @(Get-WtJournalEntryInternal -TweakId $TweakId -All | Where-Object { Test-WtJournalRestorable -Entry $_ }))
     {
         foreach ($Target in @($Entry.targets))
         {
@@ -666,7 +823,7 @@ function Get-WtRestorePlanInternal
     }
 
     $Ordered = @($Entries |
-        Where-Object { -not $_.rolledBack -and -not $_.dryRun -and $_.outcome -in 'succeeded', 'partial' -and @($_.records).Count -gt 0 } |
+        Where-Object { Test-WtJournalRestorable -Entry $_ } |
         Sort-Object -Property sequence -Descending)
 
     $Steps = [System.Collections.Generic.List[object]]::new()

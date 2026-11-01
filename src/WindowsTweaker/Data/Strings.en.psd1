@@ -34,6 +34,7 @@
     'Op.unchanged'              = 'unchanged'
     'Op.dryrun'                 = 'would change'
     'Op.review-required'        = 'review required'
+    'Op.partial'                = 'applied, journal incomplete'
     'Msg.Applied'                = 'Change applied and verified.'
     'Msg.Unchanged'              = 'Already in the requested state; nothing written.'
     'Msg.DryRun'                 = 'WhatIf: no change was written.'
@@ -45,6 +46,17 @@
     'Msg.Verified'               = 'Verified: {0} target(s) read back with the applied value.'
     'Msg.VerificationFailed'     = 'Verification failed for {0} target(s): the live value does not match what was applied.'
     'Msg.RestoreVerificationFailed' = 'Verification failed for {0} target(s): the restored value does not match the captured state.'
+
+    # --- journal persistence (Private/Journal.ps1, Public/Tweaks.ps1) ----------------
+    # A stage transition that could not be written is always reported: the operation is never
+    # presented as "nothing changed" or as fully completed when its record is incomplete.
+    'Msg.Journal.NotPersisted'   = 'The operation journal could not be written, so nothing was changed: {0}'
+    'Msg.Journal.RecoveryNotDurable' = 'The recovery records for {0} target(s) could not be written to the state store; they exist only in this process. The system may already have been changed: inspect the operation before retrying.'
+    'Msg.Journal.OutcomeNotDurable' = 'The recovery records are on disk, but the stage that ends the operation could not be recorded; the operation stays reported as applied and not finalized.'
+    'Msg.Journal.StageRepaired'  = 'A journal stage write failed and was repaired by the following write ({0}); the record is complete and the failure is reported for transparency.'
+    'Msg.Journal.RestoreNotDurable' = 'The captured state was restored, but the journal could not be marked as rolled back; the entry still reports itself as not rolled back.'
+    'Msg.Journal.RestoreStageNotPersisted' = 'The restore was performed, but its final journal stage could not be written; the entry still reports itself as not finalized.'
+    'Setup.Plan.Stop.Journal'    = 'Step {0} could not persist its journal record; the remaining step(s) of the plan were not attempted.'
 
     'Error.WindowsOnly'         = 'WindowsTweaker only runs on Windows. Detected platform: {0}.'
     'Error.AdminRequired'       = 'Administrator privileges are required for: {0}'
@@ -91,6 +103,7 @@
     'Gui.IrreversibleWarning'   = 'The selected target is not fully reversible. Continue?'
     'Gui.NothingPending'        = 'No pending changes.'
     'Gui.Busy'                  = 'Applying changes...'
+    'Gui.BatchStopped'          = 'Journal persistence failed; the remaining {0} change(s) were not attempted.'
 
     'Restart.None'              = 'no restart'
     'Restart.Explorer'          = 'restart File Explorer'
@@ -287,6 +300,7 @@
     'Tui.Busy.Hint'             = 'Esc cancels the queued items; the running one finishes.'
     'Tui.Busy.AlreadyRunning'   = 'An operation is already running.'
     'Tui.Busy.Interrupted'      = 'The operation ended without a completion report.'
+    'Tui.Busy.Stopped'          = 'Journal persistence failed; the remaining {0} change(s) were not attempted.'
 
     # --- results ------------------------------------------------------------------
     'Tui.Result.Title'          = 'Result'
@@ -297,6 +311,13 @@
     'Tui.Result.WorkerFailure'  = 'The background worker reported: {0}'
     'Tui.Preview.Title'         = 'Dry-run preview'
     'Tui.Preview.Done'          = 'Dry run finished for {0} change(s); nothing was written.'
+    'Tui.Result.JournalPrimary' = 'Journal persistence failed: {0} (stage: {1}).'
+    'Tui.Result.Summary.Changes' = 'Applied {0} change(s); {1} verified by read-back.'
+    'Tui.Result.Summary.Journal' = 'Journal stages not written: {0} operation(s) ({1}).'
+    'Tui.Result.Summary.Compensation' = 'Compensating restoration: {0} attempted, {1} failed.'
+    'Tui.Result.Summary.Recovery' = 'Recovery records: {0} on disk, {1} only in this process.'
+    'Tui.Result.Summary.Skipped' = 'Not attempted after the batch stopped: {0} operation(s).'
+    'Tui.Result.JournalInspect' = 'Inspect the journal and the live values before retrying: press V, or run Get-WtInterruptedOperation -Targets.'
 
     # --- Store package picker -----------------------------------------------------
     'Tui.Uwp.Unavailable'       = 'The Appx module is not available, so packages cannot be listed.'
@@ -390,6 +411,7 @@
     'Tui.Verify.BuildContext'   = 'Windows build changed since this was applied (recorded {0}); this is context, not a proven cause.'
     'Tui.Verify.Interrupted'    = '{0}: interrupted at stage {1}'
     'Tui.Verify.InterruptedNote' = 'This operation never reported a final stage; its captured recovery data is intact.'
+    'Tui.Verify.TargetLive'     = '{0}: now {1} ({2})'
     'Tui.Verify.CanRestore'     = 'Restorable'
     'Tui.Verify.ReapplyTitle'   = 'Reapply this tweak?'
     'Tui.Verify.ReapplyNote'    = 'This selects {0} in the list so you can review it and apply it again. Nothing is applied by this action.'

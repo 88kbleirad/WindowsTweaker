@@ -128,10 +128,109 @@ function New-WtScreen
         Theme  = $Theme
         Rows   = $Rows
         Dirty  = $true
+        # The last successfully written cell/style state, one entry per row; a null entry
+        # means the row has never been written (a new screen, or after an explicit reset),
+        # so the first write emits every row.
+        PreviousCells = [string[][]]::new($Height)
+        PreviousStyles = [int[][]]::new($Height)
+        # Diagnostic counter: the number of rows the most recent write emitted.
+        LastWrittenRows = 0
     }
 
     Clear-WtScreen -Screen $Screen
     return $Screen
+}
+
+<#
+.SYNOPSIS
+    Computes which rows differ from the last written frame.
+.DESCRIPTION
+    The cell grid is compared with the recorded previous frame, row by row. The bottom-right
+    cell is excluded exactly as it is excluded when painting, so a row whose only difference
+    is that never-painted corner is not rewritten. Rows that have never been written are
+    reported as changed.
+#>
+function Get-WtScreenChangedRows
+{
+    [CmdletBinding()]
+    [OutputType([bool[]])]
+    param ([Parameter(Mandatory = $true)][object]$Screen)
+
+    $Height = $Screen.Height
+    $Width = $Screen.Width
+    $LastIndex = $Height - 1
+    $Changed = [bool[]]::new($Height)
+    $PreviousCells = $Screen.PreviousCells
+    $PreviousStyles = $Screen.PreviousStyles
+    $Rows = $Screen.Rows
+
+    for ($Index = 0; $Index -lt $Height; $Index++)
+    {
+        $Previous = $PreviousCells[$Index]
+        if ($null -eq $Previous)
+        {
+            $Changed[$Index] = $true
+            continue
+        }
+
+        $Limit = $Width
+        if ($Index -eq $LastIndex) { $Limit = $Width - 1 }
+
+        $Row = $Rows[$Index]
+        $Cells = $Row.Cells
+        $Styles = $Row.Styles
+        $PreviousStyleRow = $PreviousStyles[$Index]
+
+        $Same = $true
+        for ($Column = 0; $Column -lt $Limit; $Column++)
+        {
+            if ($Cells[$Column] -ne $Previous[$Column] -or $Styles[$Column] -ne $PreviousStyleRow[$Column])
+            {
+                $Same = $false
+                break
+            }
+        }
+
+        $Changed[$Index] = -not $Same
+    }
+
+    return ,$Changed
+}
+
+<#
+.SYNOPSIS
+    Records one row as written: its current cells and styles become the previous frame.
+#>
+function Set-WtScreenRowWritten
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$Screen,
+        [Parameter(Mandatory = $true)][int]$Row
+    )
+
+    $Index = $Row - 1
+    $Screen.PreviousCells[$Index] = $Screen.Rows[$Index].Cells.Clone()
+    $Screen.PreviousStyles[$Index] = $Screen.Rows[$Index].Styles.Clone()
+}
+
+<#
+.SYNOPSIS
+    Drops the recorded previous frame so the next write emits every row.
+.DESCRIPTION
+    Used after a resize (new grid) and by the forced-repaint path (Ctrl+L).
+#>
+function Reset-WtScreenDiff
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$Screen)
+
+    for ($Index = 0; $Index -lt $Screen.Height; $Index++)
+    {
+        $Screen.PreviousCells[$Index] = $null
+        $Screen.PreviousStyles[$Index] = $null
+    }
 }
 
 <#
@@ -768,7 +867,9 @@ function ConvertTo-WtScreenPlainText
 .SYNOPSIS
     Writes a frame using ANSI cursor addressing.
 .DESCRIPTION
-    One console write per frame, every line positioned explicitly, so no scrolling can
+    One console write per frame, every changed line positioned explicitly. Rows whose
+    cells and styles are identical to the last written frame are skipped, so a frame that
+    only moved the cursor rewrites just the rows that actually changed. No scrolling can
     occur and no Clear-Host is needed.
 #>
 function Write-WtScreen
@@ -780,19 +881,37 @@ function Write-WtScreen
     $Builder = [System.Text.StringBuilder]::new(($Screen.Width + 24) * $Screen.Height)
     [void]$Builder.Append("$Escape[?25l")
 
-    $Lines = ConvertTo-WtScreenText -Screen $Screen
+    $Changed = Get-WtScreenChangedRows -Screen $Screen
+    $Written = 0
+
     for ($Row = 1; $Row -le $Screen.Height; $Row++)
     {
+        if (-not $Changed[$Row - 1]) { continue }
+
         [void]$Builder.Append("$Escape[$($Row);1H")
-        [void]$Builder.Append($Lines[$Row - 1])
+        [void]$Builder.Append((ConvertTo-WtScreenLine -Screen $Screen -Row $Row))
+        $Written++
     }
 
     [void]$Builder.Append("$Escape[0m")
+
+    if ($Written -eq 0)
+    {
+        $Screen.LastWrittenRows = 0
+        return
+    }
 
     try
     {
         [Console]::Out.Write($Builder.ToString())
         [Console]::Out.Flush()
+
+        for ($Row = 1; $Row -le $Screen.Height; $Row++)
+        {
+            if ($Changed[$Row - 1]) { Set-WtScreenRowWritten -Screen $Screen -Row $Row }
+        }
+
+        $Screen.LastWrittenRows = $Written
         $Screen.Dirty = $false
     }
     catch
@@ -804,6 +923,11 @@ function Write-WtScreen
 <#
 .SYNOPSIS
     Writes a frame through the [Console] API for hosts without virtual terminal support.
+.DESCRIPTION
+    Only rows that differ from the last written frame are touched, and each row is written
+    in one buffered run per style segment instead of one call per cell. This keeps the
+    classic console (Windows PowerShell 5.1 without virtual terminal processing) on the
+    same changed-row contract as the ANSI renderer.
 #>
 function Write-WtScreenPlain
 {
@@ -811,36 +935,66 @@ function Write-WtScreenPlain
     param ([Parameter(Mandatory = $true)][object]$Screen)
 
     $StyleList = $Screen.Theme.StyleList
+    $Changed = Get-WtScreenChangedRows -Screen $Screen
+    $Written = 0
 
     try
     {
-        [Console]::CursorVisible = $false
+        try { [Console]::CursorVisible = $false } catch { $null = $_ }
+
         for ($Row = 1; $Row -le $Screen.Height; $Row++)
         {
-            [Console]::SetCursorPosition(0, $Row - 1)
-            $Line = $Screen.Rows[$Row - 1]
+            if (-not $Changed[$Row - 1]) { continue }
+
+            $Index = $Row - 1
+            $Line = $Screen.Rows[$Index]
             $Limit = Get-WtRowWidth -Screen $Screen -Row $Row
+
+            try { [Console]::SetCursorPosition(0, $Index) } catch { $null = $_ }
+
             $CurrentStyle = -1
+            $Segment = [System.Text.StringBuilder]::new($Limit)
 
             for ($Column = 0; $Column -lt $Limit; $Column++)
             {
                 $StyleId = $Line.Styles[$Column]
                 if ($StyleId -ne $CurrentStyle)
                 {
+                    if ($Segment.Length -gt 0)
+                    {
+                        [Console]::Out.Write($Segment.ToString())
+                        [void]$Segment.Clear()
+                    }
+
                     if ($StyleId -ge 0 -and $StyleId -lt $StyleList.Count)
                     {
                         $Style = $StyleList[$StyleId]
-                        [Console]::ForegroundColor = [System.ConsoleColor]$Style.ConsoleForeground
-                        [Console]::BackgroundColor = [System.ConsoleColor]$Style.ConsoleBackground
+                        try { [Console]::ForegroundColor = [System.ConsoleColor]$Style.ConsoleForeground } catch { $null = $_ }
+                        try { [Console]::BackgroundColor = [System.ConsoleColor]$Style.ConsoleBackground } catch { $null = $_ }
                     }
+
                     $CurrentStyle = $StyleId
                 }
 
-                [Console]::Out.Write($Line.Cells[$Column])
+                [void]$Segment.Append($Line.Cells[$Column])
             }
+
+            if ($Segment.Length -gt 0)
+            {
+                [Console]::Out.Write($Segment.ToString())
+            }
+
+            $Written++
         }
 
-        [Console]::ResetColor()
+        try { [Console]::ResetColor() } catch { $null = $_ }
+
+        for ($Row = 1; $Row -le $Screen.Height; $Row++)
+        {
+            if ($Changed[$Row - 1]) { Set-WtScreenRowWritten -Screen $Screen -Row $Row }
+        }
+
+        $Screen.LastWrittenRows = $Written
         $Screen.Dirty = $false
     }
     catch

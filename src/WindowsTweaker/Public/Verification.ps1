@@ -170,14 +170,22 @@ function Close-WtSession
 .DESCRIPTION
     Read-only. The interface shows these at startup and offers to inspect them; restoring one
     is an explicit Undo-WtTweak/Undo-WtSession call, never something that happens by itself.
+    An interrupted operation whose capture never reached the store reports CanRestore false and
+    no value is invented for it: only the stage it stopped at is reported.
+.PARAMETER Targets
+    Also read the current value of every target the operation recorded. This is a read-only
+    comparison of the intended value with the live one, labelled matching, changed, unreadable
+    or unsupported; nothing is written and no missing baseline is reconstructed.
+.EXAMPLE
+    Get-WtInterruptedOperation -Targets
 #>
 function Get-WtInterruptedOperation
 {
     [CmdletBinding()]
     [OutputType([psobject])]
-    param ()
+    param ([Parameter(Mandatory = $false)][switch]$Targets)
 
-    return @(Get-WtInterruptedOperationInternal)
+    return @(Get-WtInterruptedOperationInternal -Targets:$Targets)
 }
 
 <#
@@ -391,18 +399,40 @@ function Undo-WtSession
             Status      = [string]$Result.Status
             Messages    = @($Result.Messages)
             Verification = $Result.Verification
+            Journal     = $Result.Journal
         })
+
+        # The journal could not record this step, so it cannot record the next one either: the
+        # remaining steps are not attempted and are reported as skipped.
+        if (Test-WtJournalStopRequired -Result $Result)
+        {
+            break
+        }
     }
 
+    $Expected = @($Plan.Steps | Where-Object { -not $_.SupersededOnly }).Count
+    $Skipped = [math]::Max(0, $Expected - @($Results).Count)
+
     $Failed = @($Results | Where-Object { $_.Status -in 'failed', 'unsupported', 'review-required' }).Count
-    $Status = if ($Failed -gt 0) { 'failed' } elseif (@($Results).Count -eq 0) { 'unchanged' } else { 'succeeded' }
+    $Uncertain = @($Results | Where-Object { $_.Journal -and $_.Journal.StopBatch }).Count
+    $Status = if ($Failed -gt 0) { 'failed' }
+    elseif ($Uncertain -gt 0) { 'partial' }
+    elseif (@($Results).Count -eq 0) { 'unchanged' }
+    else { 'succeeded' }
+
+    $Messages = @($Plan.Conflicts | ForEach-Object { "Superseded: $($_.Label)" })
+    if ($Uncertain -gt 0 -and $Skipped -gt 0)
+    {
+        $Messages += Get-WtString -Key 'Tui.Result.Summary.Skipped' -Arguments @($Skipped)
+    }
 
     return [pscustomobject]@{
         PSTypeName = 'WindowsTweaker.SessionRestoreResult'
         SessionId  = $Plan.SessionId
         Status     = $Status
         Steps      = @($Results.ToArray())
-        Messages   = @($Plan.Conflicts | ForEach-Object { "Superseded: $($_.Label)" })
+        Skipped    = $Skipped
+        Messages   = $Messages
         Plan       = $Plan
     }
 }

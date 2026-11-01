@@ -201,6 +201,20 @@ function Start-WtWorkerTask
 
                 $Result = if ($Kind -eq 'rollback') { Undo-WtTweak @Parameters } else { Invoke-WtTweak @Parameters }
                 $Queue.Enqueue(@{ Kind = 'result'; Id = $Item.Id; HistoryId = $Item.HistoryId; Label = $Item.Label; Index = $Index; Total = $Total; Result = $Result })
+
+                # The engine sets this flag for every result; Test-WtJournalStopRequired is the
+                # in-module form of the same test. A runspace can only call the module's exported
+                # functions, so the flag is read here instead of calling that helper.
+                if ($null -ne $Result -and $Result.Journal -and $Result.Journal.StopBatch)
+                {
+                    # The store could not record this operation, so it cannot record the next one
+                    # either. Stop the batch here: the remaining items are reported as skipped
+                    # instead of repeating the same failure for every one of them.
+                    $Cancel.Active = $null
+                    $Queue.Enqueue(@{ Kind = 'stopped'; Id = $Item.Id; HistoryId = $Item.HistoryId; Label = $Item.Label; Index = $Index; Total = $Total; Skipped = ($Total - $Index) })
+                    $Queue.Enqueue(@{ Kind = 'done'; Index = $Index; Total = $Total })
+                    return
+                }
             }
             catch
             {
