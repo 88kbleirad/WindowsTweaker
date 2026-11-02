@@ -58,15 +58,38 @@ tree so a modified bridge is exercised without re-publishing.
 ### The release-pipeline build (Windows GitHub Actions runner)
 
 `.github/workflows/release.yml` runs a `frontend-windows` job on `windows-latest` that
-executes the exact `dotnet publish` command above for `win-x64`, verifies the native exe
-and the engine payload (`engine/WindowsTweaker.psd1`, `engine/Bridge/wt-bridge.ps1`) are
-present, runs the live-backend bridge test suite on Windows, and uploads the folder as an
-artifact. The separate `release` job downloads that artifact, stages it as
-`frontend/win-x64/`, then runs `tools/New-ReleasePackage.ps1` for all four platforms, so
-the Windows archive contains the real compiled frontend while the Linux archives carry none.
-This is the only place the XAML markup compiler (a Windows-only process) runs; nothing here
-is synthetic. ARM64 frontend builds are not produced until they can be validated the same
-way; the ARM64 archive ships without a frontend payload.
+executes the exact `dotnet publish` command above for `win-x64`, runs
+`tools/Test-WtFrontendPayload.ps1` against the publish output (the full required-asset
+contract: exe, deps/runtimeconfig, the Windows App SDK native payload, `resources.pri`,
+engine module + bridge host, and architecture consistency), runs the live-backend bridge
+test suite on Windows, and uploads the folder as an artifact. The separate `release` job
+downloads that artifact, stages it as `frontend/win-x64/`, re-validates the staged payload
+(the exact bytes that enter the archive), then runs `tools/New-ReleasePackage.ps1` for all
+four platforms, so the Windows archive contains the real compiled frontend while the Linux
+archives carry none. This is the only place the XAML markup compiler (a Windows-only
+process) runs; nothing here is synthetic. ARM64 frontend builds are not produced until they
+can be validated the same way; the ARM64 archive ships without a frontend payload.
+`tools/Test-WtFrontendPayload.ps1` is also execurable manually on any published folder:
+
+```powershell
+pwsh -NoProfile -File tools/Test-WtFrontendPayload.ps1 -Path frontend-build/win-x64
+```
+
+Compilation alone is never reported as proof the GUI can start: WinUI 3 self-contained apps
+fail at runtime (stowed exceptions) when a required payload file is missing or the native
+architectures mismatch, so the payload check is mandatory in both workflows.
+
+## Startup diagnostics
+
+The frontend writes a startup trace to the engine's log directory — `%LOCALAPPDATA%\WindowsTweaker\logs` on Windows
+(`WT_LOG_DIRECTORY` overrides it) — as `startup-<yyyyMMdd-HHmmss>.log`. It records, with
+timestamps, each startup stage (application construction, resource loading, MainWindow
+`InitializeComponent`, engine resolution, window activation, backend launch, handshake)
+and the full managed exception chain (type, message, HRESULT, inner exceptions, stack
+traces) before a fatal error becomes the stowed exception (0xc000027b) WER reports. The
+global handlers are registered first thing in the App constructor; fatal exceptions are
+never marked handled. When the frontend fails before the log can be written, collect a
+crash dump and inspect the stowed exception (see docs/VALIDATION.md §25).
 
 ## Package versions (verified 2026-11)
 

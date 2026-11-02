@@ -16,10 +16,36 @@ public partial class App : Application
     /// <summary>True when this copy was started by the elevation handoff.</summary>
     public static bool ArgumentElevated { get; private set; }
 
+    /// <summary>
+    /// Registers crash handlers before any instance code runs, so an exception in the App
+    /// constructor still reaches the startup log.
+    /// </summary>
+    static App()
+    {
+        StartupDiagnostics.RegisterExceptionHandlers();
+    }
+
     public App()
     {
+        StartupDiagnostics.RegisterXamlExceptionHandler(this);
+        StartupDiagnostics.LogEnvironment();
+        StartupDiagnostics.Stage("App.ctor begin");
         ParseArguments(Environment.GetCommandLineArgs());
-        InitializeComponent();
+        StartupDiagnostics.Stage("App.arguments parsed");
+        try
+        {
+            InitializeComponent();
+        }
+        catch (Exception exception)
+        {
+            // Record the full chain before it becomes a stowed exception at the process
+            // boundary (0xc000027b) — this is the earliest place the real failure is
+            // visible as a managed exception. The exception is rethrown: nothing fatal is
+            // swallowed here, and we want the initial window to fail loudly.
+            StartupDiagnostics.Error("App.InitializeComponent failed", exception);
+            throw;
+        }
+        StartupDiagnostics.Stage("App.InitializeComponent done");
     }
 
     private static void ParseArguments(string[] args)
@@ -43,7 +69,10 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        StartupDiagnostics.Stage("App.OnLaunched begin");
         _window = new MainWindow();
+        StartupDiagnostics.Stage("MainWindow constructed");
         _window.Activate();
+        StartupDiagnostics.Stage("MainWindow activated");
     }
 }

@@ -12,6 +12,21 @@ namespace WindowsTweaker.WinUI;
 /// </remarks>
 public static class EngineLocator
 {
+    /// <summary>Non-throwing form of <see cref="ResolveRepositoryRoot"/>.</summary>
+    public static bool TryResolveRepositoryRoot(out string? repositoryRoot)
+    {
+        try
+        {
+            repositoryRoot = ResolveRepositoryRoot();
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            repositoryRoot = null;
+            return false;
+        }
+    }
+
     /// <summary>The directory whose <c>src/WindowsTweaker</c> child holds the module.</summary>
     public static string ResolveRepositoryRoot()
     {

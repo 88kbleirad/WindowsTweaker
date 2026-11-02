@@ -53,12 +53,12 @@ jobs:
             -p:WindowsAppSDKSelfContained=true `
             -o frontend-build/win-x64
           if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with $LASTEXITCODE" }
-          # The archive contract needs the native exe and the engine payload (module, bridge
-          # host, string tables). Verify all three are present before anything is uploaded.
-          $Root = "frontend-build/win-x64"
-          if (-not (Test-Path (Join-Path $Root 'WindowsTweaker.WinUI.exe'))) { throw 'frontend exe missing' }
-          if (-not (Test-Path (Join-Path $Root 'engine/WindowsTweaker.psd1'))) { throw 'engine manifest missing' }
-          if (-not (Test-Path (Join-Path $Root 'engine/Bridge/wt-bridge.ps1'))) { throw 'bridge host missing' }
+          # "Compilation succeeded" is not proof the GUI can start: WinUI 3 self-contained
+          # apps need the complete Windows App SDK native payload next to the executable
+          # (resources.pri, the XAML runtime DLLs, engine files, matching architecture).
+          # Validate the full asset list before anything is uploaded.
+          pwsh -NoProfile -File ./tools/Test-WtFrontendPayload.ps1 -Path frontend-build/win-x64
+          if ($LASTEXITCODE -ne 0) { throw "frontend payload validation failed" }
           Write-Host "frontend payload for win-x64 verified"
 
       - name: Frontend/core/bridge tests (live backend)

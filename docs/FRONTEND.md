@@ -89,6 +89,19 @@ public API through the bridge and renders the engine's structured answers:
 - Pending selections, running operations, results and history are four distinct state
   slots in the view models and are never merged.
 
+## Startup behavior
+
+The window is created and activated before the backend is connected. Engine discovery is
+non-fatal: if the packaged engine folder is missing (or the resolved root has no module),
+the window still opens and reports the missing-engine state; the only exception is a
+PowerShell host that cannot be found or a handshake that fails, which shows a visible
+"backend down" panel with the reason and a retry button. The backend is never waited on
+synchronously during startup, and a backend failure never takes the window down (the
+window renders a visible error state instead).
+
+Startup stages and any unhandled exception chain are recorded under
+`%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log` (see BUILD-WINUI.md).
+
 ## Elevation
 
 Opening the window and browsing diagnostics never require elevation (`asInvoker` in

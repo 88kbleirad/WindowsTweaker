@@ -1524,3 +1524,103 @@ $env:WT_TUI_PERF_DIAGNOSTICS = '1'
 The before/after comparison must use the same VM, runtime (Windows PowerShell 5.1), console,
 terminal size, and workload. Slow-provider automation is covered by the inert fixtures in
 `tests/InfoCollector.Tests.ps1`; the real-` numbers still need the Windows host.
+
+## 25. WinUI frontend startup crash (event 1000 / 0xc000027b) - root cause, diagnostics, fix
+
+### The report
+
+On Windows 11 IoT Enterprise LTSC 2024, the fully extracted win-x64 artifact opens no
+window. Application log: Event ID 1000, faulting module `Microsoft.UI.Xaml.dll` version
+3.1.8.0, exception code `0xc000027b`, and the faulting DLL loads from the extracted
+application directory. Windows CI compilation/publish succeeded.
+
+### What 0xc000027b is and what it is not
+
+`0xc000027b` is `STATUS_STOWED_EXCEPTION`: it is the WER-level wrapper WinUI uses when a
+managed/XAML exception escaped the app boundary. It is not itself a root cause - the root
+cause is the stowed exception underneath (the managed exception chain, HRESULT and the
+startup stage). Treating `0xc000027b` as the cause is exactly the dead end this section
+closes.
+
+### Evidence gathered here (no Windows host; VM powered off, untouched)
+
+- **Repo/publish settings** (`gui/src/WindowsTweaker.WinUI/WindowsTweaker.WinUI.csproj`,
+  `.github/workflows/build-winui.yml`, `release.yml`): Release publish is unpackaged
+  (`-p:AppxPackage=false -p:EnableMsixTooling=false -p:WindowsPackageType=None`), .NET
+  self-contained (`--self-contained true`), Windows App SDK self-contained
+  (`-p:WindowsAppSDKSelfContained=true`), WinAppSDK **1.8.260921001**, BuildTools
+  **10.0.26100.4654**, `net10.0-windows10.0.19041.0`, no trimming and no single-file
+  (`PublishTrimmed`/`PublishSingleFile` unset). The Windows App SDK 1.8 package's own
+  `BootstrapCommon.targets` confirms the bootstrap auto-initializer is *disabled* exactly
+  when `WindowsAppSDKSelfContained=true` (verified from the cached NuGet package), so the
+  payload contract is the app-local runtime, not a bootstrap DLL.
+- **Static XAML checks**: every `{StaticResource}` key used by `MainWindow.xaml` exists in
+  `Themes/CatppuccinMocha.xaml`; no duplicate `x:Key`, no duplicate `x:Name`, XML
+  well-formedness passes. The theme is merged in `App.xaml`. XAML compile itself is a
+  Windows-only process and could not be executed here.
+- **Payload contract** (the artifact, not the source): `tools/Test-WtFrontendPayload.ps1`
+  now encodes the full required-asset list for a self-contained WinUI 3 unpackaged app -
+  `resources.pri`, the XAML runtime (`Microsoft.ui.xaml.dll`, `Microsoft.UI.Xaml.Controls.dll`,
+  `Microsoft.UI.Xaml.Controls.pri`, `Microsoft.UI.Xaml.Internal.dll`,
+  `Microsoft.UI.Xaml.Phone.dll`, `Microsoft.ui.xaml.resources.19h1.dll`,
+  `Microsoft.ui.xaml.resources.common.dll`, `WinUIEdit.dll`), the WindowsAppRuntime
+  (`Microsoft.WindowsAppRuntime.dll`, `Microsoft.Windows.ApplicationModel.Resources.dll`,
+  `MRM.dll`, `DWriteCore.dll`, `Microsoft.UI.dll`, `Microsoft.UI.Windowing.dll`,
+  `Microsoft.UI.Input.dll`, `CoreMessagingXP.dll`, composition/display/input native
+  helpers, `DeploymentAgent.exe`, `RestartAgent.exe`,
+  `PushNotificationsLongRunningTask.ProxyStub.dll`), the engine payload, and **PE
+  architecture consistency** between the exe and the native DLLs (a mismatch here is a
+  runtime-only failure). The validator was exercised on Linux against a synthetic payload
+  (pass + per-file missing + x86-vs-x64 mismatch paths), and is wired into
+  `build-winui.yml` and `release.yml` (build output and the staged archive payload).
+
+### The fix
+
+1. **Startup diagnostics** (`StartupDiagnostics.cs`): logs each startup stage with a
+   timestamp to `%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log` (or
+   `WT_LOG_DIRECTORY`), and records the full exception chain (type, message, HRESULT,
+   inner exceptions, stack traces). Global handlers are registered first thing in the App
+   constructor (`AppDomain.UnhandledException`, `TaskScheduler.UnobservedTaskException`,
+   and the XAML `Application.UnhandledException` on the live instance). Fatal exceptions
+   are never marked handled.
+2. **App/Window instrumentation** (`App.xaml.cs`, `MainWindow.xaml.cs`): stage markers
+   for application construction, `InitializeComponent`, engine resolution, MainWindow
+   construction, activation, backend launch and handshake. `App.InitializeComponent`
+   failures are logged and rethrown - they are not suppressed.
+3. **Window-first startup + visible backend failure**: engine discovery is now
+   non-fatal (`EngineLocator.TryResolveRepositoryRoot`); if the engine is missing the
+   window still opens and shows the failure panel. The backend is never awaited
+   synchronously during startup. A failed handshake (no PowerShell host, engine missing,
+   protocol mismatch) renders a visible "backend down" panel with the reason and a retry
+   button instead of silently producing an empty window.
+4. **Payload validation**: the build-only workflow now validates the complete required
+   asset list and architecture (above). Compilation alone is no longer reported as proof
+   of successful GUI startup.
+
+### What remains Windows-only (not executed here)
+
+The real Windows launch with the fixed artifact; reading the startup log after a crash;
+and, if the crash occurs before managed logging, collecting a crash dump and inspecting
+the stowed exception (procedure below).
+
+### Fresh artifact + VM reproduction/log collection steps
+
+1. Pull the new commit; run the manual workflow `.github/workflows/build-winui.yml`
+   (workflow_dispatch, windows-latest). It publishes, validates the payload, runs the
+   bridge live tests and uploads `frontend-win-x64-build`.
+2. Download the artifact, fully extract it on the VM to a folder (e.g.
+   `C:\wt-frontend`).
+3. Run `WindowsTweaker.WinUI.exe` from that folder. If a window opens and the overview
+   loads, startup succeeded; the log at `%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log`
+   records all stages, including "backend connected, handshake done".
+4. If it still crashes: the log file already contains the underlying managed exception -
+   open the newest `startup-*.log` and look for `error` records with the HRESULT and the
+   full stack. The stage line directly above the error names the failing startup stage.
+5. If no log exists (failure before the logging path can run), collect a crash dump:
+   - Set `HKCU\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\WindowsTweaker.WinUI.exe`
+     with `DumpFolder=%LOCALAPPDATA%\CrashDumps`, `DumpType=2`, `DumpCount=10`
+     (no VM config/security changes; this is a per-app WER setting).
+   - Relaunch, then open the dump in WinDbg (or `dotnet-dump analyze`) and run
+     `!analyze -v`; the stowed exception (0xc000027b) is unwrapped by
+     `!pde.dse`/`!pde` on the stowed-exception chain. If the dump is a .NET heap dump,
+     `dotnet-dump` `clrstack` plus the `startup-*.log` lines identify the exact stage.

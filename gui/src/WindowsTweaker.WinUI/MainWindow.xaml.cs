@@ -32,9 +32,24 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        StartupDiagnostics.Stage("MainWindow.ctor begin");
         InitializeComponent();
+        StartupDiagnostics.Stage("MainWindow.InitializeComponent done");
 
-        _shell = new ShellViewModel(EngineLocator.ResolveRepositoryRoot(), dispatch: action =>
+        string engineRoot;
+        if (!EngineLocator.TryResolveRepositoryRoot(out var resolvedRoot) || resolvedRoot is null)
+        {
+            StartupDiagnostics.Error("EngineLocator.ResolveRepositoryRoot failed",
+                new InvalidOperationException("The WindowsTweaker engine was not found next to the application."));
+            engineRoot = Environment.GetEnvironmentVariable("WT_ENGINE_ROOT") ?? AppContext.BaseDirectory;
+        }
+        else
+        {
+            engineRoot = resolvedRoot;
+            StartupDiagnostics.Stage($"MainWindow engine resolved: {engineRoot}");
+        }
+
+        _shell = new ShellViewModel(engineRoot, dispatch: action =>
         {
             if (DispatcherQueue is not null)
             {
@@ -202,19 +217,43 @@ public sealed partial class MainWindow : Window
     private async Task InitializeAsync()
     {
         var failure = await _shell.ConnectAsync();
-        if (failure is null)
+        if (failure is not null)
         {
-            // The elevated relaunch carries the language across the handoff; the engine
-            // answers in its own default until told otherwise.
-            if (!string.IsNullOrWhiteSpace(App.ArgumentLanguage) && App.ArgumentLanguage != _shell.Strings.Active)
-            {
-                await _shell.SetLanguageAsync(App.ArgumentLanguage);
-            }
-
-            LanguageCombo.SelectedItem = _shell.Strings.Active;
-            await _shell.NavigateAsync(Workspace.Overview);
-            UpdateBackendBadge();
+            StartupDiagnostics.Error($"backend connect failed: {failure}",
+                new InvalidOperationException(failure));
+            ShowStartupFailure(failure, showRetry: true);
+            return;
         }
+
+        // The elevated relaunch carries the language across the handoff; the engine
+        // answers in its own default until told otherwise.
+        if (!string.IsNullOrWhiteSpace(App.ArgumentLanguage) && App.ArgumentLanguage != _shell.Strings.Active)
+        {
+            await _shell.SetLanguageAsync(App.ArgumentLanguage);
+        }
+
+        LanguageCombo.SelectedItem = _shell.Strings.Active;
+        await _shell.NavigateAsync(Workspace.Overview);
+        UpdateBackendBadge();
+        StartupDiagnostics.Stage("backend connected, handshake done");
+    }
+
+    private void ShowStartupFailure(string detail, bool showRetry)
+    {
+        StartupFailurePanel.Visibility = Visibility.Visible;
+        WorkspaceHost.Visibility = Visibility.Collapsed;
+        StartupFailureDetail.Text = detail;
+        RetryBackendButton.Visibility = showRetry ? Visibility.Visible : Visibility.Collapsed;
+        EnvironmentText.Text = _shell.Strings.IsLoaded
+            ? _shell.Strings["Gui.BackendDown"]
+            : "Backend unavailable";
+    }
+
+    private async void RetryBackend_Click(object sender, RoutedEventArgs e)
+    {
+        StartupFailurePanel.Visibility = Visibility.Collapsed;
+        WorkspaceHost.Visibility = Visibility.Visible;
+        await InitializeAsync();
     }
 
     private void OnShellPropertyChanged(object? sender, PropertyChangedEventArgs e)
