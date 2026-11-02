@@ -1560,19 +1560,26 @@ closes.
   Windows-only process and could not be executed here.
 - **Payload contract** (the artifact, not the source): `tools/Test-WtFrontendPayload.ps1`
   now encodes the full required-asset list for a self-contained WinUI 3 unpackaged app -
-  `resources.pri`, the XAML runtime (`Microsoft.ui.xaml.dll`, `Microsoft.UI.Xaml.Controls.dll`,
+  the generated app PRI (`WindowsTweaker.WinUI.pri`; MRT Core's unpackaged name - see
+  the publish/validator root-cause section below), the XAML runtime
+  (`Microsoft.ui.xaml.dll`, `Microsoft.UI.Xaml.Controls.dll`,
   `Microsoft.UI.Xaml.Controls.pri`, `Microsoft.UI.Xaml.Internal.dll`,
   `Microsoft.UI.Xaml.Phone.dll`, `Microsoft.ui.xaml.resources.19h1.dll`,
   `Microsoft.ui.xaml.resources.common.dll`, `WinUIEdit.dll`), the WindowsAppRuntime
   (`Microsoft.WindowsAppRuntime.dll`, `Microsoft.Windows.ApplicationModel.Resources.dll`,
-  `MRM.dll`, `DWriteCore.dll`, `Microsoft.UI.dll`, `Microsoft.UI.Windowing.dll`,
-  `Microsoft.UI.Input.dll`, `CoreMessagingXP.dll`, composition/display/input native
-  helpers, `DeploymentAgent.exe`, `RestartAgent.exe`,
+  `MRM.dll`, `Microsoft.WindowsAppRuntime.pri`, `DWriteCore.dll`, `Microsoft.UI.dll`,
+  `Microsoft.UI.Windowing.dll`, `Microsoft.UI.Input.dll`, `CoreMessagingXP.dll`,
+  composition/display/input native helpers, `RestartAgent.exe`,
   `PushNotificationsLongRunningTask.ProxyStub.dll`), the engine payload, and **PE
   architecture consistency** between the exe and the native DLLs (a mismatch here is a
-  runtime-only failure). The validator was exercised on Linux against a synthetic payload
-  (pass + per-file missing + x86-vs-x64 mismatch paths), and is wired into
-  `build-winui.yml` and `release.yml` (build output and the staged archive payload).
+  runtime-only failure). `DeploymentAgent.exe` is deliberately not required: it is not
+  part of the self-contained payload (only `restartAgent.exe` is copied by
+  `AddMicrosoftWindowsAppSDKPayloadFilesFromComponents`), and its consumer - the
+  DeploymentManager auto-initializer - is disabled when `WindowsAppSDKSelfContained=true`.
+  The validator was exercised on Linux against a synthetic payload (pass + per-file
+  missing + x86-vs-x64 mismatch paths), and is wired into `build-winui.yml` and
+  `release.yml` (build output and the staged archive payload) with a publish inventory
+  artifact uploaded even on failure.
 
 ### The fix
 
@@ -1624,3 +1631,91 @@ the stowed exception (procedure below).
      `!analyze -v`; the stowed exception (0xc000027b) is unwrapped by
      `!pde.dse`/`!pde` on the stowed-exception chain. If the dump is a .NET heap dump,
      `dotnet-dump` `clrstack` plus the `startup-*.log` lines identify the exact stage.
+
+## 26. Frontend publish/payload validation failure - root cause and precise fix
+
+### CI evidence
+
+`dotnet publish` completed successfully; `tools/Test-WtFrontendPayload.ps1` then failed
+with exactly two missing files:
+
+```
+FAIL: required publish assets are missing:
+  resources.pri
+  DeploymentAgent.exe
+```
+
+### Publish-side root cause: the generated app PRI never reaches publish
+
+- MRT Core (pinned `Microsoft.Windows.SDK.BuildTools.MSIX` 1.7.20250829.1,
+  `MrtCore.PriGen.targets`) generates the app's PRI during Build
+  (`PrepareForRunDependsOn` includes `_GenerateProjectPriFile`). For this unpackaged
+  self-contained project (`AppxPackage=false`, `WindowsPackageType=None`) the file name is
+  **`$(TargetName).pri`** (`ProjectPriFileName` rule at PriGen.targets:151), i.e.
+  `WindowsTweaker.WinUI.pri`, written to `$(TargetDir)`. `resources.pri` is only the
+  **MSIX** name (PriGen.targets:150) and is not generated in this configuration.
+- There is no item path from that generated file into `dotnet publish`:
+  - `_CreateProjectPriFileItem` (PriGen.targets:834) only creates the `ProjectPriFile`
+    item when `AppxPackage=true`; `_ExpandProjectPriFile` is likewise gated on `AppxPackage=true`.
+  - The MSIX `Publish` target override (PriGen.targets:316) only runs when `AppxPackage=true`.
+  - The .NET SDK's `ComputeFilesToPublish` only publishes `ContentWithTargetPath`,
+    `_NoneWithTargetPath`, `ReferenceCopyLocalPaths`, `IntermediateAssembly`, deps and
+    runtimeconfig; a loose `.pri` in `TargetDir` is in none of those item groups.
+- Consequence: an unpackaged self-contained publish **silently ships without the app's
+  resources file**. The XAML runtime resolves resources against that file at startup
+  (the MRT Core resource manager), so a missing app PRI is a first-class candidate for the
+  original 0xc000027b startup crash - it is precisely the class of runtime-only failure
+  that a green compile and a shallow file check miss.
+
+Fix (`gui/src/WindowsTweaker.WinUI/WindowsTweaker.WinUI.csproj`): a target
+`IncludeWinUiAppPriInPublish` runs after `PrepareForRun` and before
+`ComputeFilesToPublish`, adding the generated `$(TargetDir)$(TargetName).pri` as a
+`None` item with `Link=$(TargetName).pri`, `CopyToOutputDirectory=PreserveNewest` and
+`CopyToPublishDirectory=PreserveNewest`. This preserves the file's own name (no rename,
+no copying an arbitrary PRI), keeps the relative path at the publish root, and does not
+copy the NuGet package.
+
+### Validator-side root cause: two incorrect hard requirements
+
+- `resources.pri` was wrong as a universal requirement: for unpackaged self-contained
+  apps the generated PRI is `$(TargetName).pri`. The validator now defaults
+  `-ProjectPriName` to `WindowsTweaker.WinUI.pri` (the SDK's name) and accepts
+  `resources.pri` only when explicitly passed for a project that publishes under that name.
+- `DeploymentAgent.exe` was wrong as an unconditional requirement:
+  - `AddMicrosoftWindowsAppSDKPayloadFilesFromComponents`
+    (`Microsoft.WindowsAppSDK.SelfContained.targets`) copies `*.dll`, `workloads*.json`,
+    `restartAgent.exe`, `map.html`, `*.mui`, `*.png`, `*.winmd`, `*.xaml`, `*.xbf` and
+    `*.pri` - **not** `DeploymentAgent.exe`.
+  - Its consumer, the DeploymentManager auto-initializer
+    (`Microsoft.WindowsAppSDK.DeploymentManagerCommon.targets`), defaults to disabled
+    exactly when `WindowsAppSDKSelfContained=true`.
+  - The runtime MSIX packages themselves carry only
+    `DynamicDependency.DataStore.exe`, `DynamicDependencyLifetimeManager*.exe` and
+    `PushNotificationsLongRunningTask*.exe`; `DeploymentAgent.exe` exists only in the
+    Foundation package's native dir as a tool, not an app-runtime payload.
+  - The validator now requires `RestartAgent.exe` (explicitly copied) and not
+    `DeploymentAgent.exe`, and added `Microsoft.WindowsAppRuntime.pri` (part of the
+    `*.pri` payload) to the expected list.
+
+Both rules were corrected, not weakened: the exe, deps/runtimeconfig, engine payload,
+the complete app-local runtime native set and the PE architecture checks all remain
+mandatory. The validator also writes a recursive publish inventory (`-Inventory`) that the
+workflows upload even when validation fails.
+
+### Windows checks executed
+
+None beyond the CI evidence could be executed here: no Windows host is available, the VM
+is powered off, and VM/CI changes are out of scope (build-only/release workflows were
+updated, not run). The validator was exercised on Linux against a synthetic payload
+(pass, per-file missing, and x86-vs-x64 mismatch paths) and the inventory writer was
+exercised. The real Windows publish + validator run is the manual `build-winui.yml`
+workflow (see section 25 steps 1-2); the inventory artifact is uploaded even on failure so
+a diagnostic recursive listing exists regardless.
+
+### Original 0xc000027b status
+
+The original startup crash is still unverified on Windows (it was never reproduced on a
+Windows host in this environment). The missing-app-PRI finding gives it a concrete,
+evidence-based mechanism (XAML resource resolution against an absent PRI), and the fix
+ensures the PRI is now published; whether that fully resolves the VM startup crash must be
+confirmed by the manual reproduction in section 25.

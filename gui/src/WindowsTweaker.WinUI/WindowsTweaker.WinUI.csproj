@@ -75,4 +75,25 @@
     <Content Include="Assets\**" />
   </ItemGroup>
 
+  <!--
+    MRT Core generates the app's PRI as <TargetName>.pri in TargetDir during Build
+    (unpackaged self-contained layout; "resources.pri" is only the MSIX name). Nothing in
+    the Windows App SDK or .NET SDK publish paths carries that generated file into the
+    publish folder, so an unpackaged publish silently ships without the app's resources
+    and the XAML runtime fails at startup (stowed exception / 0xc000027b). This target
+    injects the generated PRI into the publish item list after
+    GetCopyToPublishDirectoryItems has computed its items (it must run after that target
+    because the file is created during Build, after the normal item evaluation).
+  -->
+  <Target Name="IncludeWinUiAppPriInPublish"
+          AfterTargets="GetCopyToPublishDirectoryItems">
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectory Include="$(TargetDir)$(TargetName).pri"
+                                            Condition="Exists('$(TargetDir)$(TargetName).pri')">
+        <TargetPath>$(TargetName).pri</TargetPath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </_SourceItemsToCopyToPublishDirectory>
+    </ItemGroup>
+  </Target>
+
 </Project>

@@ -7,9 +7,25 @@
 # the XAML runtime requires, and the architecture of the native binaries. It does not run
 # the app; the runtime proof is a manual launch on the target OS (docs/VALIDATION.md).
 #
+# Evidence for the required-file rules (pinned Windows App SDK 1.8.260921001 targets):
+#   * MRT Core generates the app PRI as <TargetName>.pri (NOT resources.pri, which is only
+#     the MSIX name) in TargetDir during Build; the .NET publish pipeline has no item that
+#     carries it, so WindowsTweaker.WinUI.csproj explicitly adds it to output/publish.
+#     This validator accepts resources.pri under -ProjectPriName resources.pri for app
+#     projects that deliberately rename it, but the default is the SDK's name.
+#   * The app-local WinUI/WindowsAppRuntime native payload is assembled by
+#     AddMicrosoftWindowsAppSDKPayloadFilesFromComponents (Microsoft.WindowsAppSDK
+#     .SelfContained.targets): *.dll, workloads*.json, restartAgent.exe, map.html,
+#     *.mui, *.png, *.winmd, *.xaml, *.xbf, *.pri. DeploymentAgent.exe is NOT in that
+#     set (its consumer, the DeploymentManager auto-initializer, is disabled when
+#     WindowsAppSDKSelfContained=true), so it is deliberately not required here.
+#   * `resources.pri` is never required as a publish file in unpackaged self-contained
+#     mode; the app's own PRI is the .pri file named by -ProjectPriName.
+#
 # Usage:
 #   pwsh -NoProfile -File tools/Test-WtFrontendPayload.ps1 -Path <publish-dir>
 #   pwsh -NoProfile -File tools/Test-WtFrontendPayload.ps1 -Path <publish-dir> -ListMissing
+#   pwsh -NoProfile -File tools/Test-WtFrontendPayload.ps1 -Path <publish-dir> -Inventory <file>
 #
 # Exit code 0: all required assets present with the required shape.
 # Non-zero: failure; the message names exactly what is missing/mismatched.
@@ -18,11 +34,44 @@
 param(
     [Parameter(Mandatory = $true)][string]$Path,
 
+    # The generated application PRI file name (relative to the publish root). Defaults to
+    # the MRT Core unpackaged name: <targetname>.pri. Pass "resources.pri" only if the
+    # app is actually published with that name.
+    [string]$ProjectPriName = 'WindowsTweaker.WinUI.pri',
+
     # Print the full expected-asset list when validation fails (diagnosis aid).
-    [switch]$ListMissing
+    [switch]$ListMissing,
+
+    # Write a recursive inventory (relative path + size) of the publish directory to this
+    # file. Useful for diagnosing CI failures; written even when validation fails.
+    [string]$Inventory = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($Inventory) {
+    try {
+        $InvFull = if ([System.IO.Path]::IsPathRooted($Inventory)) {
+            [System.IO.Path]::GetFullPath($Inventory)
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Inventory))
+        }
+        $InvDir = [System.IO.Path]::GetDirectoryName($InvFull)
+        if (-not [System.IO.Directory]::Exists($InvDir)) {
+            [System.IO.Directory]::CreateDirectory($InvDir) | Out-Null
+        }
+        $Lines = [System.Collections.Generic.List[string]]::new()
+        $Lines.Add('# Publish inventory (relative path <tab> size bytes)')
+        foreach ($File in Get-ChildItem -LiteralPath $Path -Recurse -File -ErrorAction Stop) {
+            $Rel = $File.FullName.Substring((Resolve-Path -LiteralPath $Path).Path.Length + 1) -replace '\\', '/'
+            $Lines.Add("$Rel`t$($File.Length)")
+        }
+        [System.IO.File]::WriteAllLines($InvFull, $Lines)
+    }
+    catch {
+        Write-Warning "Could not write inventory to '$Inventory': $_"
+    }
+}
 
 $Expected = @(
     # The app itself and the managed side.
@@ -31,7 +80,9 @@ $Expected = @(
     'WindowsTweaker.WinUI.deps.json',
     'WindowsTweaker.WinUI.runtimeconfig.json',
     'WindowsTweaker.Gui.Core.dll',
-    'resources.pri',
+
+    # The application's generated PRI file (MRT Core unpackaged name; see header).
+    $ProjectPriName,
 
     # Engine payload (module + bridge host) - required by the packaged layout.
     'engine/WindowsTweaker.psd1',
@@ -39,6 +90,9 @@ $Expected = @(
 
     # Windows App SDK native runtime. The XAML runtime loads these from the app directory
     # (self-contained deployment); any gap here is a startup crash with a stowed exception.
+    # This exact set is what AddMicrosoftWindowsAppSDKPayloadFilesFromComponents copies
+    # (dll + restartAgent.exe + mui/png/winmd/xaml/xbf/pri; DeploymentAgent.exe excluded
+    # because DeploymentManager is disabled for self-contained apps).
     'Microsoft.ui.xaml.dll',                       # the faulting module in the observed Event 1000
     'Microsoft.UI.Xaml.Controls.dll',
     'Microsoft.UI.Xaml.Controls.pri',
@@ -50,6 +104,7 @@ $Expected = @(
     'Microsoft.WindowsAppRuntime.dll',
     'Microsoft.Windows.ApplicationModel.Resources.dll',
     'MRM.dll',
+    'Microsoft.WindowsAppRuntime.pri',
     'DWriteCore.dll',
     'Microsoft.UI.dll',
     'Microsoft.UI.Windowing.dll',
@@ -64,7 +119,6 @@ $Expected = @(
     'dwmcorei.dll',
     'wuceffectsi.dll',
     'marshal.dll',
-    'DeploymentAgent.exe',
     'RestartAgent.exe',
     'PushNotificationsLongRunningTask.ProxyStub.dll'
 )
@@ -141,6 +195,6 @@ if ($ArchMismatches.Count -gt 0) {
     exit 1
 }
 
-$MachineLabel = $MachineNames[$SeenMachine] ?? ('0x{0:X}' -f $SeenMachine)
+$MachineLabel = Get-MachineLabel $SeenMachine
 "OK: $($Expected.Count) required assets present, architecture consistent ($MachineLabel)." | Write-Host -ForegroundColor Green
 exit 0
