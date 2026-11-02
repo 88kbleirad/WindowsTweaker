@@ -124,7 +124,7 @@ public sealed partial class MainWindow : Window
         if (e.Key == Windows.System.VirtualKey.F5)
         {
             // Refresh the current workspace (same action as the toolbar button).
-            await RefreshButton_Click(RefreshButton, new RoutedEventArgs());
+            await RefreshAsync();
             e.Handled = true;
         }
 
@@ -351,6 +351,13 @@ public sealed partial class MainWindow : Window
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
+    {
+        // XAML Click handlers must be void; the awaitable work lives in RefreshAsync
+        // so callers (e.g. the F5 shortcut) can await it and observe completion/errors.
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
     {
         await _shell.RunReadAsync(async () =>
         {
