@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Windowing;
+using WindowsTweaker.Gui.Core.Model;
 using WindowsTweaker.Gui.Core.ViewModels;
 
 namespace WindowsTweaker.WinUI;
@@ -66,7 +68,7 @@ public sealed partial class MainWindow : Window
         // The default window is comfortably large; the floor keeps the layout readable on
         // small screens instead of letting the panels collapse into unusable slivers.
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
-        AppWindow.SetPresenter(WindowPresenter.Default);
+        AppWindow.SetPresenter(AppWindowPresenterKind.Default);
 
         RootGrid.KeyDown += RootGrid_KeyDown;
         SearchBox.KeyDown += SearchBox_KeyDown;
@@ -91,7 +93,7 @@ public sealed partial class MainWindow : Window
     /// Nothing here intercepts letter keys while a field is focused - SearchBox gets its
     /// own handler for the Ctrl+Enter stage and otherwise keeps typing untouched.
     /// </summary>
-    private void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
+    private async void RootGrid_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Escape)
         {
@@ -122,9 +124,8 @@ public sealed partial class MainWindow : Window
         if (e.Key == Windows.System.VirtualKey.F5)
         {
             // Refresh the current workspace (same action as the toolbar button).
-            _ = RefreshButton_Click(RefreshButton, new RoutedEventArgs());
+            await RefreshButton_Click(RefreshButton, new RoutedEventArgs());
             e.Handled = true;
-            return;
         }
 
         if (e.Key == Windows.System.VirtualKey.F && KeyboardModifiers.IsControlPressed())
@@ -320,7 +321,10 @@ public sealed partial class MainWindow : Window
 
     private void AnimateWorkspaceEntrance(Workspace workspace)
     {
-        var panel = workspace switch
+        // The panels are Grids except Diagnostics (a ScrollViewer), so the switch arms
+        // have no single best type; the common base the animation target needs is
+        // DependencyObject.
+        var panel = (DependencyObject)(workspace switch
         {
             Workspace.Overview => OverviewPanel,
             Workspace.Tweaks => TweaksPanel,
@@ -328,7 +332,7 @@ public sealed partial class MainWindow : Window
             Workspace.History => HistoryPanel,
             Workspace.Diagnostics => DiagnosticsPanel,
             _ => LicensingPanel,
-        };
+        });
 
         var animation = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
         {
