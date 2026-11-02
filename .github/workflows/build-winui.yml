@@ -1,0 +1,88 @@
+# WindowsTweaker build-only WinUI workflow.
+#
+# Builds and validates the real WinUI 3 frontend on a Windows GitHub-hosted runner
+# without publishing anything: no tags, no GitHub Release, read-only permissions.
+# This exists because the XAML markup compiler is a Windows-only process, so C#/XAML
+# fixes (e.g. MainWindow.xaml.cs) cannot be verified on Linux; the release job only
+# runs when a tag is pushed, which is too late to catch build breaks early.
+#
+# The build command, payload checks and test paths are identical to the
+# frontend-windows job in release.yml, so this workflow exercises the same release
+# configuration for the branch selected in the workflow_dispatch UI, then uploads the
+# built output as an artifact. Upload happens only after every step above it succeeds,
+# and this workflow never creates tags or publishes releases.
+
+name: Build WinUI (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-winui-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  winui-build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Print checked-out commit SHA
+        shell: pwsh
+        run: |
+          $Sha = git rev-parse HEAD
+          Write-Host "Checked out commit: $Sha"
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build the WinUI frontend (Release, self-contained, unpackaged)
+        shell: pwsh
+        run: |
+          dotnet publish gui/src/WindowsTweaker.WinUI/WindowsTweaker.WinUI.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:AppxPackage=false -p:EnableMsixTooling=false -p:WindowsPackageType=None `
+            -p:WindowsAppSDKSelfContained=true `
+            -o frontend-build/win-x64
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with $LASTEXITCODE" }
+          # The archive contract needs the native exe and the engine payload (module, bridge
+          # host, string tables). Verify all three are present before anything is uploaded.
+          $Root = "frontend-build/win-x64"
+          if (-not (Test-Path (Join-Path $Root 'WindowsTweaker.WinUI.exe'))) { throw 'frontend exe missing' }
+          if (-not (Test-Path (Join-Path $Root 'engine/WindowsTweaker.psd1'))) { throw 'engine manifest missing' }
+          if (-not (Test-Path (Join-Path $Root 'engine/Bridge/wt-bridge.ps1'))) { throw 'bridge host missing' }
+          Write-Host "frontend payload for win-x64 verified"
+
+      - name: Frontend/core/bridge tests (live backend)
+        shell: pwsh
+        run: |
+          dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests/WindowsTweaker.Gui.Core.Tests.csproj -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { throw "dotnet test failed with $LASTEXITCODE" }
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable Pester)) {
+            Install-Module Pester -Force -Scope CurrentUser -SkipPublisherCheck -Confirm:$false -ErrorAction Stop
+          }
+
+      - name: Bridge protocol contract tests (engine half)
+        shell: pwsh
+        run: |
+          $Result = Invoke-Pester -Path ./tests/BridgeProtocol.Tests.ps1 -Output Detailed -PassThru
+          if ($Result.FailedCount -gt 0) { throw "$($Result.FailedCount) test(s) failed." }
+
+      - name: Upload the frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-win-x64-build
+          path: frontend-build/win-x64
+          if-no-files-found: error
