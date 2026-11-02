@@ -30,6 +30,7 @@
     'Gui.Column.Category'     = 'Nhóm'
     'Gui.Column.State'        = 'Trạng thái'
     'Gui.Tweaks.OnlySupported' = 'chỉ những mục máy này chạy được'
+    'Gui.Tweaks.RowCount'     = '{0} dòng'
     'Gui.Column.Target'       = 'Đích'
     'Gui.Column.Risk'         = 'Rủi ro'
     'Gui.Column.Scope'        = 'Phạm vi'

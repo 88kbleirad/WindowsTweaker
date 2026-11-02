@@ -405,6 +405,7 @@ function Get-WtBridgeGuiStringKeys
         'Gui.Column.Category'
         'Gui.Column.State'
         'Gui.Tweaks.OnlySupported'
+        'Gui.Tweaks.RowCount'
         'Gui.Column.Target'
         'Gui.Column.Risk'
         'Gui.Column.Scope'

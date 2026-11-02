@@ -22,8 +22,20 @@ public sealed class TweaksViewModel : WorkspaceViewModel
     public TweaksViewModel(ShellViewModel shell)
         : base(shell)
     {
-        States.CollectionChanged += (_, _) => Raise(nameof(EmptySearchVisible));
+        States.CollectionChanged += (_, _) =>
+        {
+            Raise(nameof(EmptySearchVisible));
+            Raise(nameof(RowsSummary));
+        };
     }
+
+    /// <summary>
+    /// Localized row count ("N rows"), a formatted string computed in the view model.
+    /// WinUI 3's binding markup extension does not support WPF-style
+    /// <c>StringFormat='{0} …'</c> — the compiler parses the literal braces as a nested
+    /// markup extension and fails with WMC9997 — so the format lives here instead.
+    /// </summary>
+    public string RowsSummary => Strings.Get("Gui.Tweaks.RowCount", States.Count);
 
     /// <summary>Rows currently shown (already filtered).</summary>
     public ObservableCollection<TweakState> States { get; } = new();

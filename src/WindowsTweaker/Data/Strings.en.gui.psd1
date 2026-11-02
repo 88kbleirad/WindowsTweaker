@@ -31,6 +31,7 @@
     'Gui.Column.Category'     = 'Category'
     'Gui.Column.State'        = 'State'
     'Gui.Tweaks.OnlySupported' = 'only ones this host can run'
+    'Gui.Tweaks.RowCount'     = '{0} rows'
     'Gui.Column.Target'       = 'Target'
     'Gui.Column.Risk'         = 'Risk'
     'Gui.Column.Scope'        = 'Scope'

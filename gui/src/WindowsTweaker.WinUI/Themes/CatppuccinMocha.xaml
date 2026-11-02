@@ -123,4 +123,4 @@
     <Style x:Key="WtBadgeError" TargetType="Border" BasedOn="{StaticResource WtBadge}">
         <Setter Property="BorderBrush" Value="{StaticResource WtRed}"/>
     </Style>
-</|inc_tool_call_ml|Dictionary>
+</ResourceDictionary>

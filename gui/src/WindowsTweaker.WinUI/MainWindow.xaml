@@ -157,7 +157,7 @@
                                   Content="{Binding Strings[Gui.Tweaks.OnlySupported]}"
                                   IsChecked="{Binding Tweaks.OnlySupported, Mode=TwoWay}"/>
                         <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
-                                   Text="{Binding Tweaks.States.Count, Mode=OneWay, StringFormat='{0} rows'}"/>
+                                   Text="{Binding Tweaks.RowsSummary}"/>
                     </StackPanel>
 
                     <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>
