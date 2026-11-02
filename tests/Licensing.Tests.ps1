@@ -278,6 +278,126 @@ Describe 'Activation request' {
     }
 }
 
+Describe 'Activation evidence' {
+
+    It 'takes a read-only snapshot without inventing validity' {
+        InModuleScope WindowsTweaker {
+            $License = [ordered]@{
+                CollectedUtc = [datetime]::UtcNow
+                Inventory = [ordered]@{
+                    Unreadable = $false
+                    Active = New-TestLicensingProduct -LicenseStatus 1 -GraceRemaining 90 -PartialProductKey 'ABC12'
+                }
+            }
+
+            $Snapshot = Get-WtLicensingSnapshot -License $License
+
+            $Snapshot.Readable | Should -BeTrue
+            $Snapshot.Status | Should -Be 'Licensed'
+            $Snapshot.StatusRaw | Should -Be 1
+            $Snapshot.GraceRemaining | Should -Be 90
+            $Snapshot.PartialKeyPresent | Should -BeTrue
+
+            # The snapshot never carries the partial key value itself.
+            ($Snapshot.PSObject.Properties.Name) | Should -Not -Contain 'PartialProductKey'
+        }
+    }
+
+    It 'reports unreadable when the provider was unavailable' {
+        InModuleScope WindowsTweaker {
+            $Snapshot = Get-WtLicensingSnapshot -License ([ordered]@{ Inventory = [ordered]@{ Unreadable = $true; Reason = 'provider missing'; Active = $null } })
+
+            $Snapshot.Readable | Should -BeFalse
+            $Snapshot.Status | Should -Be 'Unknown'
+        }
+    }
+
+    It 'recognises the activated state in the after-read, even when the before-read was unavailable' {
+        InModuleScope WindowsTweaker {
+            $Before = Get-WtLicensingSnapshot -License ([ordered]@{ Inventory = [ordered]@{ Unreadable = $true; Reason = 'before'; Active = $null } })
+            $After = Get-WtLicensingSnapshot -License ([ordered]@{
+                    CollectedUtc = [datetime]::UtcNow
+                    Inventory = [ordered]@{ Unreadable = $false; Active = New-TestLicensingProduct -LicenseStatus 1 }
+                })
+
+            $Verdict = Get-WtWindowsActivationResult -Completion 'Completed' -Before $Before -After $After
+
+            $Verdict.CompletionDetermined | Should -BeTrue
+            $Verdict.Activated | Should -BeTrue
+            $Verdict.Verified | Should -BeTrue
+            $Verdict.ReasonKey | Should -Be 'Act.Result.Activated'
+        }
+    }
+
+    It 'never claims success when completion could not be determined' {
+        InModuleScope WindowsTweaker {
+            $After = Get-WtLicensingSnapshot -License ([ordered]@{
+                    CollectedUtc = [datetime]::UtcNow
+                    Inventory = [ordered]@{ Unreadable = $false; Active = New-TestLicensingProduct -LicenseStatus 1 }
+                })
+
+            $Verdict = Get-WtWindowsActivationResult -Completion 'Unknown' -ExitCode 0 -After $After
+
+            $Verdict.CompletionDetermined | Should -BeFalse
+            $Verdict.Verified | Should -BeFalse
+            $Verdict.ReasonKey | Should -Be 'Act.Result.NotDetermined'
+
+            # An exit code of 0 is recorded, never believed.
+            $Verdict.ExitCode | Should -Be 0
+        }
+    }
+
+    It 'reports already-active only when both reads agree and the state did not change' {
+        InModuleScope WindowsTweaker {
+            $License = [ordered]@{
+                CollectedUtc = [datetime]::UtcNow
+                Inventory = [ordered]@{ Unreadable = $false; Active = New-TestLicensingProduct -LicenseStatus 1 }
+            }
+
+            $Before = Get-WtLicensingSnapshot -License $License
+            $After = Get-WtLicensingSnapshot -License $License
+            $Verdict = Get-WtWindowsActivationResult -Completion 'Completed' -Before $Before -After $After
+
+            $Verdict.AlreadyActive | Should -BeTrue
+            $Verdict.Verified | Should -BeTrue
+            $Verdict.ReasonKey | Should -Be 'Act.Result.AlreadyActive'
+        }
+    }
+
+    It 'copies the structured error code the Software Protection service logged, verbatim' {
+        InModuleScope WindowsTweaker {
+            $After = Get-WtLicensingSnapshot -License ([ordered]@{
+                    CollectedUtc = [datetime]::UtcNow
+                    Inventory = [ordered]@{ Unreadable = $false; Active = New-TestLicensingProduct -LicenseStatus 0 }
+                })
+            $Components = [ordered]@{ LastActivationError = 'SL_ERROR_ACTIVATION_IN_PROGRESS 0xC004F074' }
+
+            $Verdict = Get-WtWindowsActivationResult -Completion 'Completed' -After $After -Components $Components
+
+            $Verdict.ErrorCode | Should -Be '0xC004F074'
+        }
+    }
+
+    It 'reports a failure to activate when the completed run did not change the licensing state' {
+        InModuleScope WindowsTweaker {
+            $Before = Get-WtLicensingSnapshot -License ([ordered]@{
+                    CollectedUtc = [datetime]::UtcNow
+                    Inventory = [ordered]@{ Unreadable = $false; Active = New-TestLicensingProduct -LicenseStatus 0 }
+                })
+            $After = Get-WtLicensingSnapshot -License ([ordered]@{
+                    CollectedUtc = [datetime]::UtcNow.AddSeconds(5)
+                    Inventory = [ordered]@{ Unreadable = $false; Active = New-TestLicensingProduct -LicenseStatus 0 }
+                })
+
+            $Verdict = Get-WtWindowsActivationResult -Completion 'Completed' -Before $Before -After $After
+
+            $Verdict.Activated | Should -BeFalse
+            $Verdict.Verified | Should -BeFalse
+            $Verdict.ReasonKey | Should -Be 'Act.Result.NotActivated'
+        }
+    }
+}
+
 Describe 'Licensing export' {
 
     It 'redacts keys and previews before export' {

@@ -1359,9 +1359,9 @@ function Add-WtTuiFooter
     }
     elseif ($State.ExternalTool)
     {
-        # A workspace owns the keyboard while it is open, so its own key map replaces the
-        # main-screen hints instead of being read next to them. While a background transfer
-        # runs, the hint names the one key that is meaningful then.
+        # The settings & details screen owns the keyboard while it is open, so its own key map
+        # replaces the main-screen hints. While a background transfer runs, the hint names the one
+        # key that is meaningful then.
         $Hint = $(if ($State.ExternalToolTask -and (Test-WtExternalToolTaskBusy -Task $State.ExternalToolTask))
             {
                 Get-WtString -Key 'Mas.Hint.Busy'

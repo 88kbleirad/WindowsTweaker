@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Smoke test for the external-tool integration, using an inert child script.
+    Smoke test for the Windows activation integration, using an inert child script.
 .DESCRIPTION
     This tool never downloads and never runs Microsoft Activation Scripts. It creates an inert
     child (a batch file on Windows, a shell script elsewhere) that writes its own argument list
@@ -9,11 +9,13 @@
     external tool inside a temporary data root, and then drives the real code paths:
 
       1. environment and interpreter resolution;
-      2. the launch plan (interpreter, the /c batch entry point, the quoted path, the working
-         directory, and the absence of any activation switch);
-      3. the launch itself, in its own console, and the observed exit code;
-      4. the state of the terminal after the child returns (full-frame invalidation);
-      5. the licensing diagnostics refresh and what it honestly reports afterwards;
+      2. the activation plan (interpreter, the /c batch entry point, the quoted path, the
+         working directory, and exactly the Windows-only method switches - never a menu);
+      3. the activation itself: the launch in its own console, the operation-lifetime wait,
+         the observed exit code and the state of the terminal afterwards;
+      4. the licensing diagnostics refresh and what it honestly reports afterwards;
+      5. the operation-lifetime classification against an inert process-table fixture (wrapper
+         exit before a detached child completes is not a completion);
       6. the UAC cancellation path (Windows only, interactive);
       7. the background download task plumbing, against a host the pin refuses, so no request
          is made.
@@ -27,9 +29,9 @@
     Exit code the inert child returns; the smoke test asserts it is observed.
 .PARAMETER Elevate
     Force the elevated handoff. On Windows this raises a real UAC prompt: refuse it to check
-    the cancellation path, accept it to check the elevated launch.
+    the cancellation path, accept it to check the elevated activation.
 .PARAMETER ExpectUacCancelled
-    Assert that the launch reported a cancelled elevation prompt (use with -Elevate after
+    Assert that the activation reported a cancelled elevation prompt (use with -Elevate after
     refusing the prompt).
 .PARAMETER SkipChild
     Only run the plan and preview stages: no process is started at all.
@@ -189,44 +191,50 @@ $Installed = & $Module {
 
 Write-Check 'the local copy verifies against its provenance record' ([bool]$Installed.Ready) ("status: {0}" -f $Installed.Status)
 
-# ---------------------------------------------------------------- stage 3: the launch plan
+# ---------------------------------------------------------------- stage 3: the activation plan
 
-Write-Stage '3. Launch plan'
+Write-Stage '3. Activation plan (Windows-only method switches)'
 
 $Interpreter = if ($OnWindows) { $env:ComSpec } else { '/bin/sh' }
-$Plan = & $Module { param ($Interpreter) Get-WtExternalToolLaunchPlan -Spec (Get-WtExternalToolSpec) -Interpreter $Interpreter -Elevated $false } $Interpreter
+
+# The selection the interface stores is the one the plan must use.
+$null = & $Module { Set-WtWindowsActivationMethodSetting -Id 'HWID' }
+
+$Plan = & $Module { param ($Interpreter) Get-WtExternalToolLaunchPlan -Spec (Get-WtExternalToolSpec) -Interpreter $Interpreter -Elevated $false -Method 'HWID' } $Interpreter
 
 Write-Check 'the plan is valid' ([bool]$Plan.Ok) ("reason: " + ([string]$Plan.Reason))
-Write-Check 'the entry point is the batch file, through the interpreter' (@($Plan.ArgumentList).Count -eq 2 -and $Plan.ArgumentList[0] -eq '/c' -and $Plan.ArgumentList[1] -match '^".*"$') ($Plan.CommandLine)
+Write-Check 'the entry point is the batch file, through the interpreter' (@($Plan.ArgumentList).Count -eq 4 -and $Plan.ArgumentList[0] -eq '/c' -and $Plan.ArgumentList[1] -match '^".*"$') ($Plan.CommandLine)
 Write-Check 'the working directory is the tool directory' ($Plan.WorkingDirectory -eq (& $Module { Get-WtExternalToolRoot })) ("cwd: " + ([string]$Plan.WorkingDirectory))
-Write-Check 'no activation switch is passed' (($Plan.ArgumentList -join ' ') -notmatch '(?i)/ato|hwid|ohook|tsforge|kms|/ipk|/skms|/rearm') ($Plan.ArgumentList -join ' ')
+Write-Check 'exactly the Windows-only method switches are passed' (($Plan.ArgumentList -join ' ') -match '/HWID /HWID-NoEditionChange') ($Plan.ArgumentList -join ' ')
+Write-Check 'no Office, ESU, edition-change, KMS-host, reset or menu switch is passed' (($Plan.ArgumentList -join ' ') -notmatch '(?i)/ato|ohook|/z-esu|/z-off|/z-winhost|/z-reset|/ipk|/skms|/rearm|/s\b') ($Plan.ArgumentList -join ' ')
+Write-Check 'an unknown method id is refused before anything is planned' (-not (& $Module { Get-WtExternalToolLaunchPlan -Spec (Get-WtExternalToolSpec) -Interpreter $Interpreter -Method @{ Id = 'Ohook' } }).Ok) 'the switch table is closed'
 
-# ------------------------------------------------------- stage 4: the launch, in its console
+# ------------------------------------------------------- stage 4: the activation, in its console
 
-Write-Stage '4. Launch (own console, exit code, terminal restored)'
+Write-Stage '4. Activation (own console, lifetime, exit code, terminal restored)'
 
 if ($SkipChild)
 {
-    Write-Skip 'launch' 'skipped by -SkipChild'
+    Write-Skip 'activation' 'skipped by -SkipChild'
 }
 elseif ($ExpectUacCancelled -and -not $OnWindows)
 {
     # There is no elevation prompt to refuse on this host, and the platform gate would refuse
-    # the launch before any UAC handoff: assert nothing here rather than a wrong thing.
+    # the activation before any UAC handoff: assert nothing here rather than a wrong thing.
     Write-Skip 'refused elevation prompt' 'an elevation prompt only exists on Windows'
-    Write-Skip 'launch' 'needs Windows for -Elevate / -ExpectUacCancelled'
+    Write-Skip 'activation' 'needs Windows for -Elevate / -ExpectUacCancelled'
 }
 else
 {
     $Run = & $Module {
         param ($Elevate)
 
-        # The same sequence the interface performs: release the terminal, launch, re-acquire.
+        # The same sequence the interface performs: release the terminal, activate, re-acquire.
         $State = New-WtTuiState -Language 'en' -Colour 'Mono' -Ascii -Icons 'None' -Silent
         $Suspended = Suspend-WtTuiConsole -State $State
         try
         {
-            $Result = Start-WtExternalTool -Spec (Get-WtExternalToolSpec) -Elevated ([bool]$Elevate)
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Elevated ([bool]$Elevate) -TimeoutSeconds 120
         }
         finally
         {
@@ -244,7 +252,7 @@ else
 
     if ($ExpectUacCancelled)
     {
-        Write-Check 'the refused elevation prompt cancels the launch' ($Result.Status -eq 'cancelled' -and $Result.Code -eq 'UacCancelled') ("status: {0}/{1}" -f $Result.Status, $Result.Code)
+        Write-Check 'the refused elevation prompt cancels the activation' ($Result.Status -eq 'cancelled' -and $Result.Code -eq 'UacCancelled') ("status: {0}/{1}" -f $Result.Status, $Result.Code)
         Write-Check 'nothing was started' (-not $Result.Started)
     }
     elseif ($OnWindows)
@@ -253,12 +261,19 @@ else
 
         if ($Result.Status -eq 'succeeded')
         {
+            Write-Check 'completion was determined, not assumed' ([bool]$Result.CompletionDetermined) ("completion: {0}" -f $Result.Completion)
             Write-Check 'its exit code was observed' ($Result.ExitCode -eq $ExitCode) ("expected {0}, observed {1}" -f $ExitCode, $Result.ExitCode)
             Write-Check 'the child ran (marker file written)' (Test-Path -LiteralPath $Marker) $Marker
             if (Test-Path -LiteralPath $Marker)
             {
                 Write-Host ("         marker: {0}" -f ((Get-Content -LiteralPath $Marker) -join ' | '))
             }
+            Write-Check 'no operation record is left behind after a determined completion' (-not (Test-Path -LiteralPath (& $Module { Get-WtWindowsActivationRecordPath })))
+        }
+        elseif ($Result.Status -eq 'unknown')
+        {
+            Write-Check 'it reports launched; completion unknown instead of success' (-not $Result.CompletionDetermined) ("completion: {0}" -f $Result.Completion)
+            Write-Check 'the operation record stays so the operation is not duplicated' (Test-Path -LiteralPath (& $Module { Get-WtWindowsActivationRecordPath }))
         }
         elseif ($Result.Status -eq 'cancelled')
         {
@@ -266,25 +281,37 @@ else
         }
         else
         {
-            Write-Check 'the launch reported a failure instead of pretending' ($Result.Status -eq 'failed') ("status: {0} - {1}" -f $Result.Status, $Result.Reason)
+            Write-Check 'the activation reported a failure instead of pretending' ($Result.Status -eq 'failed') ("status: {0} - {1}" -f $Result.Status, $Result.Reason)
         }
     }
     else
     {
-        # Off Windows the product refuses the launch itself (the upstream tool is a Windows batch
+        # Off Windows the product refuses the activation itself (the upstream tool is a Windows batch
         # script). That refusal is checked here, and the process seam underneath it is exercised
         # with this host's own interpreter, so the plan, the argument quoting, the child process
         # and the observed exit code are all still covered.
-        Write-Check 'the platform gate refuses the launch honestly' ($Result.Status -eq 'refused' -and -not $Result.Started -and $Result.Reason -match 'Windows') ("status: {0}/{1}" -f $Result.Status, $Result.Code)
+        Write-Check 'the platform gate refuses the activation honestly' ($Result.Status -eq 'refused' -and -not $Result.Started -and $Result.Reason -match 'Windows') ("status: {0}/{1}" -f $Result.Status, $Result.Code)
         Write-Skip 'the separate console window and the exit code through cmd.exe' 'needs Windows: Start-Process creates the console there'
 
         $Seam = & $Module {
             param ($Child)
 
-            return (Invoke-WtExternalToolProcess -FilePath '/bin/sh' -ArgumentList @($Child) -WorkingDirectory (Split-Path -Path $Child -Parent) -Elevate $false)
+            $Started = Invoke-WtExternalToolProcess -FilePath '/bin/sh' -ArgumentList @($Child) -WorkingDirectory (Split-Path -Path $Child -Parent) -Elevate $false
+
+            # The operation-lifetime wait observes the child's process handle against an inert,
+            # empty table: nothing else is running, so the launch is complete when the handle exits.
+            $script:EmptyTable = { @([pscustomobject]@{ ProcessId = 999999; ParentProcessId = 0; StartUtc = [datetime]::UtcNow }) }
+            $Wait = Wait-WtWindowsActivationCompletion -RootProcessId $Started.ProcessId -Process $Started.Process -TimeoutSeconds 30 `
+                -TableSource $script:EmptyTable
+
+            return [ordered]@{
+                Started   = [bool]$Started.Started
+                Completion = [string]$Wait.Completion
+                ExitCode  = $Wait.ExitCode
+            }
         } $Child
 
-        Write-Check 'the process seam starts the child and observes its exit code' ($Seam.Started -and $Seam.ExitCode -eq $ExitCode) ("exit code: {0} (expected {1})" -f $Seam.ExitCode, $ExitCode)
+        Write-Check 'the process seam starts the child and observes its exit code' ($Seam.Started -and $Seam.Completion -eq 'Completed' -and $Seam.ExitCode -eq $ExitCode) ("exit code: {0} (expected {1})" -f $Seam.ExitCode, $ExitCode)
         Write-Check 'the child really ran (marker file written)' (Test-Path -LiteralPath $Marker) $Marker
         if (Test-Path -LiteralPath $Marker)
         {
@@ -322,9 +349,64 @@ $After = & $Module {
 Write-Check 'the diagnostics were read again' ($After.Read) 'the read is attempted after every launch'
 Write-Check 'the result is reported honestly' ($true) $(if ($After.Unreadable) { "unreadable: $($After.Reason)" } else { "status: $($After.Status)" })
 
-# -------------------------------------------------- stage 6: background download plumbing
+# ------------------------------------------- stage 6: operation-lifetime classification
 
-Write-Stage '6. Background download task (no network, refused host)'
+Write-Stage '6. Operation-lifetime classification (inert process-table fixtures)'
+
+# The process-table fixture drives the real classifier with no process at all: on Windows a
+# detached child that outlives its launcher is the shape of the observed bug, and this table is
+# that shape verbatim.
+$Lifetime = & $Module {
+    $Start = [datetime]::UtcNow.AddMinutes(-1)
+
+    # First poll: the launcher (100), the interpreter it spawned (200) and the console it left
+    # behind (300). Later polls: the launcher and the interpreter are gone, the console is not.
+    $script:Polls = 0
+    $Table = {
+        $script:Polls++
+        if ($script:Polls -le 1)
+        {
+            return @(
+                [pscustomobject]@{ ProcessId = 100; ParentProcessId = 0; StartUtc = $Start },
+                [pscustomobject]@{ ProcessId = 200; ParentProcessId = 100; StartUtc = $Start },
+                [pscustomobject]@{ ProcessId = 300; ParentProcessId = 200; StartUtc = $Start }
+            )
+        }
+        return @([pscustomobject]@{ ProcessId = 300; ParentProcessId = 200; StartUtc = $Start })
+    }.GetNewClosure()
+
+    $Wait = Wait-WtWindowsActivationCompletion -RootProcessId 100 -RootStartUtc $Start -TimeoutSeconds 2 -NoSleep -TableSource $Table
+
+    # A second fixture where the whole tree ends.
+    $script:Polls2 = 0
+    $Table2 = {
+        $script:Polls2++
+        if ($script:Polls2 -le 1)
+        {
+            return @(
+                [pscustomobject]@{ ProcessId = 100; ParentProcessId = 0; StartUtc = $Start },
+                [pscustomobject]@{ ProcessId = 300; ParentProcessId = 200; StartUtc = $Start }
+            )
+        }
+        return @([pscustomobject]@{ ProcessId = 999; ParentProcessId = 0; StartUtc = $Start })
+    }.GetNewClosure()
+
+    $Done = Wait-WtWindowsActivationCompletion -RootProcessId 100 -RootStartUtc $Start -TimeoutSeconds 2 -NoSleep -TableSource $Table2
+
+    return [ordered]@{
+        WrapperFirst = [string]$Wait.Completion
+        Remaining    = [int]$Wait.Remaining
+        WholeTree    = [string]$Done.Completion
+    }
+}
+
+Write-Check 'a wrapper exit before a detached child completes is not a completion' ($Lifetime.WrapperFirst -ne 'Completed') ("completion: {0}, remaining: {1}" -f $Lifetime.WrapperFirst, $Lifetime.Remaining)
+Write-Check 'the detached child was observed still running' ($Lifetime.Remaining -ge 1) ("remaining: {0}" -f $Lifetime.Remaining)
+Write-Check 'completion is reported when the whole tree has ended' ($Lifetime.WholeTree -eq 'Completed') ("completion: {0}" -f $Lifetime.WholeTree)
+
+# -------------------------------------------------- stage 7: background download plumbing
+
+Write-Stage '7. Background download task (no network, refused host)'
 
 $Background = & $Module {
     $Spec = Get-WtExternalToolSpec
@@ -365,9 +447,9 @@ Write-Check 'it completed and released its handle' ($Background.Completed -and -
 Write-Check 'it reported a failure instead of downloading from a refused host' ($Background.Status -eq 'failed' -and $Background.Code -in 'Network', 'Unsupported') ("code: {0}" -f $Background.Code)
 Write-Check 'it left no staging file behind' ($Background.Staged -eq 0)
 
-# ---------------------------------------------------------------- stage 7: Windows-only list
+# ---------------------------------------------------------------- stage 8: Windows-only list
 
-Write-Stage '7. Not executed here'
+Write-Stage '8. Not executed here'
 
 if ($OnWindows)
 {

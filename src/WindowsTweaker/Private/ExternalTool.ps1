@@ -2,15 +2,22 @@
 #
 # MAS is a third-party activator. WindowsTweaker does not embed, port or modify it: this
 # file downloads the upstream file from its official repository at one pinned commit,
-# verifies it, and launches it as a separate process when the user asks for that. Nothing
-# here runs during navigation, refresh, startup or diagnostics.
+# verifies it, and runs one Windows activation method of it as a separate process when the
+# user asks for exactly that. Nothing here runs during navigation, refresh, startup or
+# diagnostics.
 #
 # Why an external process and not imported code:
 #   * MAS is GPL-3.0. Copying its source into this repository would make the combined work
 #     subject to the GPL; downloading it at the user's explicit request does not.
-#   * The upstream tool is the authority on its own behaviour: it asks the user which
-#     activation method to use. WindowsTweaker never preselects a method, never feeds
-#     keystrokes and never passes an activation switch.
+#   * The upstream script is the authority on its own behaviour. Which workflow runs is
+#     decided here only in the sense that one documented command-line switch of the method
+#     the user selected in the interface is passed; no menu is navigated, no keystroke is
+#     fed to it (SendKeys is never used) and no upstream code is patched.
+#
+# The switch table (Get-WtWindowsActivationMethods) is closed and evidence-pinned: every entry
+# names the upstream line that implements it and the documentation that describes it. Office,
+# ESU, KMS-host, edition-change and reset switches are not represented at all, so no
+# combination of settings can reach them.
 #
 # Provenance chain, strongest first:
 #   1. HTTPS to a hard-coded host allow-list; every redirect hop is re-validated.
@@ -1375,7 +1382,7 @@ function Invoke-WtExternalToolDownload
             hashSource         = 'recorded by WindowsTweaker when this pin was installed; upstream publishes no checksum file or signature for this artifact'
             downloadedUtc      = [datetime]::UtcNow.ToString('o')
             downloadedBy       = 'WindowsTweaker {0}' -f (Get-WtAppVersion)
-            entryPoint         = 'cmd.exe /c "<file>" (no switches are passed)'
+            entryPoint         = 'cmd.exe /c "<file>" <method switches> (one Windows-only activation method per run; no menu is shown)'
             redistributionNote = 'GPL-3.0: redistributing this file carries the GPL-3.0 obligations; WindowsTweaker does not embed or modify it.'
         }
 
@@ -1563,6 +1570,264 @@ function Remove-WtExternalToolFiles
 
 #endregion Download and removal
 
+#region Windows activation methods
+
+# The Windows-only activation methods this feature offers. Every entry is a switch (or a pair of
+# switches) that the pinned upstream revision implements and documents itself:
+#
+#   * MAS_AIO.cmd at commit 40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f dispatches on its own command
+#     line before it paints any menu (lines 396-403) - '/HWID' to :HWIDActivation, '/Z-' to
+#     :TSforgeActivation, '/K-' to :KMSActivation - and exits after that one, so the menu is never
+#     reached and no choice has to be made for the user;
+#   * '/HWID-NoEditionChange' (line 675) and '/K-NoEditionChange' (line 12081) exist precisely to
+#     stop the script from changing the Windows edition. Both are passed, because this feature never
+#     allows an edition change;
+#   * upstream states at https://massgrave.dev/command_line_switches that "the script will run in
+#     unattended mode if any switch is used", so nothing here feeds keystrokes, and
+#   * '/S' (silent) is documented but deliberately not passed: it discards the whole console
+#     output, and a visible upstream report is what makes a failure diagnosable. The child's
+#     streams are never read or logged either way.
+#
+# The list is closed: only an Id from it can reach a command line. Office, ESU, KMS-Host, APPX,
+# edition-change and reset switches are not represented anywhere in this file.
+$Script:WtActivationMethods = @(
+    @{
+        Id            = 'HWID'
+        Switch        = '/HWID'
+        ExtraSwitches = @('/HWID-NoEditionChange')
+        DurationModel = 'Permanent'
+        Internet      = 'Required'
+        MinBuild      = 10240
+        EditionScope  = 'Client'
+        Evidence      = 'Pinned MAS_AIO.cmd: line 398 dispatches /HWID; line 675 accepts /HWID-NoEditionChange; lines 684-696 refuse Windows Server and builds below 10240. Documented: massgrave.dev/command_line_switches, massgrave.dev/hwid ("permanent Windows activation for your system hardware").'
+    }
+    @{
+        Id            = 'TSforge'
+        Switch        = '/Z-Windows'
+        ExtraSwitches = @()
+        DurationModel = 'Permanent'
+        Internet      = 'AutomaticMethod'
+        MinBuild      = 7600
+        EditionScope  = 'AnyWindows'
+        Evidence      = 'Pinned MAS_AIO.cmd: line 399 dispatches /Z-; the TSforge block accepts /Z-Windows (Windows only, never ESU/Office) and selects the activation method itself. Documented: massgrave.dev/tsforge ("permanent until a Windows reinstall or a major feature upgrade"; Internet needed only for StaticCID, the default from build 26100).'
+    }
+    @{
+        Id            = 'OnlineKMS'
+        Switch        = '/K-Windows'
+        ExtraSwitches = @('/K-NoEditionChange')
+        DurationModel = 'TimeLimited'
+        Internet      = 'Required'
+        MinBuild      = 7600
+        EditionScope  = 'AnyWindows'
+        Evidence      = 'Pinned MAS_AIO.cmd: line 400 dispatches /K-; the Online KMS block accepts /K-Windows and /K-NoEditionChange (line 12081). Documented: massgrave.dev/online_kms ("KMS activates Windows / Office for 180 Days", renewal task gives lifetime activation; massgrave.dev/command_line_switches for both switches).'
+    }
+)
+
+<#
+.SYNOPSIS
+    Returns the Windows-only activation methods, or one of them by Id.
+.DESCRIPTION
+    Only ids that appear in the table above are ever returned, so an id that arrives from a
+    settings file or a caller cannot become an arbitrary command-line switch.
+.OUTPUTS
+    An array of method dictionaries, or one dictionary, or $null for an unknown id.
+#>
+function Get-WtWindowsActivationMethod
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $false)][AllowNull()][AllowEmptyString()][string]$Id = '')
+
+    if (-not $Id)
+    {
+        return @($Script:WtActivationMethods)
+    }
+
+    foreach ($Method in $Script:WtActivationMethods)
+    {
+        if ([string]$Method.Id -eq $Id) { return $Method }
+    }
+
+    return $null
+}
+
+<#
+.SYNOPSIS
+    Reads the Windows activation method the user selected ('' when none is selected).
+.DESCRIPTION
+    The setting lives in the user settings file next to the interface preferences. An id this
+    build does not know - an older or a newer release wrote it - is reported as "nothing selected"
+    instead of being passed through.
+.OUTPUTS
+    A method dictionary, or $null.
+#>
+function Get-WtWindowsActivationMethodSetting
+{
+    [CmdletBinding()]
+    param ()
+
+    $Id = ''
+    try
+    {
+        $Id = [string](Read-WtSettings).ActivationMethod
+    }
+    catch
+    {
+        $Id = ''
+    }
+
+    if (-not $Id) { return $null }
+    return (Get-WtWindowsActivationMethod -Id $Id)
+}
+
+<#
+.SYNOPSIS
+    Stores the selected Windows activation method.
+.DESCRIPTION
+    Refuses an id that is not in the table (returning $false) so a typo cannot be persisted. An
+    empty id clears the selection: this feature never picks a method for the user, and it never
+    substitutes a permanent method for a time-limited request.
+.OUTPUTS
+    [bool] whether the setting was written.
+#>
+function Set-WtWindowsActivationMethodSetting
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param ([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Id)
+
+    if ($Id -and -not (Get-WtWindowsActivationMethod -Id $Id))
+    {
+        return $false
+    }
+
+    $Settings = Read-WtSettings
+    $Settings.ActivationMethod = $Id
+    Write-WtSettings -Settings $Settings
+    return $true
+}
+
+<#
+.SYNOPSIS
+    Describes the installed Windows edition the method checks are made against.
+.DESCRIPTION
+    The registry product name is the readable one ("Windows 11 Pro", "Windows Server 2022
+    Standard", "Windows 10 Enterprise Evaluation"); the licensing record's product name is the
+    fallback, because SPP names the same edition "Windows(R), Professional edition". Both strings
+    are kept for the pattern checks. The build number comes from the environment snapshot, and 0
+    means it could not be read - which is reported as unknown rather than assumed to be new enough.
+.OUTPUTS
+    An ordered dictionary: Name, RegistryName, LicensingName, Build, IsServer, IsEvaluation, Known.
+#>
+function Get-WtWindowsActivationEdition
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][AllowNull()][object]$License = $null,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Environment = $null
+    )
+
+    $RegistryName = ''
+    $Build = 0
+    if ($Environment)
+    {
+        if ($Environment.OSName) { $RegistryName = [string]$Environment.OSName }
+        if ($null -ne $Environment.OSBuild) { $Build = [int]$Environment.OSBuild }
+    }
+
+    $LicensingName = ''
+    if ($License -and $License.Inventory -and -not $License.Inventory.Unreadable -and $License.Inventory.Active)
+    {
+        $LicensingName = [string]$License.Inventory.Active.ProductName
+    }
+
+    $Name = $RegistryName
+    if (-not $Name) { $Name = $LicensingName }
+
+    $Search = ($RegistryName + ' ' + $LicensingName).Trim()
+
+    $Result = [ordered]@{
+        Name         = $Name
+        RegistryName = $RegistryName
+        LicensingName = $LicensingName
+        Build        = $Build
+        IsServer     = [bool]($Search -match '(?i)\bserver\b')
+        IsEvaluation = [bool]($Search -match '(?i)eval')
+        Known        = [bool]($Name -or $Build -gt 0)
+    }
+
+    return $Result
+}
+
+<#
+.SYNOPSIS
+    Reports whether one activation method may be used on the installed edition.
+.DESCRIPTION
+    Every rule comes from upstream material read at the pinned commit; nothing is inferred:
+      ServerEdition     - HWID only supports Windows 10/11 client (upstream refuses Server and
+                          points at TSforge instead), so a Windows Server edition is not offered it;
+      EvaluationEdition - upstream states an evaluation edition cannot be activated beyond its
+                          evaluation period, and that TSforge only resets that period, so none of
+                          the three permanent/time-limited models would hold here;
+      BuildTooOld       - below the method's minimum build (10240 for HWID, 7600 elsewhere);
+      BuildUnknown      - the build number could not be read, which is never treated as "new
+                          enough";
+      EditionUnknown    - neither the registry nor the licensing record named the edition;
+      NotWindows        - the pinned script only runs on Windows.
+    The caller shows the status; it never falls back to another method after a refusal or a
+    failure.
+.OUTPUTS
+    An ordered dictionary: Status, Compatible, MethodId.
+#>
+function Test-WtWindowsActivationMethodCompatibility
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$Method,
+        [Parameter(Mandatory = $true)][object]$Edition
+    )
+
+    $Result = [ordered]@{
+        Status     = 'Compatible'
+        Compatible = $true
+        MethodId   = [string]$Method.Id
+    }
+
+    $Status = 'Compatible'
+
+    if (-not (Test-WtExternalToolSupported))
+    {
+        $Status = 'NotWindows'
+    }
+    elseif (-not $Edition.Known)
+    {
+        $Status = 'EditionUnknown'
+    }
+    elseif ([int]$Method.MinBuild -gt 0 -and [int]$Edition.Build -le 0)
+    {
+        $Status = 'BuildUnknown'
+    }
+    elseif ([int]$Method.MinBuild -gt 0 -and [int]$Edition.Build -lt [int]$Method.MinBuild)
+    {
+        $Status = 'BuildTooOld'
+    }
+    elseif ($Edition.IsEvaluation)
+    {
+        $Status = 'EvaluationEdition'
+    }
+    elseif ($Edition.IsServer -and [string]$Method.EditionScope -eq 'Client')
+    {
+        $Status = 'ServerEdition'
+    }
+
+    $Result.Status = $Status
+    $Result.Compatible = ($Status -eq 'Compatible')
+    return $Result
+}
+
+#endregion Windows activation methods
+
 #region Launch
 
 <#
@@ -1595,11 +1860,15 @@ function Test-WtIsElevatedProcess
 
 <#
 .SYNOPSIS
-    Builds the command line that runs the downloaded script in its own console.
+    Builds the command line that runs the downloaded script for one Windows activation method.
 .DESCRIPTION
     The entry point is the documented one: the batch file itself, run through the command
-    interpreter with /c. No switch is passed, so the upstream menu keeps every choice: no
-    activation method is preselected and no activation command is composed here.
+    interpreter with /c, plus the switches of exactly one method from the closed table above. The
+    switches make upstream run that method in unattended mode and exit, so its interactive menu is
+    never shown and no keystroke is ever fed to it.
+
+    The method is resolved from the table by Id: a caller cannot hand in a switch of its own, and an
+    unknown or empty Id produces a plan that is refused rather than a command line without a choice.
 
     The path must be the file this feature downloaded, inside its own directory. A path that
     contains a double quote, a percent sign or a line break is refused instead of being
@@ -1607,7 +1876,7 @@ function Test-WtIsElevatedProcess
     safely.
 .OUTPUTS
     An ordered dictionary: Ok, Reason, FilePath, ArgumentList, WorkingDirectory, Elevated,
-    CommandLine.
+    CommandLine, MethodId, Switches.
 #>
 function Get-WtExternalToolLaunchPlan
 {
@@ -1617,7 +1886,8 @@ function Get-WtExternalToolLaunchPlan
         [Parameter(Mandatory = $false)][object]$Spec,
         [Parameter(Mandatory = $false)][string]$ToolPath = '',
         [Parameter(Mandatory = $false)][string]$Interpreter = '',
-        [Parameter(Mandatory = $false)][AllowNull()][object]$Elevated = $null
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Elevated = $null,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Method = $null
     )
 
     if (-not $Spec) { $Spec = Get-WtExternalToolSpec }
@@ -1631,7 +1901,28 @@ function Get-WtExternalToolLaunchPlan
         WorkingDirectory = ''
         Elevated         = [bool]$Elevated
         CommandLine      = ''
+        MethodId         = ''
+        Switches         = @()
     }
+
+    $MethodId = ''
+    if ($Method)
+    {
+        if ($Method -is [string]) { $MethodId = $Method } else { $MethodId = [string]$Method.Id }
+    }
+    $Resolved = Get-WtWindowsActivationMethod -Id $MethodId
+    $List = @($Resolved)
+    # Exactly one method from the table must match: an empty id returns the whole table, and an
+    # array can never be a command line.
+    if ($List.Count -ne 1 -or [string]$List[0].Id -ne $MethodId)
+    {
+        $Plan.Reason = 'No Windows activation method is selected, so no activation command was composed.'
+        return $Plan
+    }
+    $Resolved = $List[0]
+
+    $Plan.MethodId = [string]$Resolved.Id
+    $Plan.Switches = @([string]$Resolved.Switch) + @($Resolved.ExtraSwitches)
 
     if ($null -eq $Elevated)
     {
@@ -1671,29 +1962,32 @@ function Get-WtExternalToolLaunchPlan
     $Command = if ($Interpreter) { $Interpreter } elseif ($env:ComSpec) { [string]$env:ComSpec } else { 'cmd.exe' }
 
     $Plan.FilePath = $Command
-    $Plan.ArgumentList = @('/c', ('"{0}"' -f $Full))
+    $Plan.ArgumentList = @('/c', ('"{0}"' -f $Full)) + @($Plan.Switches)
     $Plan.WorkingDirectory = [System.IO.Path]::GetDirectoryName($Full)
-    $Plan.CommandLine = '{0} /c "{1}"' -f $Command, $Full
+    $Plan.CommandLine = ('{0} /c "{1}" {2}' -f $Command, $Full, (@($Plan.Switches) -join ' ')).TrimEnd()
     $Plan.Ok = $true
     return $Plan
 }
 
 <#
 .SYNOPSIS
-    Starts one console process and waits for it, optionally through an explicit UAC handoff.
+    Starts one console process, optionally through an explicit UAC handoff.
 .DESCRIPTION
     This is the only place a process is started for this feature. It is a separate function
     so tests can replace exactly this seam and observe the plan instead of running it.
 
-    The child gets its own console window (no -NoNewWindow): the upstream interface needs
-    one, and its output must never be mixed into the WindowsTweaker screen. -Wait is
-    implemented through the returned process object because it is the form that is
-    reliable on Windows PowerShell 5.1 for an elevated process.
+    The child gets its own console window (no -NoNewWindow): the upstream script and any console
+    it opens need one, and its output must never be mixed into the WindowsTweaker screen.
+
+    The function deliberately does not wait: an exit here means the process it started ended, which
+    is not the same as the operation ending - upstream relaunches itself through the command
+    interpreter or through UAC in several situations, and the launcher then exits long before the
+    activation does. Callers observe the operation with Wait-WtWindowsActivationCompletion.
 
     Elevation is a handoff, never a silent retry: a refused UAC prompt comes back as
     Cancelled, and nothing is started a second time.
 .OUTPUTS
-    An ordered dictionary: Started, ExitCode, Cancelled, Reason.
+    An ordered dictionary: Started, Cancelled, Reason, Process, ProcessId.
 #>
 function Invoke-WtExternalToolProcess
 {
@@ -1708,9 +2002,10 @@ function Invoke-WtExternalToolProcess
 
     $Result = [ordered]@{
         Started   = $false
-        ExitCode  = $null
         Cancelled = $false
         Reason    = ''
+        Process   = $null
+        ProcessId = 0
     }
 
     $Arguments = @{}
@@ -1741,26 +2036,501 @@ function Invoke-WtExternalToolProcess
     }
 
     $Result.Started = $true
+    $Result.Process = $Process
 
     if (-not $Process)
     {
-        # Without a process object the exit cannot be observed; the launch itself stands.
-        $Result.Reason = 'The process was started but its exit could not be observed.'
+        # Without a process object the process id is unknown, and the lifetime is tracked from the
+        # process table alone (or reported as unobserved). The launch itself stands.
+        $Result.Reason = 'The process was started but no handle to it could be observed.'
         return $Result
     }
 
     try
     {
-        $Process.WaitForExit()
-        $Result.ExitCode = [int]$Process.ExitCode
+        $Result.ProcessId = [int]$Process.Id
     }
     catch
     {
-        $Result.Reason = "The process exit could not be read: $($_.Exception.Message)"
+        $Result.ProcessId = 0
     }
 
     return $Result
 }
+
+#endregion Launch
+
+#region Operation lifetime
+
+<#
+.SYNOPSIS
+    Reads one snapshot of the process table (id, parent id, creation time).
+.DESCRIPTION
+    The table is what makes an operation's real lifetime observable: a console script that
+    relaunches itself - through cmd.exe, through conhost.exe or through an elevation prompt -
+    leaves the process that was started behind, and only the parent chain shows that the work
+    moved elsewhere. Windows only, and $null when the table cannot be read: callers then report
+    "completion unknown" instead of assuming the operation ended with its launcher.
+.OUTPUTS
+    An array of objects with ProcessId, ParentProcessId and StartUtc, or $null.
+#>
+function Get-WtExternalToolProcessTable
+{
+    [CmdletBinding()]
+    param ()
+
+    if (-not (Test-WtIsWindows)) { return $null }
+
+    try
+    {
+        $Rows = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, CreationDate -ErrorAction Stop)
+    }
+    catch
+    {
+        return $null
+    }
+
+    if ($Rows.Count -eq 0) { return $null }
+
+    $Table = [System.Collections.Generic.List[object]]::new()
+    foreach ($Row in $Rows)
+    {
+        $Start = [datetime]::MinValue
+        try { $Start = [datetime]$Row.CreationDate } catch { $Start = [datetime]::MinValue }
+        $Table.Add([pscustomobject]@{
+                ProcessId       = [int]$Row.ProcessId
+                ParentProcessId = [int]$Row.ParentProcessId
+                StartUtc        = $Start
+            })
+    }
+
+    return $Table.ToArray()
+}
+
+<#
+.SYNOPSIS
+    Expands a process-table snapshot into every member of one process tree.
+.DESCRIPTION
+    Pure, so the expansion can be verified against a fixture table. The walk is repeated to a fixed
+    point because an intermediate process (the command interpreter or the conhost that performs a
+    relaunch) is usually already gone by the time the elevated child is looked for; the child's
+    parent id still points at it, so only accumulating the ids finds the grandchild.
+
+    -RootIds takes the whole seed set, not one id: a caller that polls repeatedly keeps every id it
+    has ever seen in the tree, which is what keeps a grandchild reachable after its parent left the
+    table. A member whose creation time predates the root cannot belong to it (a recycled process
+    id), and is dropped rather than counted as part of the operation.
+.OUTPUTS
+    An array of table rows, the seed rows included when the snapshot still holds them.
+#>
+function Get-WtActivationProcessTree
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][object[]]$Table,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][int[]]$RootIds,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$RootStartUtc = $null
+    )
+
+    $Members = [System.Collections.Generic.List[object]]::new()
+    if (-not $Table) { return $Members.ToArray() }
+
+    $Ids = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($RootId in @($RootIds)) { $null = $Ids.Add([int]$RootId) }
+
+    $Grew = $true
+    while ($Grew)
+    {
+        $Grew = $false
+        foreach ($Row in $Table)
+        {
+            if ($Ids.Contains([int]$Row.ParentProcessId) -and $Ids.Add([int]$Row.ProcessId))
+            {
+                $Grew = $true
+            }
+        }
+    }
+
+    $Floor = [datetime]::MinValue
+    if ($RootStartUtc) { $Floor = ([datetime]$RootStartUtc).AddSeconds(-1) }
+
+    foreach ($Row in $Table)
+    {
+        if (-not $Ids.Contains([int]$Row.ProcessId)) { continue }
+        if ($Floor -ne [datetime]::MinValue -and $Row.StartUtc -and $Row.StartUtc -lt $Floor) { continue }
+        $Members.Add($Row)
+    }
+
+    return $Members.ToArray()
+}
+
+<#
+.SYNOPSIS
+    Observes the real lifetime of one activation operation.
+.DESCRIPTION
+    Two signals are used together, because neither is sufficient on its own:
+      * the started process object says whether the *launcher* exited, and carries its exit code;
+      * the process table says whether anything the launcher left behind is still running.
+    Completion is 'Completed' only when the launcher is gone *and* no member of its tree is left. A
+    launcher that exits while its detached child keeps working is 'Unknown' (with the child count
+    in Remaining) - that is exactly the observed bug where a wrapper reported success while the
+    upstream console was still open. When the process table cannot be read at all, the answer is
+    'Unknown' as well: a detached child cannot be ruled out, so completion is not claimed.
+
+    -TableSource exists so the whole classification can be driven from inert fixtures; production
+    callers use the default Windows process table.
+.OUTPUTS
+    An ordered dictionary: Completion (Completed/Unknown/Timeout), ExitCode, Remaining, Reason,
+    ObservedSeconds, Elapsed.
+#>
+function Wait-WtWindowsActivationCompletion
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][int]$RootProcessId,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$RootStartUtc = $null,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Process = $null,
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 1800,
+        [Parameter(Mandatory = $false)][AllowNull()][scriptblock]$TableSource = $null,
+        [Parameter(Mandatory = $false)][int]$PollMilliseconds = 1000,
+        [Parameter(Mandatory = $false)][switch]$NoSleep
+    )
+
+    if (-not $TableSource) { $TableSource = { Get-WtExternalToolProcessTable } }
+
+    $Result = [ordered]@{
+        Completion      = 'Unknown'
+        ExitCode        = $null
+        Remaining       = 0
+        Members         = @()
+        Reason          = ''
+        ObservedSeconds = 0
+        Elapsed         = $false
+    }
+
+    if ($RootProcessId -le 0 -and -not $Process)
+    {
+        $Result.Reason = 'The operation could not be identified, so its completion could not be observed.'
+        return $Result
+    }
+
+    $Started = [datetime]::UtcNow
+    $Deadline = $Started.AddSeconds([math]::Max(1, $TimeoutSeconds))
+    $Poll = [math]::Max(50, $PollMilliseconds)
+    $ExitCode = $null
+
+    # Every process id this tree has ever contained. Kept across polls because an intermediate
+    # process (the one that performs a relaunch) disappears before its child does, and without the
+    # accumulated set that child could no longer be traced back to the root.
+    $Known = [System.Collections.Generic.HashSet[int]]::new()
+    $null = $Known.Add($RootProcessId)
+
+    while ($true)
+    {
+        if ($Process)
+        {
+            try
+            {
+                if ($Process.HasExited)
+                {
+                    try { $ExitCode = [int]$Process.ExitCode } catch { $ExitCode = $null }
+                }
+            }
+            catch
+            {
+                # A process started through the shell (elevation handoff) may have no usable handle.
+                # The process table answers instead, so the handle failure is intentionally ignored.
+                Write-WtLog -Level Debug -Message 'The started process handle was unreadable; the process table answers.' -NoConsole
+            }
+        }
+
+        $Table = & $TableSource
+
+        if ($null -eq $Table)
+        {
+            $Result.ObservedSeconds = [int][math]::Max(0, ([datetime]::UtcNow - $Started).TotalSeconds)
+            $Result.ExitCode = $ExitCode
+            $Result.Completion = 'Unknown'
+            $Result.Members = @($Known)
+            $Result.Reason = 'The process table could not be read, so a detached child cannot be ruled out.'
+            return $Result
+        }
+
+        $Current = @{}
+        foreach ($Row in $Table) { $Current[[int]$Row.ProcessId] = $Row }
+
+        foreach ($Row in @(Get-WtActivationProcessTree -Table $Table -RootIds @($Known) -RootStartUtc $RootStartUtc))
+        {
+            $null = $Known.Add([int]$Row.ProcessId)
+        }
+
+        $RootAlive = $false
+        if ($Current.ContainsKey($RootProcessId))
+        {
+            $RootRow = $Current[$RootProcessId]
+            $RootAlive = $true
+            if ($RootStartUtc -and $RootRow.StartUtc -and $RootRow.StartUtc -ne [datetime]::MinValue)
+            {
+                $Skew = [math]::Abs(([datetime]$RootRow.StartUtc - [datetime]$RootStartUtc).TotalSeconds)
+                $RootAlive = ($Skew -lt 2)
+            }
+        }
+
+        $Remaining = 0
+        foreach ($Id in @($Known))
+        {
+            if ($Id -eq $RootProcessId) { continue }
+            if (-not $Current.ContainsKey($Id)) { continue }
+            $MemberRow = $Current[$Id]
+            if ($RootStartUtc -and $MemberRow.StartUtc -and $MemberRow.StartUtc -ne [datetime]::MinValue)
+            {
+                # A member created before the operation started is a recycled process id.
+                if ($MemberRow.StartUtc -lt ([datetime]$RootStartUtc).AddSeconds(-1)) { continue }
+            }
+            $Remaining++
+        }
+
+        $Result.Remaining = $Remaining
+        $Result.Members = @($Known)
+        $Result.ObservedSeconds = [int][math]::Max(0, ([datetime]::UtcNow - $Started).TotalSeconds)
+
+        if (-not $RootAlive -and $Remaining -eq 0)
+        {
+            $Result.Completion = 'Completed'
+            $Result.Elapsed = $false
+            $Result.ExitCode = $ExitCode
+            if ($null -eq $Result.ExitCode -and $Process)
+            {
+                try { $Result.ExitCode = [int]$Process.ExitCode } catch { $Result.ExitCode = $null }
+            }
+            return $Result
+        }
+
+        if ([datetime]::UtcNow -ge $Deadline)
+        {
+            $Result.Completion = 'Timeout'
+            $Result.Elapsed = $true
+            $Result.ExitCode = $ExitCode
+            $Result.Reason = 'The operation was still running when its wait deadline passed.'
+            return $Result
+        }
+
+        if (-not $NoSleep) { Start-Sleep -Milliseconds $Poll }
+    }
+}
+
+<#
+.SYNOPSIS
+    Path of the record that describes the operation that may still be running.
+.DESCRIPTION
+    Inside the tool's own directory in the WindowsTweaker data root, next to the download it
+    describes.
+#>
+function Get-WtWindowsActivationRecordPath
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ()
+
+    return [System.IO.Path]::Combine((Get-WtExternalToolRoot), 'activation-operation.json')
+}
+
+<#
+.SYNOPSIS
+    Reads the activation operation record ($null when there is none that can be trusted).
+#>
+function Read-WtWindowsActivationRecord
+{
+    [CmdletBinding()]
+    param ()
+
+    $Path = Get-WtWindowsActivationRecordPath
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+
+    try
+    {
+        $Raw = Read-WtTextFile -Path $Path
+        if ([string]::IsNullOrWhiteSpace($Raw)) { return $null }
+        $Parsed = ConvertFrom-WtJson -Text $Raw -Depth 6
+        if (-not $Parsed) { return $null }
+        if ([string](Get-WtExternalToolJsonProperty -Document $Parsed -Name 'schema') -ne 'windows-tweaker.activation-operation/1') { return $null }
+        return $Parsed
+    }
+    catch
+    {
+        return $null
+    }
+}
+
+<#
+.SYNOPSIS
+    Writes the activation operation record atomically.
+#>
+function Write-WtWindowsActivationRecord
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$Record)
+
+    New-WtDirectory -Path (Get-WtExternalToolRoot)
+    $null = Write-WtAtomicFile -Path (Get-WtWindowsActivationRecordPath) -Value (ConvertTo-WtJson -InputObject $Record -Depth 6)
+}
+
+<#
+.SYNOPSIS
+    Removes the activation operation record.
+#>
+function Clear-WtWindowsActivationRecord
+{
+    [CmdletBinding()]
+    param ()
+
+    $Path = Get-WtWindowsActivationRecordPath
+    if (Test-Path -LiteralPath $Path -PathType Leaf)
+    {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Ignore
+    }
+}
+
+<#
+.SYNOPSIS
+    Reports whether an activation operation may still be running.
+.DESCRIPTION
+    The record written when an activation starts is the second half of the duplicate guard: the
+    first half is the in-process flag, which a returned TUI or a new session does not carry. The
+    record is judged against the live process table, so it stops blocking as soon as the tree it
+    names is gone, and it never blocks for a record that reports a finished operation.
+
+    A record whose state cannot be checked (the process table is unreadable) blocks only while it is
+    younger than MaxAgeHours; after that it is reported as stale instead of locking the action
+    forever. Nothing is deleted here - the caller decides, and Clear-WtWindowsActivationRecord is
+    the only deletion.
+.OUTPUTS
+    An ordered dictionary: Active, Stale, Record, Reason, Remaining.
+#>
+function Test-WtWindowsActivationActive
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][AllowNull()][scriptblock]$TableSource = $null,
+        [Parameter(Mandatory = $false)][int]$MaxAgeHours = 12
+    )
+
+    if (-not $TableSource) { $TableSource = { Get-WtExternalToolProcessTable } }
+
+    $Result = [ordered]@{
+        Active    = $false
+        Stale     = $false
+        Record    = $null
+        Reason    = ''
+        Remaining = 0
+    }
+
+    $Record = Read-WtWindowsActivationRecord
+    if (-not $Record) { return $Result }
+
+    $Result.Record = $Record
+
+    $Completion = [string](Get-WtExternalToolJsonProperty -Document $Record -Name 'completion')
+    if ($Completion -eq 'completed' -or $Completion -eq 'cancelled' -or $Completion -eq 'refused')
+    {
+        $Result.Reason = 'The recorded operation finished.'
+        return $Result
+    }
+
+    $LaunchedUtc = [datetime]::MinValue
+    $RawLaunched = [string](Get-WtExternalToolJsonProperty -Document $Record -Name 'launchedUtc')
+    if ($RawLaunched)
+    {
+        try { $LaunchedUtc = ([datetime]$RawLaunched).ToUniversalTime() } catch { $LaunchedUtc = [datetime]::MinValue }
+    }
+
+    $RootId = 0
+    $RawRoot = Get-WtExternalToolJsonProperty -Document $Record -Name 'rootPid'
+    if ($null -ne $RawRoot) { $RootId = [int]$RawRoot }
+
+    $RootStart = $null
+    $RawStart = [string](Get-WtExternalToolJsonProperty -Document $Record -Name 'rootStartUtc')
+    if ($RawStart)
+    {
+        try { $RootStart = ([datetime]$RawStart).ToUniversalTime() } catch { $RootStart = $null }
+    }
+
+    $Table = & $TableSource
+    if ($null -eq $Table)
+    {
+        $Age = [double]::MaxValue
+        if ($LaunchedUtc -ne [datetime]::MinValue) { $Age = ([datetime]::UtcNow - $LaunchedUtc).TotalHours }
+
+        if ($Age -lt $MaxAgeHours)
+        {
+            # It may still be running, and nothing can prove otherwise: duplicating it is the
+            # riskier answer.
+            $Result.Active = $true
+            $Result.Reason = 'The record could not be checked against the process table.'
+            return $Result
+        }
+
+        $Result.Stale = $true
+        $Result.Reason = 'The record could not be checked and is older than the staleness bound.'
+        return $Result
+    }
+
+    if ($RootId -le 0)
+    {
+        $Result.Reason = 'The record names no process, so it cannot be checked.'
+        $Result.Stale = $true
+        return $Result
+    }
+
+    $Current = @{}
+    foreach ($Row in $Table) { $Current[[int]$Row.ProcessId] = $Row }
+
+    # The seed set is the recorded root plus every process id the last observation saw in the tree:
+    # an intermediate process may already be gone, and the ids are what keeps a grandchild traceable.
+    $Known = [System.Collections.Generic.HashSet[int]]::new()
+    $null = $Known.Add($RootId)
+    $Observed = Get-WtExternalToolJsonProperty -Document $Record -Name 'observedPids'
+    foreach ($Entry in @($Observed))
+    {
+        if ($null -eq $Entry) { continue }
+        $null = $Known.Add([int]$Entry)
+    }
+
+    foreach ($Row in @(Get-WtActivationProcessTree -Table $Table -RootIds @($Known) -RootStartUtc $RootStart))
+    {
+        $null = $Known.Add([int]$Row.ProcessId)
+    }
+
+    $Alive = 0
+    foreach ($Id in @($Known))
+    {
+        if (-not $Current.ContainsKey($Id)) { continue }
+        $Row = $Current[$Id]
+        if ($RootStart -and $Row.StartUtc -and $Row.StartUtc -ne [datetime]::MinValue)
+        {
+            if ($Row.StartUtc -lt ([datetime]$RootStart).AddSeconds(-1)) { continue }
+        }
+        $Alive++
+    }
+
+    $Result.Remaining = $Alive
+    if ($Alive -gt 0)
+    {
+        $Result.Active = $true
+        $Result.Reason = 'A process from the recorded operation is still running.'
+        return $Result
+    }
+
+    $Result.Reason = 'The recorded operation is no longer running.'
+    return $Result
+}
+
+#endregion Operation lifetime
+
+#region Launch
 
 <#
 .SYNOPSIS
@@ -1777,43 +2547,85 @@ function Test-WtExternalToolLaunching
 
 <#
 .SYNOPSIS
-    Launches the verified local copy of the upstream tool.
+    Runs one Windows activation method of the verified local copy of the upstream tool.
 .DESCRIPTION
-    Preconditions, in order: the platform can run it, the local copy is verified against its
-    pin, and no launch is already in progress. Then the console-owning caller releases the
-    terminal, rehearses the plan, and hands the process off (with an explicit UAC prompt when
-    the session is not elevated).
+    Preconditions, in order: the platform can run the tool, a method from the closed table is
+    selected, no operation is already running (neither in this process nor through a record that
+    names a process which is still alive), and the local copy is verified against its pin. Then the
+    console-owning caller releases the terminal, rehearses the plan, and hands the process off (with
+    an explicit UAC prompt when the session is not elevated).
 
-    The return value deliberately separates "the process ran" from "the licensing state
-    changed": an exit code is not evidence of activation, so the caller re-reads the licensing
-    diagnostics and says whether that read succeeded.
+    The switches of the selected method make upstream run that one workflow in unattended mode and
+    exit, so its menu is never shown, no keystroke is sent and no other operation (Office, ESU,
+    edition change, KVM host, reset) is reachable from here. Nothing falls back to another method:
+    a refusal or a failure is reported as it is.
+
+    The return value deliberately separates four things that are not the same:
+      * Started  - a process was created;
+      * Completion - the operation's lifetime was observed to its end (Completed), could not be
+        observed (Unknown), or was still running at the deadline (Timeout);
+      * ExitCode - what the launcher returned, which says nothing about the licensing state;
+      * Status   - 'succeeded' only when completion was observed; 'unknown' when it was not.
+    Whether Windows is activated afterwards is answered by re-reading the licensing record, which
+    the caller does.
+.PARAMETER Method
+    A method dictionary from Get-WtWindowsActivationMethods, or the id of one.
 .PARAMETER Elevated
     Whether this session is already elevated. $null means "probe it".
+.PARAMETER TimeoutSeconds
+    How long the operation's lifetime is observed before the answer becomes 'Timeout'.
 .OUTPUTS
-    An ordered dictionary: Status (succeeded, refused, failed, cancelled), Code, Reason,
-    Plan, Started, ExitCode.
+    An ordered dictionary: Status (succeeded, unknown, refused, failed, cancelled), Code, Reason,
+    Plan, Method, Started, ExitCode, Completion, CompletionDetermined, Remaining, RootProcessId.
 #>
-function Start-WtExternalTool
+function Start-WtWindowsActivation
 {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
     param
     (
         [Parameter(Mandatory = $false)][object]$Spec,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Method = $null,
         [Parameter(Mandatory = $false)][string]$ToolPath = '',
         [Parameter(Mandatory = $false)][AllowNull()][object]$Elevated = $null,
-        [Parameter(Mandatory = $false)][string]$Interpreter = ''
+        [Parameter(Mandatory = $false)][string]$Interpreter = '',
+        [Parameter(Mandatory = $false)][int]$TimeoutSeconds = 1800,
+        [Parameter(Mandatory = $false)][AllowNull()][scriptblock]$TableSource = $null
     )
 
     if (-not $Spec) { $Spec = Get-WtExternalToolSpec }
 
     $Result = [ordered]@{
-        Status   = 'refused'
-        Code     = ''
-        Reason   = ''
-        Plan     = $null
-        Started  = $false
-        ExitCode = $null
+        Status               = 'refused'
+        Code                 = ''
+        Reason               = ''
+        Plan                 = $null
+        Method               = $null
+        Started              = $false
+        ExitCode             = $null
+        Completion           = 'NotStarted'
+        CompletionDetermined = $false
+        Remaining            = 0
+        RootProcessId        = 0
     }
+
+    $MethodId = ''
+    if ($Method)
+    {
+        if ($Method -is [string]) { $MethodId = $Method } else { $MethodId = [string]$Method.Id }
+    }
+    # Re-resolved from the table: a caller can pass an id, and an id that is not in the table - or a
+    # method object carrying anything else - never reaches a command line. An empty id is the whole
+    # table, which is not a single method.
+    $Resolved = Get-WtWindowsActivationMethod -Id $MethodId
+    $List = @($Resolved)
+    if ($List.Count -ne 1 -or [string]$List[0].Id -ne $MethodId)
+    {
+        $Result.Code = 'NoMethod'
+        $Result.Reason = 'No Windows activation method is selected, so nothing was started.'
+        return $Result
+    }
+    $Resolved = $List[0]
+    $Result.Method = $Resolved
 
     if (-not (Test-WtExternalToolSupported))
     {
@@ -1825,7 +2637,15 @@ function Start-WtExternalTool
     if ($Script:WtExternalToolLaunching)
     {
         $Result.Code = 'AlreadyLaunched'
-        $Result.Reason = 'A launch is already in progress; a second instance is not started.'
+        $Result.Reason = 'An activation is already in progress in this session; a second one is not started.'
+        return $Result
+    }
+
+    $Active = Test-WtWindowsActivationActive -TableSource $TableSource
+    if ($Active.Active)
+    {
+        $Result.Code = 'OperationActive'
+        $Result.Reason = 'A previous activation may still be running, so a second one was not started.'
         return $Result
     }
 
@@ -1837,7 +2657,7 @@ function Start-WtExternalTool
         return $Result
     }
 
-    $Plan = Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $(if ($ToolPath) { $ToolPath } else { $State.Path }) -Interpreter $Interpreter -Elevated $Elevated
+    $Plan = Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $(if ($ToolPath) { $ToolPath } else { $State.Path }) -Interpreter $Interpreter -Elevated $Elevated -Method $Resolved
     $Result.Plan = $Plan
     if (-not $Plan.Ok)
     {
@@ -1848,31 +2668,47 @@ function Start-WtExternalTool
 
     # A dry run is refused here, after the plan exists: the caller can then show exactly what
     # would have been started. Nothing is spawned, elevated or observed.
-    if (-not $PSCmdlet.ShouldProcess($Plan.CommandLine, 'launch the external tool'))
+    if (-not $PSCmdlet.ShouldProcess($Plan.CommandLine, ('run the {0} Windows activation method' -f $Resolved.Id)))
     {
         $Result.Status = 'refused'
         $Result.Code = 'DryRun'
-        $Result.Reason = 'Dry run: the external tool was not started.'
+        $Result.Reason = 'Dry run: the activation was not started.'
         return $Result
     }
 
     $Script:WtExternalToolLaunching = $true
+    $Record = $null
     try
     {
-        Write-WtLog -Level Information -Message ("Launching {0} tag {1} commit {2} (elevated handoff: {3})" -f $Spec.Name, [string]$State.Pin.Tag, [string]$State.Pin.Commit, [bool]$Plan.Elevated) `
-            -Operation 'ExternalTool' -Status 'pending' -NoConsole -Data @{ tool = $Spec.Id; commit = [string]$State.Pin.Commit; elevated = [bool]$Plan.Elevated }
+        $Record = [ordered]@{
+            schema       = 'windows-tweaker.activation-operation/1'
+            method       = [string]$Resolved.Id
+            switches     = (@($Plan.Switches) -join ' ')
+            commit       = [string]$State.Pin.Commit
+            elevated     = [bool]$Plan.Elevated
+            rootPid      = 0
+            rootStartUtc = ''
+            launchedUtc  = [datetime]::UtcNow.ToString('o')
+            completion   = 'running'
+            exitCode     = $null
+            observedPids = @()
+        }
+
+        Write-WtLog -Level Information -Message ("Starting {0} for {1} tag {2} commit {3} (elevated handoff: {4})" -f $Resolved.Id, $Spec.Name, [string]$State.Pin.Tag, [string]$State.Pin.Commit, [bool]$Plan.Elevated) `
+            -Operation 'ExternalTool' -Status 'pending' -NoConsole -Data @{ tool = $Spec.Id; method = [string]$Resolved.Id; commit = [string]$State.Pin.Commit; elevated = [bool]$Plan.Elevated }
 
         $Run = Invoke-WtExternalToolProcess -FilePath $Plan.FilePath -ArgumentList $Plan.ArgumentList -WorkingDirectory $Plan.WorkingDirectory -Elevate ([bool]$Plan.Elevated)
 
         $Result.Started = [bool]$Run.Started
-        $Result.ExitCode = $Run.ExitCode
+        $Result.RootProcessId = [int]$Run.ProcessId
 
         if ($Run.Cancelled)
         {
             $Result.Status = 'cancelled'
             $Result.Code = 'UacCancelled'
             $Result.Reason = $Run.Reason
-            Write-WtLog -Level Warning -Message ("Launch of {0} was cancelled at the elevation prompt" -f $Spec.Name) -Operation 'ExternalTool' -Status 'failed' -NoConsole -Data @{ tool = $Spec.Id }
+            Clear-WtWindowsActivationRecord
+            Write-WtLog -Level Warning -Message ("The {0} activation was cancelled at the elevation prompt" -f $Resolved.Id) -Operation 'ExternalTool' -Status 'failed' -NoConsole -Data @{ tool = $Spec.Id; method = [string]$Resolved.Id }
             return $Result
         }
 
@@ -1881,15 +2717,60 @@ function Start-WtExternalTool
             $Result.Status = 'failed'
             $Result.Code = 'LaunchFailed'
             $Result.Reason = if ($Run.Reason) { $Run.Reason } else { 'The process could not be started.' }
-            Write-WtLog -Level Error -Message ("Launch of {0} failed: {1}" -f $Spec.Name, $Result.Reason) -Operation 'ExternalTool' -Status 'failed' -NoConsole -Data @{ tool = $Spec.Id }
+            Clear-WtWindowsActivationRecord
+            Write-WtLog -Level Error -Message ("Starting {0} failed: {1}" -f $Resolved.Id, $Result.Reason) -Operation 'ExternalTool' -Status 'failed' -NoConsole -Data @{ tool = $Spec.Id; method = [string]$Resolved.Id }
             return $Result
         }
 
-        $Result.Status = 'succeeded'
-        $Result.Code = 'Started'
-        if ($Run.Reason) { $Result.Reason = $Run.Reason }
-        Write-WtLog -Level Information -Message ("{0} exited (exit code {1})" -f $Spec.Name, $(if ($null -eq $Run.ExitCode) { 'unknown' } else { $Run.ExitCode })) `
-            -Operation 'ExternalTool' -Status 'succeeded' -NoConsole -Data @{ tool = $Spec.Id; exitCode = $Run.ExitCode }
+        # The record is written before the wait so that a TUI that is closed mid-operation (or a new
+        # session) can still see that this may be running, and refuse a duplicate.
+        $RootStart = $null
+        if ($Run.Process)
+        {
+            try { $RootStart = $Run.Process.StartTime.ToUniversalTime() } catch { $RootStart = $null }
+        }
+        if (-not $RootStart) { $RootStart = [datetime]::UtcNow }
+
+        $Record.rootPid = [int]$Run.ProcessId
+        $Record.rootStartUtc = ([datetime]$RootStart).ToString('o')
+        Write-WtWindowsActivationRecord -Record $Record
+
+        $Wait = Wait-WtWindowsActivationCompletion -RootProcessId ([int]$Run.ProcessId) -RootStartUtc $RootStart -Process $Run.Process -TimeoutSeconds $TimeoutSeconds -TableSource $TableSource
+
+        $Result.ExitCode = $Wait.ExitCode
+        $Result.Completion = [string]$Wait.Completion
+        $Result.CompletionDetermined = ([string]$Wait.Completion -eq 'Completed')
+        $Result.Remaining = [int]$Wait.Remaining
+
+        $Record.completion = ([string]$Wait.Completion).ToLowerInvariant()
+        $Record.exitCode = $Wait.ExitCode
+        # Only kept while the outcome is unresolved: the ids are what lets a later check still see a
+        # detached descendant whose parent already left the process table.
+        if (-not $Result.CompletionDetermined)
+        {
+            $Record.observedPids = @($Wait.Members)
+        }
+        Write-WtWindowsActivationRecord -Record $Record
+
+        if ($Result.CompletionDetermined)
+        {
+            # The operation is over. Whether Windows is activated is a question for the licensing
+            # record, which the caller re-reads - the exit code is recorded, never believed.
+            Clear-WtWindowsActivationRecord
+            $Result.Status = 'succeeded'
+            $Result.Code = 'Completed'
+            Write-WtLog -Level Information -Message ("{0} activation ended (exit code {1})" -f $Resolved.Id, $(if ($null -eq $Wait.ExitCode) { 'unknown' } else { $Wait.ExitCode })) `
+                -Operation 'ExternalTool' -Status 'succeeded' -NoConsole -Data @{ tool = $Spec.Id; method = [string]$Resolved.Id; exitCode = $Wait.ExitCode; completion = [string]$Wait.Completion }
+            return $Result
+        }
+
+        # Not observed to its end: say exactly that. The record stays so the operation is not
+        # duplicated while it may still be running.
+        $Result.Status = 'unknown'
+        $Result.Code = $(if ([string]$Wait.Completion -eq 'Timeout') { 'Timeout' } else { 'CompletionUnknown' })
+        $Result.Reason = if ($Wait.Reason) { $Wait.Reason } else { 'The operation was started but its completion could not be determined.' }
+        Write-WtLog -Level Warning -Message ("{0} activation completion could not be determined: {1}" -f $Resolved.Id, $Result.Reason) `
+            -Operation 'ExternalTool' -Status 'pending' -NoConsole -Data @{ tool = $Spec.Id; method = [string]$Resolved.Id; completion = [string]$Wait.Completion; remaining = [int]$Wait.Remaining }
         return $Result
     }
     finally

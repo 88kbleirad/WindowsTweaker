@@ -191,49 +191,56 @@ The fleet, incident, playbook and support-bundle views (`1`-`4`) exist but are t
 exercised part of the workspace: [docs/MULTI-HOST.md](MULTI-HOST.md) lists what is wired and
 what is not.
 
-### Licensing workspace (N)
+### Licensing & activation workspace (N)
 
 | Key | Action |
 |---|---|
-| `N` | open the licensing & activation diagnostics workspace (also the Overview -> Licensing & Activation Diagnostics row) |
+| `N` | open the licensing & activation screen (also the Overview -> Licensing & Activation Diagnostics row) |
+| `A` | **Activate Windows**: run the selected Windows-only activation method directly (the method chosen in Settings & details, with exactly its documented upstream switches, in its own console; the MAS menu is never shown and no keystroke is sent). Confirmation defaults to **No**; dry-run mode refuses the action entirely |
+| `S` | open Settings & details: method selection, download provenance, hashes, updates, documentation, removal, and the slmgr /ato request |
 | `R` | refresh the read-only inventory; the status line confirms it and the `Collected` timestamp changes |
 | `E` | export the redacted report: a preview is shown first, then an export path is asked for, and the file is written only after that |
-| `A` | request activation with the installed license (documented `slmgr /ato`): the purpose, the possible network activity and the required permissions are shown first, and **No** is the highlighted answer |
-| `M` | open the external tool: Microsoft Activation Scripts (download, launch and remove on explicit request) |
 | `?` | context help for this workspace |
 | `Esc` | leave the workspace and return to the main interface unchanged |
 
-Everything the workspace shows is read-only: the Windows licensing products, the license status with
-its raw code, the license channel, the grace state, the W32Time state and the component
-availability. The partial product key is **not** displayed by default (the workspace reads the
-redacted view), and a full key, an activation token, a machine identifier or an organization
-hostname is never displayed or exported. `A` is the only key that asks Windows to do something, it
-never runs automatically, and its result is re-read rather than assumed: an accepted command is not
-reported as an activated license. See [docs/VALIDATION.md](VALIDATION.md) section 21 for what was
-validated here and what still needs a Windows host.
+Everything the workspace shows is read-only: the installed edition, the license status with its raw
+code, the license channel, the remaining validity Windows reports, the selected method and its
+duration model, the tool readiness and the last outcome, plus the W32Time state and the component
+availability. The partial product key is **not** displayed by default, and a full key, an
+activation token, a machine identifier or an organization hostname is never displayed or exported.
+`A` is the only key that asks Windows to do something, it never runs automatically, and its result
+is re-read rather than assumed: an exit code is never reported as an activated license, and when
+completion cannot be observed the result is reported as "launched; completion unknown". While an
+operation may still be running, `A` refuses a second one. See
+[docs/VALIDATION.md](VALIDATION.md) section 21 for what was validated here and what still needs a
+Windows host.
 
-### External tool inside the licensing workspace (M)
+### Activation settings & details (S, from the licensing workspace)
 
 | Key | Action |
 |---|---|
-| `M` | open the Microsoft Activation Scripts (external tool) view from the licensing workspace |
-| `V` | view the upstream documentation (`https://massgrave.dev/`) |
+| `S` | open activation settings & details from the main licensing screen |
+| `1` | select HWID (Windows 10/11 client; permanent digital licence) as the method the main action runs |
+| `2` | select TSforge (permanent until a reinstall or a major feature upgrade) |
+| `3` | select Online KMS (180 days per activation, renewed by the task upstream installs) |
 | `D` | download the pinned upstream file: one confirmation, then a background transfer that reports real byte counts, verifies and keeps |
 | `U` | resolve the newest upstream release and offer it as a new pin: the tag, commit and size are shown before anything is downloaded |
-| `L` | launch the verified local copy in its own console (explicit UAC handoff when the session is not elevated) |
+| `V` | view the upstream documentation (`https://massgrave.dev/`) |
+| `T` | request activation with the installed license (documented `slmgr /ato`): purpose, network activity and permissions are shown first, and **No** is the highlighted answer |
 | `R` | remove the local copy, its staging leftover and the provenance record |
-| `?` | the full disclosure (provenance, what runs, what is not offered) |
-| `Esc` | back to the licensing diagnostics |
+| `?` | the full disclosure (provenance, methods and durations, what runs, what is not offered) |
+| `Esc` | back to the licensing screen |
 
 While this view is open, its own keys replace the main-screen hints in the footer - and while a
 transfer runs, the hint becomes the single key that matters: `Esc` cancels it. A second `D`/`U`
 while one runs is refused. In dry-run mode every one of these keys shows what would happen instead
-of doing it, and a launch is refused before its confirmation dialog. Nothing is downloaded, launched
-or deleted while the view is only being read: every action starts with a dialog that defaults to
-**No**. The tool is not a tweak - it is never part of a preset, a batch, a
+of doing it, and the activation is refused before its confirmation dialog. Nothing is downloaded,
+launched or deleted while the view is only being read: every action starts with a dialog that
+defaults to **No**. The tool is not a tweak - it is never part of a preset, a batch, a
 startup task or a monitoring policy, it writes no rollback data, and the registry journal cannot
 undo what it does to licensing state. See [EXTERNAL-TOOLS.md](EXTERNAL-TOOLS.md) for the
-pinned version, the provenance chain and the licence obligations.
+pinned version, the upstream evidence for each method switch, the provenance chain and the licence
+obligations.
 
 ### While an operation is running
 

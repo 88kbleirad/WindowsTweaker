@@ -22,33 +22,43 @@ enforced and how, so the limits below can be read against it.
 | User data is preserved | Uninstalling software and deleting data are separate tweaks. OneDrive user files are untouched by the OneDrive tweaks, and package removal deletes package data only for the packages you explicitly selected |
 | No code execution shortcuts | No `Invoke-Expression`, no download-and-execute, no executables copied into `System32` (the previous `powershell_temp.exe` trick is gone), no inline C# |
 | Downloads are verified | `Get-WtVerifiedDownload` requires `https://`, runs only outside a dry run, validates the Authenticode signature against an expected publisher and refuses the file otherwise |
-| The one external tool is not part of the tweak pipeline | Microsoft Activation Scripts is downloaded from its official repository at one pinned commit, verified against the size, the upstream git blob id and a project-recorded SHA-256, and launched as its own process only after a confirmation that defaults to **No**. It is never in a preset, a batch, a startup task or a monitoring policy, it writes no journal records, and its output is never captured or logged - see [EXTERNAL-TOOLS.md](EXTERNAL-TOOLS.md) |
+| The one external tool is not part of the tweak pipeline | Microsoft Activation Scripts is downloaded from its official repository at one pinned commit, verified against the size, the upstream git blob id and a project-recorded SHA-256, and one Windows-only activation method of it runs as its own process only after a confirmation that defaults to **No**. It is never in a preset, a batch, a startup task or a monitoring policy, it writes no journal records, and its output is never captured or logged - see [EXTERNAL-TOOLS.md](EXTERNAL-TOOLS.md) |
 
 ## External tool (Microsoft Activation Scripts)
 
-* **No Windows launch was executed here.** The elevation handoff, the child console, the exit code
-  and the licensing re-read after return are covered by tests only through mocked seams; the manual
-  procedure is section 22 of [VALIDATION.md](VALIDATION.md).
+* **No Windows activation was executed here.** The elevation handoff, the child console, the exit
+  code, the focus handover and the licensing re-read after return are covered by tests only through
+  mocked seams and inert process-table fixtures; the manual procedure is section 22 of
+  [VALIDATION.md](VALIDATION.md).
 * **Upstream publishes no checksum or signature** for `MAS_AIO.cmd`. The pin is therefore a commit
   plus a digest recorded by this project: the commit and the upstream blob id prove the bytes are
   the ones that commit contains, but nothing proves who produced them beyond HTTPS to GitHub.
-* **No rollback.** Launching the tool writes no rollback data, and the registry journal cannot undo
-  any licensing change it makes. Removing the downloaded copy deletes files, not licensing state.
-* **Activation is not entitlement**, and the duration of an activation depends on the method chosen
-  inside the upstream menu (not every method is time-limited, and not every method is permanent).
-* **Only the all-in-one entry point is offered** (`MAS_AIO.cmd`): the separate-files version, the
-  OEM folders and the upstream command-line switches are deliberately not exposed, so WindowsTweaker
-  cannot preselect a method or run an activation command.
+* **No rollback.** Running the activation writes no rollback data, and the registry journal cannot
+  undo any licensing change it makes. Removing the downloaded copy deletes files, not licensing
+  state.
+* **Activation is not entitlement**, and the duration model of each method is shown next to the
+  method and quoted from upstream documentation (HWID and TSforge are documented as permanent;
+  Online KMS as 180 days per activation, renewed by the task upstream installs). WindowsTweaker
+  never picks a method for the user and never substitutes one after a failure.
+* **Only the all-in-one entry point is offered** (`MAS_AIO.cmd`), and only three Windows-only
+  methods are reachable: HWID, TSforge (Windows only) and Online KMS (Windows only). Office, ESU,
+  edition conversion, KMS-host, APPX and reset switches are deliberately not exposed. The script's
+  interactive menu is never shown; the selected method's own documented switches run it in
+  unattended mode, including the switch that forbids an edition change.
+* **A launcher exit is not completion.** MAS re-launches itself through UAC, conhost or the
+  command interpreter, so the start wrapper can exit long before the activation does. The operation
+  lifetime is observed from the process table; when completion cannot be determined, the result is
+  reported as "launched; completion unknown", never success.
 * **The transfer is bounded, not resumable.** It runs in the background (the interface keeps
   painting and taking keys, `Esc` cancels it, one transfer at a time), bounded by a 4 MiB cap, a
   60 s transport timeout and a 90 s task deadline. A cancelled or failed download starts over from
   zero next time; no partial file is ever kept.
-* **Dry run covers this feature too.** `D`, `U`, `L` and `R` preview instead of acting while the
+* **Dry run covers this feature too.** `A`, `D`, `U` and `R` preview instead of acting while the
   dry-run switch is on, and `-WhatIf` refuses the same operations for callers outside the interface
-  (a launch is refused before its confirmation dialog, so confirming it is not possible).
+  (an activation is refused before its confirmation dialog, so confirming it is not possible).
 * **Blocked upstream means blocked.** WindowsTweaker does not add antivirus exclusions, does not
   bypass Defender detections and does not disable security controls to make the download or the
-  launch work.
+  activation work.
 
 ## Validation limits (this archive)
 

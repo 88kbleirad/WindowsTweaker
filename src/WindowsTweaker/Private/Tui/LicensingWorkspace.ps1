@@ -1,14 +1,154 @@
-﻿# WindowsTweaker - Licensing & Activation Diagnostics workspace (TUI).
+﻿# WindowsTweaker - Licensing & Activation workspace (TUI).
 #
-# A dedicated terminal workspace: status summary, findings, details, explicit actions and
-# report export. All collection is read-only; the only action that asks Windows to do
-# something is the explicit activation request (documented slmgr /ato) with a purpose
-# disclosure before it runs. No full keys, tokens, hostnames or machine identifiers are
-# displayed or exported by default.
+# The main screen of Windows activation. It answers, in this order: which Windows is installed,
+# whether Windows says it is activated, which Windows-only activation method is selected and whether
+# that method is permanent or time-limited, whether the pinned upstream file is ready, and what
+# happened the last time the action ran.
+#
+# One primary action: A runs the selected method directly. The upstream script is started with the
+# one documented switch of that method, so its interactive menu is never shown and no keystroke is
+# fed to it. Office, ESU, edition conversion, KMS-host, APPX and reset operations are not reachable
+# from here at all. Download provenance, hashes, documentation, updates, removal and the method
+# setting live in the second screen (S, Private/Tui/ExternalToolWorkspace.ps1).
+#
+# Everything this screen collects is read-only. Navigating, refreshing and drawing never download
+# and never execute anything; the only two actions that do something are explicit, confirmed, and
+# refused outright in dry-run mode.
 
 <#
 .SYNOPSIS
-    Renders the licensing workspace to the cell grid.
+    Returns the localised label of one Windows activation method.
+#>
+function Get-WtActivationMethodText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$Method)
+
+    switch ([string]$Method.Id)
+    {
+        'HWID' { return (Get-WtString -Key 'Act.Method.HWID') }
+        'TSforge' { return (Get-WtString -Key 'Act.Method.TSforge') }
+        'OnlineKMS' { return (Get-WtString -Key 'Act.Method.OnlineKMS') }
+        default { return [string]$Method.Id }
+    }
+}
+
+<#
+.SYNOPSIS
+    Returns the localised duration model of one method: permanent or time-limited.
+.DESCRIPTION
+    The model is the short form shown next to the method; the full upstream statement (how long the
+    activation lasts and what renews it) is the per-method sentence in the settings screen.
+#>
+function Get-WtActivationDurationModelText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$Method)
+
+    if ([string]$Method.DurationModel -eq 'TimeLimited')
+    {
+        return (Get-WtString -Key 'Act.DurationModel.TimeLimited')
+    }
+
+    return (Get-WtString -Key 'Act.DurationModel.Permanent')
+}
+
+<#
+.SYNOPSIS
+    Returns the full upstream duration statement of one method.
+#>
+function Get-WtActivationDurationText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$Method)
+
+    switch ([string]$Method.Id)
+    {
+        'HWID' { return (Get-WtString -Key 'Act.Duration.HWID') }
+        'TSforge' { return (Get-WtString -Key 'Act.Duration.TSforge') }
+        'OnlineKMS' { return (Get-WtString -Key 'Act.Duration.OnlineKMS') }
+        default { return (Get-WtString -Key 'Act.DurationModel.Permanent') }
+    }
+}
+
+<#
+.SYNOPSIS
+    Returns the upstream internet requirement of one method.
+#>
+function Get-WtActivationInternetText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$Method)
+
+    switch ([string]$Method.Id)
+    {
+        'HWID' { return (Get-WtString -Key 'Act.Internet.HWID') }
+        'TSforge' { return (Get-WtString -Key 'Act.Internet.TSforge') }
+        'OnlineKMS' { return (Get-WtString -Key 'Act.Internet.OnlineKMS') }
+        default { return (Get-WtString -Key 'Act.Internet.HWID') }
+    }
+}
+
+<#
+.SYNOPSIS
+    Returns the localised text of one edition-compatibility status.
+#>
+function Get-WtActivationCompatibilityText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][string]$Status)
+
+    switch ($Status)
+    {
+        'Compatible' { return (Get-WtString -Key 'Act.Compat.Compatible') }
+        'NotWindows' { return (Get-WtString -Key 'Act.Compat.NotWindows') }
+        'ServerEdition' { return (Get-WtString -Key 'Act.Compat.ServerEdition') }
+        'EvaluationEdition' { return (Get-WtString -Key 'Act.Compat.EvaluationEdition') }
+        'BuildTooOld' { return (Get-WtString -Key 'Act.Compat.BuildTooOld') }
+        'BuildUnknown' { return (Get-WtString -Key 'Act.Compat.BuildUnknown') }
+        'EditionUnknown' { return (Get-WtString -Key 'Act.Compat.EditionUnknown') }
+        default { return (Get-WtString -Key 'Act.Compat.Unknown') }
+    }
+}
+
+<#
+.SYNOPSIS
+    Returns the tool readiness line shown on the main screen.
+#>
+function Get-WtActivationToolText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Tool = $State.ActivationTool
+    if (-not $Tool)
+    {
+        return (Get-WtString -Key 'Mas.Status.Unsupported')
+    }
+
+    if (-not $Tool.Supported)
+    {
+        return (Get-WtString -Key 'Mas.Status.Unsupported')
+    }
+
+    return (Get-WtString -Key (Get-WtExternalToolStatusKey -Status $Tool.Status))
+}
+
+<#
+.SYNOPSIS
+    Renders the main licensing & activation screen.
+.DESCRIPTION
+    The activation block carries the installed edition, the activation status, the remaining
+    validity Windows reports, the selected method with its duration model, the readiness of the
+    pinned file and the last outcome. The read-only diagnostics (time synchronization, licensing
+    components, organization-managed configuration) follow when the terminal has rows left, and are
+    dropped first on a short window.
 #>
 function Add-WtLicensingView
 {
@@ -21,108 +161,158 @@ function Add-WtLicensingView
 
     $Screen = $State.Screen
     $Width = $Screen.Width
-    $Height = $Screen.Height
+    $Layout = Get-WtTuiLayout -State $State
+    $Bottom = $Screen.Height - $Layout.FooterRows
+    $Inner = $Width - 8
 
-    Set-WtScreenText -Screen $Screen -Row 1 -Column 2 -Text (Get-WtString -Key 'Lic.Title') -Style 'Title'
+    Set-WtScreenText -Screen $Screen -Row 1 -Column 2 -Text (Get-WtString -Key 'Lic.Title') -Style 'Title' -MaxWidth ($Width - 4)
     $Collected = if ($License.CollectedUtc) { $License.CollectedUtc.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss') } else { '-' }
     Set-WtScreenText -Screen $Screen -Row 2 -Column 2 -Text (Get-WtString -Key 'Lic.Collected' -Arguments @($Collected)) -Style 'ItemMeta' -MaxWidth ($Width - 4)
 
     $Inventory = $License.Inventory
     $Active = $Inventory.Active
-    $Top = 4
+    $Edition = Get-WtWindowsActivationEdition -License $License -Environment $State.Environment
+    $Method = Get-WtWindowsActivationMethodSetting
 
-    # Status summary box.
-    $StatusLine = if ($Inventory.Unreadable)
+    $Row = 4
+    if ($Row + 9 -le $Bottom)
     {
-        (Get-WtString -Key 'Lic.Status.Unreadable') + ' — ' + $Inventory.Reason
-    }
-    elseif (-not $Active)
-    {
-        Get-WtString -Key 'Lic.Status.Unknown'
+        Add-WtScreenBox -Screen $Screen -Row $Row -Column 2 -Width ($Width - 4) -Height 10 -Title (Get-WtString -Key 'Lic.Section.Activation') `
+            -BorderStyle 'Border' -TitleStyle 'PanelTitle' -Style 'Dialog'
+
+        $Line = $Row + 1
+
+        $EditionText = if ($Edition.Name) { $Edition.Name } else { Get-WtString -Key 'Lic.Status.Unknown' }
+        Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.Edition' -Arguments @($EditionText)) -Style 'Item' -MaxWidth $Inner
+        $Line++
+
+        if ($Inventory.Unreadable)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @((Get-WtString -Key 'Lic.Status.Unreadable'))) -Style 'Warning' -MaxWidth $Inner
+        }
+        elseif (-not $Active)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @((Get-WtString -Key 'Lic.Status.Unknown'))) -Style 'Warning' -MaxWidth $Inner
+        }
+        else
+        {
+            $StatusText = '{0} ({1})' -f (Get-WtString -Key "Lic.Status.$($Active.LicenseStatus)"), (Get-WtString -Key 'Lic.Status.Raw' -Arguments @($Active.LicenseStatusRaw))
+            $StatusStyle = if ([int]$Active.LicenseStatusRaw -eq 1) { 'Success' } else { 'Warning' }
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @($StatusText)) -Style $StatusStyle -MaxWidth $Inner
+        }
+        $Line++
+
+        if ($Active -and $null -ne $Active.GraceRemaining)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.Remaining' -Arguments @($Active.GraceRemaining)) -Style 'ItemMeta' -MaxWidth $Inner
+            $Line++
+        }
+
+        if ($Active -and $Active.LicenseChannel)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.Channel' -Arguments @($Active.LicenseChannel)) -Style 'ItemMeta' -MaxWidth $Inner
+            $Line++
+        }
+
+        if ($Method)
+        {
+            $MethodLine = '{0} - {1}' -f (Get-WtActivationMethodText -Method $Method), (Get-WtActivationDurationModelText -Method $Method)
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.SelectedMethod' -Arguments @($MethodLine)) -Style 'Item' -MaxWidth $Inner
+        }
+        else
+        {
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.SelectedMethod' -Arguments @((Get-WtString -Key 'Lic.Method.None'))) -Style 'Warning' -MaxWidth $Inner
+        }
+        $Line++
+
+        Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ToolStatus' -Arguments @((Get-WtActivationToolText -State $State))) -Style 'Item' -MaxWidth $Inner
+        $Line++
+
+        $Outcome = if ($State.ActivationOutcome) { [string]$State.ActivationOutcome } else { Get-WtString -Key 'Lic.Outcome.None' }
+        Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.Outcome' -Arguments @($Outcome)) -Style 'ItemMeta' -MaxWidth $Inner
+
+        $Row += 10
     }
     else
     {
-        (Get-WtString -Key "Lic.Status.$($Active.LicenseStatus)") + ' (' + (Get-WtString -Key 'Lic.Status.Raw' -Arguments @($Active.LicenseStatusRaw)) + ')'
+        # A very short window still shows what the action would do.
+        $Line = if ($Active) { '{0} ({1})' -f (Get-WtString -Key "Lic.Status.$($Active.LicenseStatus)"), $Active.LicenseStatusRaw } else { Get-WtString -Key 'Lic.Status.Unknown' }
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @($Line)) -Style 'Item' -MaxWidth ($Width - 4)
+        $Row++
     }
 
-    Add-WtScreenBox -Screen $Screen -Row $Top -Column 2 -Width ($Width - 4) -Height 5 -Title (Get-WtString -Key 'Lic.Summary') -BorderStyle 'Border' -TitleStyle 'PanelTitle' -Style 'Dialog'
-    $Row = $Top + 1
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $StatusLine -Style 'Item' -MaxWidth ($Width - 8)
-    $Row++
-
-    if ($Active)
+    # Progress of a background download of the pinned dependency (real byte counts only).
+    foreach ($ProgressLine in @(Get-WtExternalToolProgressLines -State $State))
     {
-        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Product' -Arguments @($Active.ProductName)) -Style 'ItemMeta' -MaxWidth ($Width - 8)
+        if ($Row -gt $Bottom) { break }
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text $ProgressLine -Style 'Pending' -MaxWidth ($Width - 4)
         $Row++
-        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Channel' -Arguments @($Active.LicenseChannel)) -Style 'ItemMeta' -MaxWidth ($Width - 8)
-        $Row++
-        if ($Active.PartialProductKey)
-        {
-            Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.PartialKey' -Arguments @($Active.PartialProductKey)) -Style 'ItemMeta' -MaxWidth ($Width - 8)
-            $Row++
-        }
-        if ($null -ne $Active.GraceRemaining)
-        {
-            Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Grace' -Arguments @($Active.GraceRemaining)) -Style 'ItemMeta' -MaxWidth ($Width - 8)
-            $Row++
-        }
     }
 
-    # Time synchronization finding.
-    $Row = $Top + 6
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Time.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
-    $Row++
-    $Time = $License.Time
-    $TimeLine = (Get-WtString -Key 'Lic.Time.Now' -Arguments @($Time.LocalNow))
-    if ($Time.Synchronized -eq $true) { $TimeLine += ' | ' + (Get-WtString -Key 'Lic.Time.Synced') }
-    elseif ($Time.Synchronized -eq $false) { $TimeLine += ' | ' + (Get-WtString -Key 'Lic.Time.NotSynced') }
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $TimeLine -Style 'Item' -MaxWidth ($Width - 8)
-    $Row++
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Time.Service' -Arguments @($Time.Service, $Time.StartType)) -Style 'ItemMeta' -MaxWidth ($Width - 8)
-
-    # Component availability.
-    $Row += 2
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Components.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
-    $Row++
-    $Components = $License.Components
-    $CompLine = (Get-WtString -Key 'Lic.Components.Slmgr' -Arguments @($(if ($Components.SlmgrAvailable) { Get-WtString -Key 'Common.Yes' } else { Get-WtString -Key 'Common.No' })))
-    $CompLine += ' | ' + (Get-WtString -Key 'Lic.Components.Service' -Arguments @($Components.Service, $Components.ServiceStartType))
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $CompLine -Style 'Item' -MaxWidth ($Width - 8)
-    $Row++
-    if ($Components.LastActivationError)
+    # The action map of this screen.
+    if ($Row -le $Bottom)
     {
-        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Components.LastError' -Arguments @($Components.LastActivationError)) -Style 'Warning' -MaxWidth ($Width - 8)
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Section.Actions') -Style 'PanelTitle' -MaxWidth ($Width - 4)
         $Row++
     }
 
-    # Organization-managed configuration (presence only).
-    $Row += 2
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Org.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
-    $Row++
-    $Managed = if ($License.Org.Managed) { Get-WtString -Key 'Lic.Org.Managed' } else { Get-WtString -Key 'Lic.Org.NotManaged' }
-    Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $Managed -Style 'Item' -MaxWidth ($Width - 8)
+    $Actions = @(
+        @{ Key = 'A'; IconKey = 'Action.Apply'; Text = (Get-WtString -Key 'Lic.Action.Activate') },
+        @{ Key = 'S'; IconKey = 'Action.Select'; Text = (Get-WtString -Key 'Lic.Action.Settings') }
+    )
+    foreach ($Action in $Actions)
+    {
+        if ($Row -gt $Bottom) { break }
+        Set-WtScreenIconText -Screen $Screen -Row $Row -Column 4 -Width ($Width - 8) -IconKey $Action.IconKey -Text ('{0}  {1}' -f $Action.Key, $Action.Text) -Style 'Item'
+        $Row++
+    }
 
-    # External tools. This is the entry point of the upstream activator integration: it is
-    # not a tweak, is never part of a preset or a batch, and is reached only by asking for it.
-    # The section is dropped when the terminal has no row left above the shared footer.
-    $Row += 2
-    $Bottom = $Height - (Get-WtTuiLayout -State $State).FooterRows
+    # Read-only diagnostics, kept from the licensing workspace and dropped first on a short window.
+    $Row++
+    if ($Row + 2 -le $Bottom)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Time.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
+        $Row++
+        $Time = $License.Time
+        $TimeLine = (Get-WtString -Key 'Lic.Time.Now' -Arguments @($Time.LocalNow))
+        if ($Time.Synchronized -eq $true) { $TimeLine += ' | ' + (Get-WtString -Key 'Lic.Time.Synced') }
+        elseif ($Time.Synchronized -eq $false) { $TimeLine += ' | ' + (Get-WtString -Key 'Lic.Time.NotSynced') }
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $TimeLine -Style 'ItemMeta' -MaxWidth $Inner
+        $Row++
+    }
+
+    if ($Row -le $Bottom)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Time.Service' -Arguments @($Time.Service, $Time.StartType)) -Style 'ItemMeta' -MaxWidth $Inner
+        $Row++
+    }
+
     if ($Row + 1 -le $Bottom)
     {
-        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Tools.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Components.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
         $Row++
-
-        $Tool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
-        $Look = Get-WtExternalToolStatusLook -Tool $Tool
-        $Entry = '{0} - {1}' -f (Get-WtString -Key 'Mas.Title'), (Get-WtString -Key (Get-WtExternalToolStatusKey -Status $Tool.Status))
-        Set-WtScreenIconText -Screen $Screen -Row $Row -Column 4 -Width ($Width - 8) -IconKey $Look.IconKey -Text $Entry -Style 'Item'
+        $Components = $License.Components
+        $CompLine = (Get-WtString -Key 'Lic.Components.Slmgr' -Arguments @($(if ($Components.SlmgrAvailable) { Get-WtString -Key 'Common.Yes' } else { Get-WtString -Key 'Common.No' })))
+        $CompLine += ' | ' + (Get-WtString -Key 'Lic.Components.Service' -Arguments @($Components.Service, $Components.ServiceStartType))
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $CompLine -Style 'ItemMeta' -MaxWidth $Inner
         $Row++
-
-        if ($Row -le $Bottom)
-        {
-            Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Tools.Hint') -Style 'ItemMeta' -MaxWidth ($Width - 8)
-        }
     }
+
+    if ($Row -le $Bottom -and $License.Components.LastActivationError)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Components.LastError' -Arguments @([string]$License.Components.LastActivationError)) -Style 'Warning' -MaxWidth $Inner
+        $Row++
+    }
+
+    if ($Row + 1 -le $Bottom)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.Org.Title') -Style 'PanelTitle' -MaxWidth ($Width - 4)
+        $Row++
+        $Managed = if ($License.Org.Managed) { Get-WtString -Key 'Lic.Org.Managed' } else { Get-WtString -Key 'Lic.Org.NotManaged' }
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $Managed -Style 'ItemMeta' -MaxWidth $Inner
+    }
+
+    $Screen.Dirty = $true
 }
 
 <#
@@ -172,11 +362,12 @@ function Export-WtLicensingReport
 
 <#
 .SYNOPSIS
-    Requests activation with a purpose disclosure.
+    Requests activation with the installed licence, with a purpose disclosure.
 .DESCRIPTION
-    The purpose, possible network activity, and permission requirements are shown before
-    the documented slmgr /ato command is run. The result is re-read from the inventory;
-    "accepted" is never equated with "activated".
+    The documented slmgr /ato request, kept from the licensing workspace and moved to the settings &
+    details screen: it is not the primary action of this feature, and it neither installs a key nor
+    changes the edition. The result is re-read from the inventory; "accepted" is never equated with
+    "activated".
 #>
 function Invoke-WtLicensingAction
 {
@@ -226,7 +417,431 @@ function Invoke-WtLicensingAction
 
 <#
 .SYNOPSIS
-    Runs the licensing workspace: bounded loop, explicit actions, responsive keys.
+    Describes what the selected method would do, without doing any of it.
+.DESCRIPTION
+    Built from the method table, the plan and the local state only: no request is made, nothing is
+    downloaded and no process is started. The same refusal exists in the backend (-WhatIf), which is
+    what a caller outside the interface gets.
+#>
+function Show-WtActivationDryRun
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Spec = Get-WtExternalToolSpec
+    $Method = Get-WtWindowsActivationMethodSetting
+    $Lines = @()
+
+    if (-not $Method)
+    {
+        $Lines += (Get-WtString -Key 'Act.DryRun.NoMethod')
+        $Lines += (Get-WtString -Key 'Act.DryRun.NoRequest')
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.DryRun.Title') -Lines $Lines -Tone 'Warning'
+        return
+    }
+
+    $Lines += (Get-WtString -Key 'Act.DryRun.Method' -Arguments @((Get-WtActivationMethodText -Method $Method), (Get-WtActivationDurationModelText -Method $Method)))
+
+    $Tool = $State.ActivationTool
+    if (-not $Tool -or -not $Tool.Ready)
+    {
+        $Lines += (Get-WtString -Key 'Act.DryRun.NotReady')
+    }
+    else
+    {
+        $Plan = Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Tool.Path -Interpreter '' -Method $Method
+        if ($Plan.Ok)
+        {
+            $Lines += (Get-WtString -Key 'Act.DryRun.Would' -Arguments @([string]$Plan.CommandLine))
+            $Lines += (Get-WtString -Key 'Act.DryRun.Elevation' -Arguments @(
+                    (Get-WtString -Key $(if ($Plan.Elevated) { 'Act.DryRun.AsAdmin' } else { 'Act.DryRun.WithPrompt' }))))
+        }
+        else
+        {
+            $Lines += (Get-WtString -Key 'Act.DryRun.WouldFail' -Arguments @([string]$Plan.Reason))
+        }
+    }
+
+    $Lines += (Get-WtString -Key 'Act.DryRun.NoRequest')
+    Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.DryRun.Title') -Lines $Lines -Tone 'Warning'
+}
+
+<#
+.SYNOPSIS
+    Runs the selected method through the backend and reports what the licensing record says after.
+.DESCRIPTION
+    The console-owning caller releases the terminal, hands the process off (the backend performs the
+    explicit elevation handoff and observes the operation's real lifetime), re-acquires the terminal,
+    restores the console focus and repaints every row, then re-reads the licensing record.
+
+    The report separates the four questions: was completion observed, did Windows report the activated
+    state, what validity does the record report, and was there a structured activation error. An exit
+    code is never presented as proof of activation, and no expiration date is derived here.
+#>
+function Start-WtLicensingActivation
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][object]$Method,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Tool = $null
+    )
+
+    $Spec = Get-WtExternalToolSpec
+    if (-not $Tool) { $Tool = Get-WtExternalToolState -Spec $Spec }
+
+    $Elevated = if ($State.ContainsKey('Environment') -and $State.Environment) { [bool]$State.Environment.IsAdmin } else { $null }
+
+    $Plan = Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Tool.Path -Interpreter '' -Method $Method -Elevated $Elevated
+
+    $ConfirmLines = @(
+        (Get-WtString -Key 'Act.Confirm.Method' -Arguments @((Get-WtActivationMethodText -Method $Method), (Get-WtActivationDurationModelText -Method $Method))),
+        (Get-WtString -Key 'Act.Confirm.Command' -Arguments @([string]$Plan.CommandLine)),
+        (Get-WtString -Key 'Act.Confirm.Admin'),
+        (Get-WtString -Key 'Act.Confirm.Changes'),
+        (Get-WtString -Key 'Act.Confirm.NoEntitlement'),
+        (Get-WtString -Key 'Act.Confirm.NoFallback'),
+        (Get-WtString -Key 'Act.Confirm.NotProof'),
+        (Get-WtString -Key 'Act.Confirm.Console')
+    )
+
+    if (-not (Confirm-WtTui -State $State -Title (Get-WtString -Key 'Act.Confirm.Title') -Lines $ConfirmLines -Tone 'Warning')) { return }
+
+    $Before = Get-WtLicensingSnapshot -License $State.Licensing
+
+    $Suspended = Suspend-WtTuiConsole -State $State
+    try
+    {
+        try
+        {
+            $Result = Start-WtWindowsActivation -Spec $Spec -Method $Method -Elevated $Elevated
+        }
+        catch
+        {
+            # The backend reports failures as results; an exception here is unexpected, and it must
+            # not escape with the terminal still suspended.
+            $Result = [ordered]@{
+                Status               = 'failed'
+                Code                 = 'LaunchFailed'
+                Reason               = $_.Exception.Message
+                Plan                 = $Plan
+                Method               = $Method
+                Started              = $false
+                ExitCode             = $null
+                Completion           = 'NotStarted'
+                CompletionDetermined = $false
+                Remaining            = 0
+                RootProcessId        = 0
+            }
+        }
+    }
+    finally
+    {
+        Resume-WtTuiConsole -State $State -Suspended $Suspended
+        # The child console owned the foreground; ask for it back. Best effort, and no claim is made
+        # about the result.
+        $null = Restore-WtConsoleFocus
+    }
+
+    # The licensing record is the only witness of activation. It is re-read here, never inferred.
+    $After = $null
+    $Components = $null
+    $License = $null
+    try
+    {
+        $License = Read-WtLicensingDiagnostics -Refresh
+        $After = Get-WtLicensingSnapshot -License $License
+        $Components = $License.Components
+    }
+    catch
+    {
+        $After = $null
+        $Components = $null
+    }
+
+    if ($License) { $State.Licensing = $License }
+    $State.ActivationTool = Get-WtExternalToolState -Spec $Spec
+
+    $Verdict = Get-WtWindowsActivationResult -Completion ([string]$Result.Completion) -ExitCode $Result.ExitCode -Before $Before -After $After -Components $Components
+
+    $Lines = @()
+    $Lines += (Get-WtString -Key 'Act.Result.Method' -Arguments @((Get-WtActivationMethodText -Method $Method)))
+    $Lines += (Get-WtString -Key 'Act.Result.Completion' -Arguments @(
+            (Get-WtString -Key $(if ($Verdict.CompletionDetermined) { 'Act.Result.CompletionObserved' } else { 'Act.Result.CompletionUnknown' }))))
+
+    if ($null -ne $Result.ExitCode)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.ExitCode' -Arguments @([string]$Result.ExitCode))
+    }
+
+    $Lines += ''
+    $Lines += (Get-WtString -Key $Verdict.ReasonKey)
+
+    if ($Verdict.Before -and $Verdict.Before.Readable)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.Before' -Arguments @([string]$Verdict.Before.Status, [string]$Verdict.Before.StatusRaw))
+    }
+    if ($Verdict.After -and $Verdict.After.Readable)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.After' -Arguments @([string]$Verdict.After.Status, [string]$Verdict.After.StatusRaw))
+    }
+
+    if ($null -ne $Verdict.RemainingDays -and [int]$Verdict.RemainingDays -gt 0)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.Remaining' -Arguments @([string]$Verdict.RemainingDays))
+    }
+    if ($Verdict.EvaluationEndDate)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.EvaluationEnd' -Arguments @([string]$Verdict.EvaluationEndDate))
+    }
+
+    if ($Verdict.ErrorCode)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.ErrorCode' -Arguments @([string]$Verdict.ErrorCode))
+    }
+    elseif ($Verdict.CompletionDetermined -and -not $Verdict.Verified)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.ErrorNone')
+    }
+
+    if ($Result.Plan -and $Result.Plan.Ok -and $Result.Plan.Switches)
+    {
+        $Lines += (Get-WtString -Key 'Act.Result.Switches' -Arguments @((@($Result.Plan.Switches) -join ' ')))
+    }
+
+    $Tone = 'Warning'
+    $Outcome = ''
+    if ($Verdict.Verified)
+    {
+        $Tone = 'Success'
+        $Outcome = if ($Verdict.AlreadyActive) { Get-WtString -Key 'Act.Outcome.AlreadyActive' } else { Get-WtString -Key 'Act.Outcome.Activated' }
+    }
+    elseif (-not $Verdict.CompletionDetermined)
+    {
+        $Outcome = Get-WtString -Key 'Act.Outcome.NotDetermined'
+    }
+    elseif (-not $Verdict.After -or -not $Verdict.After.Readable)
+    {
+        $Outcome = Get-WtString -Key 'Act.Outcome.Unreadable'
+    }
+    else
+    {
+        $Outcome = Get-WtString -Key 'Act.Outcome.NotActivated'
+    }
+
+    switch ([string]$Result.Code)
+    {
+        'UacCancelled' { $Outcome = Get-WtString -Key 'Act.Outcome.Cancelled' }
+        'LaunchFailed' { $Outcome = Get-WtString -Key 'Act.Outcome.Failed' -Arguments @([string]$Result.Reason) }
+        default { }
+    }
+
+    $State.ActivationOutcome = $Outcome
+    Set-WtTuiStatus -State $State -Text $Outcome -Tone $(if ($Verdict.Verified) { 'StatusOk' } elseif ($Verdict.CompletionDetermined) { 'StatusWarn' } else { 'StatusInfo' })
+    Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Act.Confirm.Title') -Lines $Lines -Tone $Tone
+}
+
+<#
+.SYNOPSIS
+    Runs the primary action: the selected Windows-only activation method, downloading the pinned file
+    first when it is missing.
+.DESCRIPTION
+    Refusals happen before anything is confirmed or started: no method selected, a method this
+    edition cannot use, a local copy that does not match its pin, an operation that may still be
+    running, and dry-run mode. Nothing falls back to another method.
+
+    When the pinned file is not downloaded yet, this action may fetch it - with visible progress and
+    Esc to cancel - and the selected method then runs once the download is verified. Navigating,
+    refreshing and drawing never download anything.
+#>
+function Invoke-WtWindowsActivationAction
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][hashtable]$License
+    )
+
+    if (-not (Test-WtExternalToolSupported))
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Lic.Title') -Lines @((Get-WtString -Key 'Mas.Platform.WindowsOnly')) -Tone 'Warning'
+        return
+    }
+
+    if ($State.DryRun)
+    {
+        Show-WtActivationDryRun -State $State
+        return
+    }
+
+    $Spec = Get-WtExternalToolSpec
+    $Method = Get-WtWindowsActivationMethodSetting
+    if (-not $Method)
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Act.NoMethod.Title') -Lines @((Get-WtString -Key 'Act.NoMethod.Body')) -Tone 'Warning'
+        return
+    }
+
+    $Edition = Get-WtWindowsActivationEdition -License $License -Environment $State.Environment
+    $Compatibility = Test-WtWindowsActivationMethodCompatibility -Method $Method -Edition $Edition
+    if (-not $Compatibility.Compatible)
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Act.Incompatible.Title') -Lines @(
+            (Get-WtString -Key 'Act.Incompatible.Body' -Arguments @((Get-WtActivationMethodText -Method $Method), (Get-WtActivationCompatibilityText -Status $Compatibility.Status))),
+            (Get-WtString -Key 'Act.Incompatible.NoFallback')
+        ) -Tone 'Warning'
+        return
+    }
+
+    $Active = Test-WtWindowsActivationActive
+    if ($Active.Active)
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Act.Busy.Title') -Lines @(
+            (Get-WtString -Key 'Act.Busy.Body'),
+            (Get-WtString -Key 'Act.Busy.Guard')
+        ) -Tone 'Warning'
+        return
+    }
+
+    $Tool = Get-WtExternalToolState -Spec $Spec
+    $State.ActivationTool = $Tool
+
+    if ($Tool.Status -eq 'Mismatch')
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Act.Tool.Mismatch.Title') -Lines @(
+            (Get-WtString -Key 'Act.Tool.Mismatch.Body'),
+            [string]$Tool.Reason
+        ) -Tone 'Error'
+        return
+    }
+
+    if (-not $Tool.Ready)
+    {
+        $ConfirmLines = @(
+            (Get-WtString -Key 'Act.Download.Confirm' -Arguments @([string]$Spec.FileName, [string]$Spec.Bytes, [string]$Spec.DownloadUrl, (Get-WtActivationMethodText -Method $Method))),
+            (Get-WtString -Key 'Mas.Download.Verify'),
+            (Get-WtString -Key 'Act.Download.ThenActivate'),
+            (Get-WtString -Key 'Mas.Download.NoExecute')
+        )
+        if (-not (Confirm-WtTui -State $State -Title (Get-WtString -Key 'Act.Download.Title') -Lines $ConfirmLines -Tone 'Warning')) { return }
+
+        $Task = Get-WtTuiExternalToolTask -State $State
+        $Start = Start-WtExternalToolTask -Task $Task -Spec $Spec -Mode 'download'
+        if (-not $Start.Started)
+        {
+            Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.Download.Title') -Lines @((Get-WtString -Key 'Mas.Busy.Download')) -Tone 'Warning'
+            return
+        }
+
+        # The action continues by itself once the transfer is verified and the frame loop drains it.
+        $State.ActivationPending = $true
+        Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Mas.Download.Title') -Tone 'StatusInfo'
+        $State.Screen.Dirty = $true
+        return
+    }
+
+    Start-WtLicensingActivation -State $State -Method $Method -Tool $Tool
+}
+
+<#
+.SYNOPSIS
+    Drains the background download of the pinned dependency on the main screen.
+.DESCRIPTION
+    Called once per frame. While the transfer runs it only keeps the progress line fresh (a real byte
+    count from the task's own counters) and stops a task that outlived its deadline. When it finishes
+    the outcome is reported, and a download started by the activation action continues with that
+    action - after the file was verified, never before. The external-tool view's own state
+    ($State.ExternalTool) is deliberately not touched here: the canvas of this screen stays the one
+    that is drawn.
+#>
+function Update-WtActivationDownload
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Task = $State.ExternalToolTask
+    if (-not $Task -or -not $Task.Handle) { return }
+
+    $Spec = Get-WtExternalToolSpec
+
+    if (Test-WtExternalToolTaskExpired -Task $Task)
+    {
+        $Stop = Stop-WtExternalToolTask -Task $Task -Force
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.Download.Title') `
+            -Lines @((Get-WtString -Key 'Mas.Download.Expired' -Arguments @([string]$Stop.Phase))) -Tone 'Error'
+        $null = Complete-WtExternalToolTask -Task $Task
+        Close-WtTuiExternalToolTask -State $State
+        $State.ActivationPending = $false
+        $State.ActivationTool = Get-WtExternalToolState -Spec $Spec
+        return
+    }
+
+    if (Test-WtExternalToolTaskBusy -Task $Task)
+    {
+        $Progress = $Task.Progress
+        $Snapshot = '{0}|{1}|{2}' -f [string]$Progress.Phase, [long]$Progress.Received, [int]$Progress.Percent
+        if ($Snapshot -ne $State.ActivationProgressSnapshot)
+        {
+            $State.ActivationProgressSnapshot = $Snapshot
+            $State.Screen.Dirty = $true
+        }
+        return
+    }
+
+    $Outcome = Complete-WtExternalToolTask -Task $Task
+    if (-not $Outcome.Completed) { return }
+
+    $Result = $Outcome.Result
+    Close-WtTuiExternalToolTask -State $State
+    $State.ActivationTool = Get-WtExternalToolState -Spec $Spec
+
+    if ($Outcome.Error)
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.Download.Failed') -Lines @([string]$Outcome.Error) -Tone 'Error'
+        $State.ActivationPending = $false
+        return
+    }
+
+    if ($Outcome.Cancelled -or ($Result -and [string]$Result.Status -eq 'cancelled'))
+    {
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.Download.Title') -Lines @((Get-WtString -Key 'Mas.Download.Cancelled')) -Tone 'Warning'
+        Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Mas.Download.Cancelled') -Tone 'StatusWarn'
+        $State.ActivationPending = $false
+        return
+    }
+
+    if ($Result -and [string]$Result.Status -eq 'succeeded')
+    {
+        $Tool = $State.ActivationTool
+        Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.Download.Title') -Lines @(
+            (Get-WtString -Key 'Mas.Download.Done' -Arguments @([string]$Tool.Bytes, [string]$Tool.Sha256)),
+            (Get-WtString -Key 'Mas.Status.Verified')
+        ) -Tone 'Success'
+
+        if ($State.ActivationPending)
+        {
+            $State.ActivationPending = $false
+            $Method = Get-WtWindowsActivationMethodSetting
+            if ($Method)
+            {
+                Start-WtLicensingActivation -State $State -Method $Method -Tool $Tool
+            }
+        }
+        return
+    }
+
+    $Reason = if ($Result -and $Result.Reason) { [string]$Result.Reason } else { Get-WtString -Key 'Mas.Download.Failed' -Arguments @('?') }
+    Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Mas.Download.Failed') -Lines @($Reason) -Tone 'Error'
+    Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Mas.Download.Failed' -Arguments @([string]$Result.Code)) -Tone 'StatusError'
+    $State.ActivationPending = $false
+}
+
+<#
+.SYNOPSIS
+    Runs the licensing & activation workspace: bounded loop, one primary action, the download of the
+    pinned dependency in the background, its own key map.
 #>
 function Show-WtTuiLicensing
 {
@@ -235,6 +850,7 @@ function Show-WtTuiLicensing
 
     $License = Read-WtLicensingDiagnostics
     $State.Licensing = $License
+    $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
 
     $State.Screen.Dirty = $true
 
@@ -242,41 +858,71 @@ function Show-WtTuiLicensing
     {
         while ($true)
         {
-            $Key = Invoke-WtTuiFrame -State $State
+            Update-WtActivationDownload -State $State
+
+            $Timeout = if ($State.ContainsKey('FrameTimeoutMs')) { [int]$State.FrameTimeoutMs } else { 40 }
+            $Key = Invoke-WtTuiFrame -State $State -TimeoutMs $Timeout
             if ($null -eq $Key)
             {
                 if ($State.Exit) { break }
                 continue
             }
 
-            switch ($Key.Name)
-            {
-                'Escape' { return }
-                'Char'
-                {
-                    $C = ([string]$Key.Char).ToLowerInvariant()
-                    switch ($C)
-                    {
-                        'r'
-                        {
-                            $License = Read-WtLicensingDiagnostics -Refresh
-                            $State.Licensing = $License
-                            Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Lic.Refreshed') -Tone 'StatusOk'
-                        }
-                        'e' { Export-WtLicensingReport -State $State -License $License }
-                        'a' { Invoke-WtLicensingAction -State $State -License $License }
-                        'm'
-                        {
-                            Show-WtTuiExternalTool -State $State
+            $Busy = Test-WtTuiExternalToolBusy -State $State
 
-                            # The external tool view may have re-read the diagnostics (it does
-                            # that after a launch): show what is current instead of the copy
-                            # this loop was holding.
-                            if ($State.Licensing) { $License = $State.Licensing }
-                            $State.Screen.Dirty = $true
-                        }
-                        '?' { Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Lic.Title') -Lines @((Get-WtString -Key 'Lic.Help')) }
-                    }
+            if ($Key.Name -eq 'Escape')
+            {
+                if ($Busy)
+                {
+                    # Esc cancels the transfer of the pinned dependency; the screen stays open and
+                    # reports the outcome, and the activation that was waiting for it does not run.
+                    $Stop = Stop-WtExternalToolTask -Task $State.ExternalToolTask
+                    Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Mas.Progress.Cancelling' -Arguments @([string]$Stop.Phase)) -Tone 'StatusWarn'
+                    $State.Screen.Dirty = $true
+                    continue
+                }
+
+                return
+            }
+
+            if ($Key.Name -ne 'Char') { continue }
+
+            $Character = ([string]$Key.Char).ToLowerInvariant()
+
+            if ($Busy -and $Character -ne '?')
+            {
+                Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Lic.Title') -Lines @((Get-WtString -Key 'Mas.Busy.Download')) -Tone 'Warning'
+                continue
+            }
+
+            switch ($Character)
+            {
+                'r'
+                {
+                    $License = Read-WtLicensingDiagnostics -Refresh
+                    $State.Licensing = $License
+                    $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+                    Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Lic.Refreshed') -Tone 'StatusOk'
+                }
+                'e' { Export-WtLicensingReport -State $State -License $License }
+                'a' { Invoke-WtWindowsActivationAction -State $State -License $License }
+                's'
+                {
+                    Show-WtTuiActivationSettings -State $State
+
+                    # The settings screen may have changed the method, the local copy or the
+                    # diagnostics: show what is current instead of the copies this loop held.
+                    if ($State.Licensing) { $License = $State.Licensing }
+                    $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+                    $State.Screen.Dirty = $true
+                }
+                '?'
+                {
+                    Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Lic.Title') -Lines @(
+                        (Get-WtString -Key 'Lic.Help'),
+                        (Get-WtString -Key 'Act.Help.Methods'),
+                        (Get-WtString -Key 'Act.Help.Evidence')
+                    )
                 }
                 default { }
             }
@@ -285,6 +931,10 @@ function Show-WtTuiLicensing
     finally
     {
         $State.Licensing = $null
+        $State.ActivationTool = $null
+        $State.ActivationOutcome = ''
+        $State.ActivationPending = $false
+        $State.ActivationProgressSnapshot = ''
         $State.Screen.Dirty = $true
     }
 }

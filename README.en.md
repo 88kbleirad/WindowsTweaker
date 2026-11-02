@@ -125,50 +125,60 @@ See [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) for what that script verifies, and
 | `S` / `M` / `C` | sanity scan / recommendations / settings with several alternatives |
 | `V` | verification and recovery: drift, interrupted operations, restore, export |
 | `B` | monitoring workspace |
-| `N` | licensing and activation diagnostics (inside which `M` opens the Microsoft Activation Scripts external tool) |
+| `N` | licensing & activation screen (`A` activates Windows, `S` opens settings & details) |
 | `L` / `I` | switch language / choose the icon mode |
 | `?` | the full keyboard reference and the safety rules |
 | `Q` (`Ctrl+C`) | quit - pending changes and a running operation are raised explicitly |
 
 Everything, including the monitoring and dialog keys, is in [docs/KEYBOARD.md](docs/KEYBOARD.md).
 
-## Microsoft Activation Scripts (external tool)
+## Activating Windows (external tool: Microsoft Activation Scripts)
 
-`N` opens **Licensing & Activation Diagnostics**; inside it, `M` opens the external tool
-**Microsoft Activation Scripts (MAS)**. WindowsTweaker does not embed, modify or run MAS on its
-own: it downloads exactly one file from the official repository at one pinned commit (tag `3.12`,
-commit `40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`), verifies its size, the upstream git blob id and
-the recorded SHA-256, and runs it only when you ask for that.
+`N` opens the **Licensing & Activation** screen - the only place Windows activation runs through
+the external tool **Microsoft Activation Scripts (MAS)**. WindowsTweaker does not embed, modify or
+run MAS on its own: it downloads exactly one file from the official repository at one pinned commit
+(tag `3.12`, commit `40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`), verifies its size, the upstream
+git blob id and the recorded SHA-256, and then runs exactly one Windows-only activation method that
+you selected.
 
 How to use it:
 
-1. `N`, then `M`, to open the external tool. Reading the view downloads and starts nothing.
-2. `D` downloads the pinned version; the confirmation dialog defaults to **No**. The transfer runs
-   in the background: the interface keeps taking keys, the progress line reports real byte counts,
-   `Esc` cancels the running transfer, and pressing `D`/`U` again while it runs is refused. `U`
-   resolves the newest upstream release and shows its tag, commit and size before anything is
-   downloaded.
-3. `L` starts the tool in its own console window. When this session is not elevated, Windows shows
-   its own elevation prompt; refusing it starts nothing and nothing is retried. WindowsTweaker
-   sends no keystrokes, preselects no activation method and runs no activation command - you choose
-   inside the MAS menu.
-4. After the tool exits, WindowsTweaker re-reads the licensing state and says whether that read
-   succeeded. The process exit code is **not** proof of activation.
-5. `R` removes the local copy (the downloaded file, any staging leftover and the provenance
-   record). `V` opens the upstream documentation in the browser. `Esc` returns to the diagnostics.
+1. `N` opens the main screen: installed edition, activation status, the selected method and the
+   tool's readiness. Reading the screen downloads and starts nothing.
+2. Choose the method: press `S` to open settings & details, then `1` (HWID), `2` (TSforge) or
+   `3` (Online KMS). Each method is shown with the duration model upstream documents (permanent /
+   time-limited) and its internet requirement; only methods that are compatible with the installed
+   edition can be selected. `Esc` returns to the main screen.
+3. On the main screen press `A` to **Activate Windows**: it runs the selected method, with exactly
+   that method's documented switches, in its own console window - the MAS interactive menu never
+   appears and no keystroke is sent to it. Office, ESU, edition conversion, KMS-host and reset
+   operations are not reachable from here.
+4. If the pinned file is not downloaded yet, `A` first asks to download and verify it (the progress
+   line reports real byte counts, `Esc` cancels, and nothing runs when it is cancelled). When this
+   session is not elevated, Windows shows its own elevation prompt; refusing it starts nothing and
+   nothing is retried.
+5. After the operation ends, WindowsTweaker re-reads the licensing record and reports: before/after
+   status, remaining validity Windows reports, the structured error code from the Software
+   Protection service (when there is one), and whether completion could be determined. The process
+   exit code is **not** proof of activation; when completion cannot be observed (for example the
+   script relaunched itself), the result is reported as "launched; completion unknown" instead of
+   success. While an operation may still be running, `A` refuses a second one.
+6. `S` also holds every detail of the download: provenance, URL, SHA-256, git blob id, licence,
+   update (`U`), documentation (`V`), removal (`R`), and the activation request with the installed
+   licence (slmgr /ato, key `T`). `R` removes only the downloaded file and the provenance record;
+   licensing changes the tool already made stay.
 
-In dry-run mode (`W` on the main screen) `D`, `U`, `L` and `R` only show what would happen - the
-file and URL that would be fetched, the command line that would run, the files that would be
-removed - and nothing is fetched, started or deleted; a launch is refused even after a confirmation.
+In dry-run mode (`W` on the main screen) `A`, `D`, `U` and `R` only show what would happen - the
+method and command line that would run, the file and URL that would be fetched, the files that
+would be removed - and nothing is fetched, started or deleted; activation is refused even after a
+confirmation.
 
-Note: MAS can change Windows and Office licensing state; how long an activation lasts depends on
-the method you choose inside the tool (not every method is time-limited, and not every method is
-permanent), and **activation is not licence entitlement**. WindowsTweaker's registry journal
-**cannot** roll back the tool's activation actions. The tool is entirely outside every preset,
-batch, startup task and monitoring policy.
+Note: activation is not licence entitlement. WindowsTweaker's registry journal **cannot** roll back
+the tool's activation actions. This is never part of a preset, batch, startup task, monitoring
+policy or automatic remediation; it does not disable Defender, add security exclusions or reboot.
 
-Full detail (provenance, verification chain, GPL-3.0 licence, validated limits):
-[docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
+Full detail (upstream evidence for the switches, provenance, verification chain, GPL-3.0 licence,
+validated limits): [docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
 
 ## Where to go next
 

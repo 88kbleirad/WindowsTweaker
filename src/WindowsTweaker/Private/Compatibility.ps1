@@ -1024,6 +1024,22 @@ namespace WindowsTweaker
             }
             return SetConsoleMode(GetStdHandle(StdOutputHandle), mode);
         }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetConsoleWindow();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        public static bool Focus()
+        {
+            IntPtr window = GetConsoleWindow();
+            if (window == IntPtr.Zero)
+            {
+                return false;
+            }
+            return SetForegroundWindow(window);
+        }
     }
 }
 '@
@@ -1048,6 +1064,50 @@ namespace WindowsTweaker
             $Script:WtConsoleModePrevious = $Previous
         }
         return $Enabled
+    }
+    catch
+    {
+        return $false
+    }
+}
+
+<#
+.SYNOPSIS
+    Brings this process's console window back to the foreground after a child console closed.
+.DESCRIPTION
+    Best-effort and Windows-only: the interface releases the terminal before a child console
+    process runs (the activation runs in its own window), and the child's window is closed rather
+    than focused when it ends. Whether Windows lets the call through depends on which process holds
+    the foreground at that moment, so the return value is reported and never relied on; on any other
+    platform, and when the helper cannot be compiled, this returns $false without doing anything.
+.OUTPUTS
+    [bool] whether the window was brought forward.
+#>
+function Restore-WtConsoleFocus
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param ()
+
+    if (-not (Get-WtRuntimeProfile).IsWindows)
+    {
+        return $false
+    }
+
+    if (-not ('WindowsTweaker.ConsoleMode' -as [type]))
+    {
+        # The same helper type carries the focus call; compiling it is what the VT probe does.
+        $null = Enable-WtConsoleVirtualTerminal
+    }
+
+    if (-not ('WindowsTweaker.ConsoleMode' -as [type]))
+    {
+        return $false
+    }
+
+    try
+    {
+        return [bool][WindowsTweaker.ConsoleMode]::Focus()
     }
     catch
     {

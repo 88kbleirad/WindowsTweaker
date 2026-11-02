@@ -1,15 +1,19 @@
-# External tool: Microsoft Activation Scripts (MAS)
+# Windows activation: Microsoft Activation Scripts (MAS) as a pinned external tool
 
-`Licensing & Activation` offers one integration point with a third-party tool: **Microsoft
-Activation Scripts (external tool)**, reachable with `M` from the licensing workspace (or the
-Overview row `Licensing & Activation Diagnostics`).
+`Licensing & Activation` (`N`) is now a single-purpose screen: it shows the installed edition, the
+activation status Windows reports, the selected activation method with its duration model, the
+readiness of the pinned file, and the outcome of the last run. Its one primary action, `A`
+(**Activate Windows** / **Kích hoạt Windows**), runs the selected Windows-only activation method of
+the pinned upstream script directly, with exactly that method's documented switches, in its own
+console - the MAS interactive menu is never shown and no keystroke is fed to it.
 
-It is an intentionally separate feature. WindowsTweaker does not activate anything itself, does
-not embed, port or modify MAS, and does not run it as part of a tweak, a preset, a batch, a startup
-task, a monitoring policy or an automatic remediation. The user downloads the upstream file at one
-pinned commit and launches it as its own process, inside its own console, on request.
+WindowsTweaker does not activate anything itself, does not embed, port or modify MAS, and does not
+run it as part of a tweak, a preset, a batch, a startup task, a monitoring policy or an automatic
+remediation. Everything else that used to live on the licensing screen - download provenance,
+hashes, upstream source, documentation, updates, removal, and the documented `slmgr /ato` request -
+moved to the secondary screen `S` (Settings & details).
 
-Vietnamese usage instructions: [README.md](../README.md#microsoft-activation-scripts-công-cụ-bên-ngoài).
+Vietnamese usage instructions: [README.md](../README.md#kích-hoạt-windows-công-cụ-bên-ngoài-microsoft-activation-scripts).
 
 ## What was selected upstream
 
@@ -28,7 +32,7 @@ and the artifact was fetched and hashed once during integration (recorded in
 | SHA-256 (recorded by this project) | `850f979665fb93999acae93f4790c1ff8ed2041532060b7966a121c2d29a0bfa` |
 | License | GNU GPL v3 (`LICENSE` in the repository) |
 | Documentation | `https://massgrave.dev/` |
-| Elevation | required; the script checks for it itself and re-launches through UAC |
+| Elevation | required; MAS checks for it itself and re-launches through UAC |
 
 ### Upstream invocation methods, and which one is used
 
@@ -46,72 +50,153 @@ Upstream publishes **no checksum file and no signature** for `MAS_AIO.cmd`; the 
 commit plus a project-recorded digest rather than an upstream-published one - see the provenance
 chain below for what that does and does not prove.
 
-### Activation methods are not all time-limited
+### Unattended invocation: the command-line switches
 
-The tool's menu contains several methods, and their durations differ. From the upstream
-documentation at the pinned commit:
+MAS supports documented unattended invocation. From `https://massgrave.dev/command_line_switches`:
 
-| Method | Product | Duration as documented upstream | Internet needed |
-|---|---|---|---|
-| HWID (digital licence) | Windows 10/11 | described as permanent | yes |
-| Ohook | Office | described as permanent | no |
-| TSforge | Windows / ESU / Office | described as permanent | only for the StaticCID method (build 26100 and above) |
-| Online KMS | Windows / Office | 180 days, lifetime with the renewal task | yes |
+> - You can use the switches below in MAS AIO ... to run in unattended mode.
+> - The script will run in unattended mode if any switch is used.
+> - All switches are case-insensitive and work in any order, but must be separated with spaces.
 
-The workspace therefore never says "this activates Windows permanently": it says the duration
-depends on the method chosen inside the upstream menu, and that activation is not licence
-entitlement.
+In the pinned script itself, the switches are parsed **before any menu is painted** and the script
+exits after the requested workflow:
 
-## The actions, and what each one does
+- line 396-403: if the argument list contains a `/`, the script dispatches on it and exits -
+  `/HWID` to `:HWIDActivation`, `/Z-` to `:TSforgeActivation`, `/K-` to `:KMSActivation`,
+  `/Ohook` to `:OhookActivation` - so no menu choice is ever needed, and the script is not shown
+  at all;
+- line 675: `/HWID-NoEditionChange` stops HWID from changing the Windows edition;
+- line 12081: `/K-NoEditionChange` stops Online KMS from changing the Windows edition.
 
-| Key | Action | What it does |
-|---|---|---|
-| `V` | View upstream documentation | opens `https://massgrave.dev/` in the default browser through the backend (Windows only; the URL is shown otherwise) |
-| `D` | Download the pinned version | starts one **background** transfer of the pinned file; the interface stays responsive, the progress line reports real byte counts, `Esc` cancels it, and a second press while it runs is refused |
-| `U` | Check for a newer upstream release | resolves the newest upstream release to an immutable commit, shows its tag/commit/size, and only downloads it after an explicit confirmation |
-| `L` | Launch the downloaded tool | starts the verified file in its own console, with an explicit elevation handoff |
-| `R` | Remove the downloaded files | deletes the local copy, any staging leftover and the provenance record |
-| `?` | Help | the full disclosure in one dialog |
-| `Esc` | Back | returns to the licensing diagnostics |
+WindowsTweaker therefore does not automate menu keystrokes, never uses SendKeys, and never patches
+upstream code. It passes the documentation switches of exactly one method.
 
-Nothing is downloaded, launched or deleted while the interface navigates, refreshes, starts, or
-reads diagnostics. Each action begins with a dialog, and every confirmation defaults to **No**.
+## The methods, and how each one is offered
 
-### Background transfer, progress and cancellation
+The method selection lives on the Settings & details screen (`S`). It is a closed table in
+`Private/ExternalTool.ps1` (`Get-WtWindowsActivationMethods`); every entry names the upstream line
+that implements the switch and the upstream page that documents the duration. The list is
+deliberately small: only methods that are Windows-only, that the pinned revision implements, and
+that the tool's author demonstrates for the driving editions.
 
-* The download runs in its own runspace (`Private/Tui/ExternalToolTask.ps1`). **Only the interface
-  thread writes to the terminal**: the runspace mutates two shared tables (progress and
-  cancellation) and enqueues structured events, and the view paints from them. A source-level test
-  asserts the task file cannot paint, prompt or touch the console.
-* The progress line reports what is known: received and total bytes (the total is the pinned size,
-  or the response's own `Content-Length`) and a percentage only while a total exists. There is no
-  spinner-invented percentage, and no animation.
-* `Esc` asks the running transfer to stop. The reader observes the flag once per 64 KiB chunk,
-  unwinds through the download's own failure path, and the staging file is removed - a cancelled
-  download publishes nothing and leaves an installed copy untouched. If a stop is not observed
-  before the task deadline, the pipeline is aborted (`Stop()`), which is the last resort.
-* The task carries a deadline of its own (90 s) on top of the transport's limits, so a socket that
-  never answers cannot hold the view.
-* A second `D`/`U` while a transfer runs is refused with a message: one task at a time, by
-  construction (`Start-WtExternalToolTask` refuses a second start, and the view refuses too).
-* While a transfer runs the footer hint names the one meaningful key (`Esc`) instead of the normal
-  action list.
+| Method | Switches WindowsTweaker passes | Duration as documented upstream | Internet | Offered when |
+|---|---|---|---|---|
+| HWID (digital licence) | `/HWID /HWID-NoEditionChange` | permanent (the licence is stored on Microsoft servers and follows the hardware; it cannot be removed locally) | required for the activation request | Windows 10/11 client, non-evaluation, build ≥ 10240 |
+| TSforge | `/Z-Windows` | permanent until a Windows reinstall or a major feature upgrade | only for StaticCID, which upstream auto-selects on build 26100+; ZeroCID/KMS4k work offline | any supported Windows/Server build ≥ 7600, non-evaluation |
+| Online KMS | `/K-Windows /K-NoEditionChange` | time-limited: 180 days per activation; the renewal task upstream installs makes it lifetime | required | any supported Windows build ≥ 7600, non-evaluation |
 
-### Dry run (`D`/`W` toggle) and `-WhatIf`
+Two switches deserve emphasis:
 
-A dry run refuses this whole feature, at two layers:
+- `/HWID-NoEditionChange` and `/K-NoEditionChange` are always passed with the methods that could
+  otherwise change the edition. WindowsTweaker never allows an edition conversion, so it always
+  disables upstream's own edition-changing default.
+- `/S` (silent) is documented but deliberately **not** passed: it discards the whole console
+  output, and a visible upstream report is what makes a failure diagnosable. The child's streams
+  are never read or logged either way, so no product key or activation response can reach the log.
 
-* **The interface** previews instead of acting. Pressing `D`, `U`, `L` or `R` in dry-run mode
-  shows exactly what would happen - the file, its size and URL for a download; the command line and
-  the elevation expectation for a launch; the file list for a removal - and starts, fetches and
-  deletes nothing. A launch is refused **before** its confirmation dialog, so confirming is not
-  possible while the mode is on.
-* **The backend** refuses the same operations when a caller passes `-WhatIf`:
-  `Invoke-WtExternalToolDownload -WhatIf` returns a `dryrun` result with the plan and never touches
-  the network or the disk, `Start-WtExternalTool -WhatIf` returns a refusal with the exact command
-  line, and `Remove-WtExternalToolFiles -WhatIf` lists the files it would delete. The interface
-  never passes `-WhatIf` on its own thread (that would print a `What if:` line over the frame); a
-  background runspace may, because its host output is not the terminal.
+The user chooses the method; WindowsTweaker never picks one, and it never substitutes another
+method after a failure (no fallback). An evaluation edition gets no method at all: upstream states
+such editions cannot be activated beyond their evaluation period, so offering a "permanent" mode to
+one would be a false claim. When the build number cannot be read, no method is offered either: an
+unknown build is never treated as "new enough".
+
+## The main screen and the settings & details screen
+
+**Main screen (`N`)** shows, read-only:
+
+- the installed edition (from `HKLM\...\CurrentVersion` product name, fallback to the licensing
+  record);
+- the activation status with the raw status code, and the remaining validity Windows reports (grace
+  days / evaluation end date when the provider exposes them);
+- the selected method and its duration model, or an explicit "nothing selected yet";
+- tool readiness (not downloaded / verified / mismatch / unsupported platform);
+- the outcome of the last run ("nothing run in this session" until the first `A`).
+
+**Settings & details (`S`)** holds the method selection (keys `1`/`2`/`3`), the download provenance
+and hashes, the upstream source, the documentation link, update (`U`), removal (`R`), and the
+`slmgr /ato` request (`T`) that earlier versions of the licensing workspace offered directly. The
+main screen shows none of this: provenance, hashes, updates and removal are secondary by design.
+
+## Download, progress and cancellation
+
+The pinned file is the only dependency of the activation action. `A` refuses to run before the
+local copy is verified against its pin; when it is missing, `A` asks to download and verify it
+first. The transfer runs in its own runspace (`Private/Tui/ExternalToolTask.ps1`): the interface
+keeps painting and taking keys, the progress line reports real byte counts (received, total,
+percentage only when a total is known), `Esc` cancels the transfer, and a cancelled transfer starts
+nothing. Navigation, refresh, drawing and diagnostics never download or execute anything. The
+download dialog defaults to **No**.
+
+## Operation lifetime: the launcher is not the operation
+
+MAS re-launches itself in several ways: when it is not elevated it starts a second copy through
+UAC; when it detects the Terminal/QuickEdit interaction it restarts through `conhost.exe` or
+`cmd.exe`; the elevated child then runs the actual workflow. The process that was started - the
+`cmd.exe` wrapper - therefore frequently exits long before the activation is done. Treating that
+exit as completion is exactly the bug this revision fixes.
+
+`Wait-WtWindowsActivationCompletion` observes the real lifetime using two signals together:
+
+- the started process object tells whether the launcher exited and what it returned;
+- the process table (`Win32_Process`) is expanded to the whole process tree of that launcher -
+  seeds accumulate across polls, so a detached grandchild whose parent already left the table is
+  still found. Members whose creation time predates the operation (recycled process ids) are
+  ignored.
+
+Completion is `Completed` only when the launcher is gone **and** no member of its tree is left.
+Anything else is `Unknown` (with the remaining process count) or `Timeout`; the caller then reports
+"launched; completion unknown" and never success. When the process table cannot be read at all,
+the answer is `Unknown` as well - a detached child cannot be ruled out.
+
+A record (`activation-operation.json` in the tool's directory) is written before the wait and kept
+while the outcome is unresolved. It names the root process, the tree members observed so far, the
+method and the launch time, and it is the second half of the duplicate guard: `A` refuses to start
+a second activation while the record still names a live process. The guard is released as soon as
+the tree ends, or when the record is older than the staleness bound and uncheckable. Nothing here
+ever falls back to another method, retries, or starts a second instance.
+
+## Verification: the licensing record is the only witness
+
+After the operation, the licensing record is re-read (never inferred) and reduced to a snapshot:
+status code, product name, channel, grace days, evaluation end date, and whether a partial key is
+present - never the key itself. The verdict separates four questions:
+
+- completion was observed (`Completed` / `Unknown` / `Timeout`);
+- Windows reports the activated state (status code 1) after the run;
+- what validity the record reports (grace days and evaluation end date, copied as-is - nothing is
+  derived or invented);
+- whether the Software Protection service logged a structured error code (`0x...`), quoted verbatim.
+
+An exit code of 0 is recorded but never treated as evidence. The result dialog shows before/after
+status, remaining validity when available, the structured error code when present, and whether
+completion could be determined.
+
+## Launch behaviour, console and focus
+
+The child runs in its own console window through `cmd.exe /c "<file>" <method switches>` with the
+tool's own directory as the working directory. Its standard streams are never redirected or read,
+so no product key or activation response can reach the screen or the log; the log records the
+action, the method, the pinned commit, whether the handoff was elevated, the observed completion and
+the exit code - nothing else.
+
+- Elevation is an explicit handoff: when the session is not elevated, `Start-Process -Verb RunAs`
+  shows Windows' own UAC prompt; refusing it cancels the run and nothing is retried.
+- The console is released before the child starts (alternate screen left, cursor shown, colours
+  reset). After the child returns, the interface re-enters the alternate buffer, drains keys,
+  asks Windows to restore console focus (`SetForegroundWindow`, best-effort) and forces a full
+  repaint.
+
+## Safeguards
+
+- Dry-run/WhatIf is enforced at the execution boundary: the interface refuses `A` before its
+  confirmation dialog, and the backend (`Start-WtWindowsActivation -WhatIf`) refuses the start
+  after building the exact plan. Nothing is spawned, elevated, downloaded or written in dry-run
+  mode.
+- Activation is not a catalog tweak: it is never in a preset, a batch, a startup task, a
+  remediation policy, or the journal. Launching it writes no journal records and creates no
+  rollback data; the interface says the journal cannot roll back upstream licensing changes.
+- WindowsTweaker does not disable Defender, does not add security exclusions, and never reboots.
+- The main screen, the settings screen and the refresh action never download or execute anything.
 
 ## Provenance chain
 
@@ -143,44 +228,18 @@ manifest to check, and a hash fetched from the same origin as the artifact prove
 authorship. The trust anchor is HTTPS to GitHub plus the pinned commit. This is stated in the
 interface too, next to the digest.
 
-## Launch behaviour
-
-* The entry point is the documented one: the batch file itself, through the command interpreter
-  (`cmd.exe /c "<file>"`), with its own directory as the working directory and **no switches**.
-  Nothing preselects an activation method, no activation command is composed, and no keystroke is
-  fed to the tool: the upstream menu keeps every choice.
-* It runs in **its own console** (`Start-Process` without `-NoNewWindow`). Its standard streams are
-  never redirected or read, so no product key or activation response can reach the screen or the
-  log. The log records the action, the pinned commit, whether the handoff was elevated, and the
-  exit code - nothing else.
-* **Elevation is an explicit handoff.** When the session is not elevated, the launch goes through
-  `Start-Process -Verb RunAs`, so Windows shows its own UAC prompt. Refusing it cancels the launch
-  (nothing is started, nothing is retried, no second instance is created).
-* **The console is released first.** The workspace leaves the alternate screen buffer, shows the
-  cursor and resets colour before the child starts. On return it re-enters the alternate buffer,
-  drains keys that were typed while the child had focus, marks the frame dirty and forces a full
-  repaint - a diff against the unknown terminal content would be wrong.
-* **The result is not overclaimed.** After return, the licensing diagnostics are re-read and the
-  dialog says whether that read succeeded. The process exit code is reported as an exit code, and
-  the dialog states explicitly that it is not proof of activation.
-* Nothing reboots, nothing retries on its own, and a second launch is refused while one is in
-  progress (the workspace blocks, and the backend refuses a nested launch).
-
 ## Separation from tweak operations
 
-* MAS is not a catalog tweak: it does not appear in the catalog, presets, batch apply, pending
+- MAS is not a catalog tweak: it does not appear in the catalog, presets, batch apply, pending
   review, monitoring policies or remediation.
-* Launching it writes **no journal records** and creates no rollback data. WindowsTweaker's registry
-  journal cannot undo anything the upstream tool does to Windows or Office licensing, and the
-  interface says so before the launch.
-* Removing the downloaded copy deletes only files this feature created; it does not revert any
+- Running it writes **no journal records** and creates no rollback data. WindowsTweaker's registry
+  journal cannot undo anything the upstream tool does to Windows licensing, and the interface says
+  so before the run.
+- Removing the downloaded copy deletes only files this feature created; it does not revert any
   licensing change.
-* WindowsTweaker does not delete licensing stores, does not rearm, does not add antivirus
+- WindowsTweaker does not delete licensing stores, does not rearm, does not add antivirus
   exclusions, does not bypass Defender detections and does not disable security controls to make
   the tool launch. If the tool is blocked, the block stands.
-* The dry-run switch is not consulted: this is not a tweak. The action is explicit, and its
-  confirmation is the gate (the same model the licensing workspace already uses for
-  `slmgr /ato`).
 
 ## License obligations
 
@@ -198,38 +257,30 @@ records this in its `redistributionNote` field, and
 
 ## Automated tests and the smoke test
 
-`tests/ExternalTool.Tests.ps1` (64 tests: 61 inert, 3 opt-in header-only live checks):
+`tests/ExternalTool.Tests.ps1` covers:
 
-* pinned URL selection, host allow-list, redirect validation (relative hop, foreign host, `http://`
-  hop, missing `Location`, hop limit), the size bound enforced while reading;
-* the verification chain end to end with a fixture: size + git blob id + SHA-256, publish only after
-  verification, the provenance record contents, a digest mismatch refused, a failed re-download
-  leaving the previous copy intact, a staging directory left empty;
-* provenance state: missing copy, corrupt record (untrusted, falls back to the shipped pin), a
-  user-update pin, and a copy that no longer matches its pin;
-* removal touching only this feature's files;
-* the launch plan (interpreter, `/c`, quoted path, working directory, no switches, path outside the
-  directory refused, another file name refused, `%` in the path refused), the elevation flag, a UAC
-  refusal mapped to a cancellation, a launch failure reported without a retry, a copy that is not
-  verified refused, and a nested launch refused while one is in progress;
-* the interface: the review screen contents, the workspace hints replacing the main-screen hints,
-  both languages, the ASCII frame/icon fallback, the licensing entry row, and that viewing the
-  workspace, opening the download dialog and declining it download and start nothing;
-* the console handoff: suspend -> launch -> resume ordering, resume on an unexpected backend
-  failure, and the full-frame invalidation;
-* background execution: progress reporting and cooperative cancellation in the reader, a cancelled
-  transfer classified as cancelled with the staging file removed, the real runspace task delivering
-  the backend's result and releasing its handle, a second start refused while one runs, a stop
-  reporting what it targets, and a source-level assertion that the task never writes to the terminal;
-* dry-run refusal at both layers (download, launch, removal), including that the launch preview
-  names the exact command line and that nothing is fetched, started or deleted;
-* the interface: a background transfer started only after confirmation, a second download refused
-  while one runs, `Esc` asking a running transfer to stop without leaving the view, the real byte
-  counts and percentages painted for a running transfer, the busy hint, completion/cancellation
-  reporting, and the resolved-release flow that downloads only the confirmed commit;
-* three opt-in live tests (`WT_EXTERNAL_TOOL_LIVE_TEST=1`) that read **response headers only**:
-  the pinned URL still serves the pinned size, a redirect stays on allowed hosts, and the hop limit
-  is enforced.
+- the closed method table: only HWID/TSforge/OnlineKMS are offered, each with the documented
+  switch and duration model, and the edition-change-forbidding switches travel with the methods
+  that can otherwise change the edition;
+- the plan: `cmd /c "<file>" <method switches>` (and nothing else), no method refused, a forged
+  method object refused, path/path-char guards unchanged;
+- the backend action: method resolution, platform gate, verified-copy gate, the requested-process
+  guard, the UAC cancellation, launch failure without retry, and -WhatIf refusal at the execution
+  boundary (leaving no operation record);
+- the lifetime classification against inert process-table fixtures: a launcher exit while a
+  detached grandchild is still in the table is never completion (the reported bug), completion is
+  only the empty tree, an unreadable table is "unknown", recycled process ids are ignored;
+- the operation record and duplicate guard: a record naming a live process refuses a new
+  activation; a record whose tree is gone does not; a determined completion removes the record;
+- the main screen: installed edition, status, selected method, tool readiness, outcome, the two
+  actions, and that the download/launch strings of the old flow are gone;
+- the settings screen: method box with durations and compatibility, actions, both languages, ASCII
+  fallback, busy hint, transfer progress;
+- download cancellation, second-transfer refusal, and the resolved-update flow;
+- dry-run refusal at both layers for download/update/activation/removal;
+- licensing evidence: snapshots never carry a full key, the activated state is read from the
+  post-run record even when the before-read was unreadable, determination is never claimed when
+  completion was not observed, and the structured error code is copied verbatim.
 
 `tools/Test-ExternalToolSmoke.ps1` is the operator-facing smoke test. It creates an **inert child**
 (a batch file on Windows, a shell script elsewhere) that writes its argument list to a marker file
@@ -237,15 +288,15 @@ and exits with a chosen code, installs it as the "downloaded" copy inside a temp
 then drives the real paths:
 
 ```bash
-pwsh -NoProfile -File tools/Test-ExternalToolSmoke.ps1                    # plan, seam, restore, diagnostics, background task
+pwsh -NoProfile -File tools/Test-ExternalToolSmoke.ps1                    # plan, seam, lifetime fixtures, diagnostics, background task
 pwsh -NoProfile -File tools/Test-ExternalToolSmoke.ps1 -Elevate -ExpectUacCancelled   # Windows: refuse the prompt
 ```
 
-It never downloads and never runs MAS. On Windows it exercises the real launch (its own console
-window, the observed exit code, the terminal restored); off Windows it asserts the platform refusal
-instead and drives the process seam with the host's own interpreter, so the plan, the quoting, the
-child process, the exit code, the terminal release/re-acquire and the licensing re-read are all
-still executed.
+It never downloads and never runs MAS. The plan stage asserts the exact method switches and the
+absence of every Office/ESU/edition/reset switch; the lifetime stage drives
+`Wait-WtWindowsActivationCompletion` against inert process-table fixtures; on Windows the real
+launch runs with the observed exit code and the terminal restore; off Windows the platform refusal
+and the process seam with the host's own interpreter are exercised instead.
 
 No automated test downloads MAS, executes MAS, activates anything, elevates or reboots. The launch
 tests use an inert fixture file inside a temporary data root, and the process seam is mocked.
@@ -253,9 +304,10 @@ tests use an inert fixture file inside a temporary data root, and the process se
 ## Limitations
 
 * A real Windows launch was **not** executed in this environment (no Windows host): the elevation
-  handoff, the child console, the returned exit code and the "licensing state after the tool" line
-  are covered by tests only through mocks, and by the smoke tool's inert child through the process
-  seam. See [VALIDATION.md](VALIDATION.md) section 22 for the manual procedure.
+  handoff, the child console, the observed exit code, the focus handover and the "licensing state
+  after the tool" line are covered by tests only through mocks and fixtures, and by the smoke
+  tool's inert child through the process seam and the lifetime classifier. See
+  [VALIDATION.md](VALIDATION.md) section 22 for the manual procedure.
 * Upstream ships no checksum or signature, so the first download cannot be verified against
   an upstream-published value; only the pinned commit, the upstream blob id and the project's own
   recorded digest are available.
@@ -263,4 +315,6 @@ tests use an inert fixture file inside a temporary data root, and the process se
   the next time, and a partial file is never kept.
 * Removing the copy does not and cannot undo a licensing change.
 * Only one entry point is offered (`MAS_AIO.cmd`); the separate-files version, the OEM folders and
-  the upstream command-line switches are deliberately not exposed.
+  the upstream command-line switches other than the three methods' are deliberately not exposed.
+* When completion cannot be observed, the result is "launched; completion unknown" - the interface
+  never pretends otherwise.

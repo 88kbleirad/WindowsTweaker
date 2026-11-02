@@ -614,3 +614,234 @@ function Invoke-WtLicensingActivationRequest
 
     return $Result
 }
+
+#region Activation evidence
+
+<#
+.SYNOPSIS
+    Reduces a licensing diagnostics view to the fields an activation attempt is judged by.
+.DESCRIPTION
+    Pure: it reads the diagnostics object and touches neither the provider nor the disk, so the
+    same snapshot can be taken before and after an activation and compared. Only what the
+    provider actually reported is copied - the snapshot never derives an expiration date from a
+    grace counter, and it never carries a full product key.
+.OUTPUTS
+    An ordered dictionary: Readable, ProductName, Status, StatusRaw, Channel, GraceRemaining,
+    EvaluationEndDate, PartialKeyPresent, CollectedUtc.
+#>
+function Get-WtLicensingSnapshot
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $false)][AllowNull()][object]$License)
+
+    $Snapshot = [ordered]@{
+        Readable           = $false
+        ProductName        = ''
+        Status             = 'Unknown'
+        StatusRaw          = $null
+        Channel            = ''
+        GraceRemaining     = $null
+        EvaluationEndDate  = ''
+        PartialKeyPresent  = $false
+        CollectedUtc       = ''
+    }
+
+    if (-not $License -or -not $License.Inventory) { return $Snapshot }
+
+    $Inventory = $License.Inventory
+    if ($Inventory.Unreadable) { return $Snapshot }
+
+    $Snapshot.Readable = $true
+    if ($License.CollectedUtc) { $Snapshot.CollectedUtc = ([datetime]$License.CollectedUtc).ToUniversalTime().ToString('o') }
+
+    if (-not $Inventory.Active)
+    {
+        $Snapshot.Status = 'Unknown'
+        return $Snapshot
+    }
+
+    $Active = $Inventory.Active
+    $Snapshot.ProductName = [string]$Active.ProductName
+    # The diagnostics view always carries both; a fixture that only has the raw code still works.
+    $Raw = if ($null -ne $Active.LicenseStatusRaw) { [int]$Active.LicenseStatusRaw } else { [int]$Active.LicenseStatus }
+    $Snapshot.StatusRaw = $Raw
+    $Snapshot.Channel = [string]$Active.LicenseChannel
+    $Snapshot.EvaluationEndDate = [string]$Active.EvaluationEndDate
+    $Snapshot.Status = switch ($Raw)
+    {
+        0 { 'Unlicensed' }
+        1 { 'Licensed' }
+        2 { 'OOBGrace' }
+        3 { 'OOTGrace' }
+        4 { 'NonGenuineGrace' }
+        5 { 'Notification' }
+        6 { 'ExtendedGrace' }
+        default { 'Unknown' }
+    }
+    if ($null -ne $Active.GraceRemaining) { $Snapshot.GraceRemaining = [int]$Active.GraceRemaining }
+    # The diagnostics read only carries the partial key when the caller asked for it; the
+    # snapshot records only whether one is present, never the value.
+    $Snapshot.PartialKeyPresent = -not [string]::IsNullOrEmpty([string]$Active.PartialProductKey)
+
+    return $Snapshot
+}
+
+<#
+.SYNOPSIS
+    Compares two licensing snapshots taken around one activation attempt.
+.DESCRIPTION
+    Pure. The verdict is one of:
+      Unreadable - either read failed, so nothing is claimed;
+      Activated  - the licence status became the activated state (code 1) where it was not;
+      Changed    - the status code moved without reaching the activated state;
+      Unchanged  - the status code is the same before and after.
+    'Activated' is read from the provider after the attempt; it is never inferred from a command
+    exit code.
+.OUTPUTS
+    An ordered dictionary: Change, BeforeStatus, AfterStatus, StatusChanged, Activated.
+#>
+function Compare-WtLicensingSnapshot
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Before,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$After
+    )
+
+    $Comparison = [ordered]@{
+        Change         = 'Unreadable'
+        BeforeStatus   = $null
+        AfterStatus    = $null
+        BeforeStatusRaw = $null
+        AfterStatusRaw = $null
+        StatusChanged  = $false
+        Activated      = $false
+    }
+
+    if (-not $Before -or -not $After) { return $Comparison }
+    if (-not $Before.Readable -or -not $After.Readable) { return $Comparison }
+
+    $Comparison.BeforeStatus = [string]$Before.Status
+    $Comparison.AfterStatus = [string]$After.Status
+    $Comparison.BeforeStatusRaw = $Before.StatusRaw
+    $Comparison.AfterStatusRaw = $After.StatusRaw
+    $Comparison.Activated = ($null -ne $After.StatusRaw -and [int]$After.StatusRaw -eq 1)
+    $Comparison.StatusChanged = ([string]$Before.StatusRaw -ne [string]$After.StatusRaw)
+
+    if ($Comparison.Activated -and [string]$Before.StatusRaw -ne '1')
+    {
+        $Comparison.Change = 'Activated'
+    }
+    elseif ($Comparison.StatusChanged)
+    {
+        $Comparison.Change = 'Changed'
+    }
+    else
+    {
+        $Comparison.Change = 'Unchanged'
+    }
+
+    return $Comparison
+}
+
+<#
+.SYNOPSIS
+    Judges whether a Windows activation attempt can be called a success.
+.DESCRIPTION
+    Pure. Three separate questions are answered instead of one, because they fail independently:
+      * CompletionDetermined - the operation lifetime was observed to its end. When it was not
+        (a wrapper exited while a detached child kept running, or the process table was
+        unreadable), nothing about activation is claimed.
+      * Activated - the re-read licensing record reports the activated state. An exit code is
+        never used for this.
+      * Verified - both of the above.
+    The remaining validity is copied from the provider as-is (grace days and, when the provider
+    exposes one, an evaluation end date). No expiration date is ever derived or invented, and no
+    full product key or activation response is carried: ErrorCode is the structured code the
+    Software Protection service logged, when one can be matched.
+.OUTPUTS
+    An ordered dictionary: Completion, CompletionDetermined, ExitCode, Verified, Activated,
+    Changed, AlreadyActive, ReasonKey, ErrorCode, RemainingDays, EvaluationEndDate.
+#>
+function Get-WtWindowsActivationResult
+{
+    [CmdletBinding()]
+    param
+    (
+        [Parameter(Mandatory = $true)][ValidateSet('Completed', 'Unknown', 'Timeout', 'NotStarted', 'Cancelled', 'Refused')][string]$Completion,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$ExitCode = $null,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Before = $null,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$After = $null,
+        [Parameter(Mandatory = $false)][AllowNull()][object]$Components = $null
+    )
+
+    $Comparison = Compare-WtLicensingSnapshot -Before $Before -After $After
+
+    # The activated state is read from the record taken after the method ran; it is not taken from
+    # the before/after comparison, so an unreadable *before* read cannot hide a readable answer.
+    $Activated = ($After -and $After.Readable -and $null -ne $After.StatusRaw -and [int]$After.StatusRaw -eq 1)
+
+    $Result = [ordered]@{
+        Completion           = $Completion
+        CompletionDetermined = ($Completion -eq 'Completed')
+        ExitCode             = $ExitCode
+        Before               = $Before
+        After                = $After
+        Comparison           = $Comparison
+        Verified             = $false
+        Activated            = [bool]$Activated
+        Changed              = [bool]$Comparison.StatusChanged
+        AlreadyActive        = $false
+        ReasonKey            = 'Act.Result.NotDetermined'
+        ErrorCode            = ''
+        RemainingDays        = $null
+        EvaluationEndDate    = ''
+    }
+
+    if ($After -and $After.Readable)
+    {
+        $Result.RemainingDays = $After.GraceRemaining
+        $Result.EvaluationEndDate = [string]$After.EvaluationEndDate
+    }
+
+    if ($Components -and [string]$Components.LastActivationError -match '0x[0-9A-Fa-f]{8}')
+    {
+        # The code the Software Protection service logged, quoted as it was logged. When the
+        # message carries none, the field stays empty instead of being filled with a guess.
+        $Result.ErrorCode = $Matches[0]
+    }
+
+    if (-not $Result.CompletionDetermined)
+    {
+        # A launcher or wrapper exit is not a completion: say so and claim nothing else.
+        $Result.ReasonKey = 'Act.Result.NotDetermined'
+        return $Result
+    }
+
+    if (-not $After -or -not $After.Readable)
+    {
+        $Result.ReasonKey = 'Act.Result.Unreadable'
+        return $Result
+    }
+
+    if ($Before -and $Before.Readable -and [string]$Before.StatusRaw -eq '1' -and $Activated)
+    {
+        $Result.AlreadyActive = $true
+        $Result.Verified = $true
+        $Result.ReasonKey = 'Act.Result.AlreadyActive'
+        return $Result
+    }
+
+    if ($Activated)
+    {
+        $Result.Verified = $true
+        $Result.ReasonKey = 'Act.Result.Activated'
+        return $Result
+    }
+
+    $Result.ReasonKey = 'Act.Result.NotActivated'
+    return $Result
+}
+
+#endregion Activation evidence

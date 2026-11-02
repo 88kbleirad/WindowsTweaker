@@ -471,21 +471,39 @@ Describe 'Dry run and WhatIf refusal' {
         }
     }
 
-    It 'refuses a launch under -WhatIf and still reports the exact command line' {
+    It 'refuses an activation under -WhatIf and still reports the exact command line' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
             New-WtTestInstalledCopy
             Mock Test-WtExternalToolSupported { $true }
             Mock Invoke-WtExternalToolProcess { throw 'nothing may be started in a dry run' }
 
-            $Result = Start-WtExternalTool -Spec (Get-WtExternalToolSpec) -WhatIf
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -WhatIf
 
             $Result.Status | Should -Be 'refused'
             $Result.Code | Should -Be 'DryRun'
             $Result.Plan.Ok | Should -BeTrue
             $Result.Plan.CommandLine | Should -Match '/c'
+            $Result.Plan.CommandLine | Should -Match '/HWID /HWID-NoEditionChange'
             Should -Invoke Invoke-WtExternalToolProcess -Times 0 -Exactly
             (Test-WtExternalToolLaunching) | Should -BeFalse -Because 'the guard is not left set by a refusal'
+            (Test-Path -LiteralPath (Get-WtWindowsActivationRecordPath)) | Should -BeFalse -Because 'a refusal starts nothing that could still be running'
+        }
+    }
+
+    It 'refuses an activation with no method selected before anything is planned' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+            Mock Invoke-WtExternalToolProcess { throw 'nothing may be started' }
+
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec)
+
+            $Result.Status | Should -Be 'refused'
+            $Result.Code | Should -Be 'NoMethod'
+            $Result.Plan | Should -BeNullOrEmpty
+            Should -Invoke Invoke-WtExternalToolProcess -Times 0 -Exactly
         }
     }
 
@@ -621,9 +639,43 @@ Describe 'Provenance and local state' {
     }
 }
 
-Describe 'Launch plan and process handoff' {
+Describe 'Activation methods, launch plan and operation lifetime' {
 
-    It 'runs the downloaded file through the interpreter with no switches' {
+    BeforeEach { Clear-WtToolRoot }
+
+    It 'offers only the Windows-only methods the pinned revision implements' {
+        InModuleScope WindowsTweaker {
+            $Methods = @(Get-WtWindowsActivationMethod)
+            @($Methods | ForEach-Object { $_.Id }) | Should -Be @('HWID', 'TSforge', 'OnlineKMS')
+
+            foreach ($Method in $Methods)
+            {
+                [string]$Method.Switch | Should -BeIn @('/HWID', '/Z-Windows', '/K-Windows')
+                [string]$Method.DurationModel | Should -BeIn @('Permanent', 'TimeLimited')
+                [string]$Method.Evidence | Should -Match 'MAS_AIO\.cmd'
+            }
+
+            # The duration models are the upstream ones: Online KMS is the time-limited method.
+            (Get-WtWindowsActivationMethod -Id 'HWID').DurationModel | Should -Be 'Permanent'
+            (Get-WtWindowsActivationMethod -Id 'OnlineKMS').DurationModel | Should -Be 'TimeLimited'
+
+            # The switches that forbid an edition change travel with the methods that can cause one.
+            @((Get-WtWindowsActivationMethod -Id 'HWID').ExtraSwitches) | Should -Be @('/HWID-NoEditionChange')
+            @((Get-WtWindowsActivationMethod -Id 'OnlineKMS').ExtraSwitches) | Should -Be @('/K-NoEditionChange')
+            @((Get-WtWindowsActivationMethod -Id 'TSforge').ExtraSwitches).Count | Should -Be 0
+
+            # Nothing outside the table is reachable, including the Office/ESU/edition-change ones.
+            # An empty id returns the whole table (which the plan and the action refuse); an unknown
+            # id returns nothing.
+            @(Get-WtWindowsActivationMethod -Id '').Count | Should -Be 3
+            foreach ($Unknown in 'Ohook', '/Ohook', 'KMS38', 'Z-ESU', 'ChangeEdition', '/S')
+            {
+                (Get-WtWindowsActivationMethod -Id $Unknown) | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    It 'composes the command line from the selected method switches and nothing else' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
             $Spec = New-WtTestSpec
@@ -631,17 +683,39 @@ Describe 'Launch plan and process handoff' {
             $Path = Get-WtExternalToolEntryPointPath -Spec $Spec
             [System.IO.File]::WriteAllBytes($Path, [System.Text.Encoding]::UTF8.GetBytes($Spec.Content))
 
-            $Plan = Get-WtExternalToolLaunchPlan -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
+            $Plan = Get-WtExternalToolLaunchPlan -Spec $Spec -Interpreter '/bin/sh' -Elevated $false -Method 'HWID'
 
             $Plan.Ok | Should -BeTrue
+            $Plan.MethodId | Should -Be 'HWID'
             $Plan.FilePath | Should -Be '/bin/sh'
-            @($Plan.ArgumentList).Count | Should -Be 2
-            $Plan.ArgumentList[0] | Should -Be '/c'
-            $Plan.ArgumentList[1] | Should -Be ('"{0}"' -f $Path)
+            @($Plan.ArgumentList) | Should -Be @('/c', ('"{0}"' -f $Path), '/HWID', '/HWID-NoEditionChange')
             $Plan.WorkingDirectory | Should -Be (Get-WtExternalToolRoot)
+            $Plan.CommandLine | Should -Match '/HWID /HWID-NoEditionChange$'
 
-            # No activation switch, no preselected method, no injected command.
-            ($Plan.ArgumentList -join ' ') | Should -Not -Match '(?i)/ato|hwid|ohook|tsforge|kms|/rearm|/ipk|/skms'
+            # The switches of a method are the table's, never a caller's string.
+            $Online = Get-WtExternalToolLaunchPlan -Spec $Spec -Interpreter '/bin/sh' -Elevated $false -Method 'OnlineKMS'
+            @($Online.ArgumentList) | Should -Be @('/c', ('"{0}"' -f $Path), '/K-Windows', '/K-NoEditionChange')
+
+            # Office, ESU, KMS-host and reset switches are not in this feature at all.
+            ($Plan.ArgumentList -join ' ') | Should -Not -Match '(?i)ohook|/z-esu|/z-off|/z-reset|/ipk|/skms|/rearm|/ato|/s\b'
+        }
+    }
+
+    It 'refuses a plan without a method, and one whose method object carries an unknown id' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            $Spec = New-WtTestSpec
+            New-WtDirectory -Path (Get-WtExternalToolRoot)
+            [System.IO.File]::WriteAllBytes((Get-WtExternalToolEntryPointPath -Spec $Spec), [System.Text.Encoding]::UTF8.GetBytes($Spec.Content))
+
+            $NoMethod = Get-WtExternalToolLaunchPlan -Spec $Spec -Interpreter '/bin/sh'
+            $NoMethod.Ok | Should -BeFalse
+            $NoMethod.Reason | Should -Match 'No Windows activation method'
+            @($NoMethod.ArgumentList).Count | Should -Be 0
+
+            $Forged = Get-WtExternalToolLaunchPlan -Spec $Spec -Interpreter '/bin/sh' -Method @{ Id = 'Ohook' }
+            $Forged.Ok | Should -BeFalse
+            $Forged.Reason | Should -Match 'No Windows activation method'
         }
     }
 
@@ -655,68 +729,20 @@ Describe 'Launch plan and process handoff' {
 
             $Outside = Join-Path $env:WT_DATA_ROOT 'MAS_AIO.cmd'
             [System.IO.File]::WriteAllText($Outside, 'x')
-            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Outside).Ok | Should -BeFalse
-            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Outside).Reason | Should -Match 'not inside'
+            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Outside -Method 'HWID').Ok | Should -BeFalse
+            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Outside -Method 'HWID').Reason | Should -Match 'not inside'
 
             $Renamed = Join-Path (Get-WtExternalToolRoot) 'other.cmd'
             [System.IO.File]::WriteAllText($Renamed, 'x')
-            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Renamed).Ok | Should -BeFalse
-            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Renamed).Reason | Should -Match 'pinned entry point'
+            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Renamed -Method 'HWID').Ok | Should -BeFalse
+            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Renamed -Method 'HWID').Reason | Should -Match 'pinned entry point'
 
-            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath (Join-Path (Get-WtExternalToolRoot) 'missing.cmd')).Ok | Should -BeFalse
+            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath (Join-Path (Get-WtExternalToolRoot) 'missing.cmd') -Method 'HWID').Ok | Should -BeFalse
 
             # A percent sign is expanded by the command interpreter even inside double quotes.
             $Expando = Join-Path (Get-WtExternalToolRoot) '%TEMP%.cmd'
             [System.IO.File]::WriteAllText($Expando, 'x')
-            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Expando).Ok | Should -BeFalse
-        }
-    }
-
-    It 'launches the verified copy through the process seam and reports the exit code' {
-        Clear-WtToolRoot
-        InModuleScope WindowsTweaker {
-            $Spec = New-WtTestSpec
-            New-WtDirectory -Path (Get-WtExternalToolRoot)
-            [System.IO.File]::WriteAllBytes((Get-WtExternalToolEntryPointPath -Spec $Spec), [System.Text.Encoding]::UTF8.GetBytes($Spec.Content))
-
-            Mock Test-WtExternalToolSupported { $true }
-            $script:Capture = $null
-            Mock Invoke-WtExternalToolProcess {
-                param ($FilePath, $ArgumentList, $WorkingDirectory, $Elevate)
-                $script:Capture = @{ FilePath = $FilePath; ArgumentList = $ArgumentList; WorkingDirectory = $WorkingDirectory; Elevate = $Elevate }
-                return [ordered]@{ Started = $true; ExitCode = 7; Cancelled = $false; Reason = '' }
-            }
-
-            $Result = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
-
-            $Result.Status | Should -Be 'succeeded'
-            $Result.ExitCode | Should -Be 7
-            $script:Capture.FilePath | Should -Be '/bin/sh'
-            $script:Capture.Elevate | Should -BeFalse
-            @($script:Capture.ArgumentList)[0] | Should -Be '/c'
-        }
-    }
-
-    It 'asks for an explicit elevation handoff when the session is not elevated' {
-        Clear-WtToolRoot
-        InModuleScope WindowsTweaker {
-            $Spec = New-WtTestSpec
-            New-WtDirectory -Path (Get-WtExternalToolRoot)
-            [System.IO.File]::WriteAllBytes((Get-WtExternalToolEntryPointPath -Spec $Spec), [System.Text.Encoding]::UTF8.GetBytes($Spec.Content))
-
-            Mock Test-WtExternalToolSupported { $true }
-            $script:Elevated = $null
-            Mock Invoke-WtExternalToolProcess {
-                param ($FilePath, $ArgumentList, $WorkingDirectory, $Elevate)
-                $script:Elevated = $Elevate
-                return [ordered]@{ Started = $true; ExitCode = 0; Cancelled = $false; Reason = '' }
-            }
-
-            $null = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $true
-            $script:Elevated | Should -BeTrue
-
-            $null = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
-            $script:Elevated | Should -BeFalse
+            (Get-WtExternalToolLaunchPlan -Spec $Spec -ToolPath $Expando -Method 'HWID').Ok | Should -BeFalse
         }
     }
 
@@ -733,32 +759,210 @@ Describe 'Launch plan and process handoff' {
         }
     }
 
+    It 'reads the process table only on Windows' {
+        InModuleScope WindowsTweaker {
+            if (Test-WtIsWindows)
+            {
+                # A live Windows table always contains this process.
+                @(Get-WtExternalToolProcessTable | ForEach-Object { $_.ProcessId }) | Should -Contain $PID
+            }
+            else
+            {
+                # No table means "completion unknown", never "nothing is running".
+                (Get-WtExternalToolProcessTable) | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    It 'follows a detached grandchild whose parent already left the process table' {
+        InModuleScope WindowsTweaker {
+            $Start = [datetime]::UtcNow.AddMinutes(-1)
+
+            # First poll: the launcher, the interpreter it spawned and the elevated console it left
+            # behind. Later polls: the launcher and the interpreter are gone, the console is not.
+            $script:Polls = 0
+            $Table = {
+                $script:Polls++
+                if ($script:Polls -le 1)
+                {
+                    return @(
+                        [pscustomobject]@{ ProcessId = 100; ParentProcessId = 0; StartUtc = $Start },
+                        [pscustomobject]@{ ProcessId = 200; ParentProcessId = 100; StartUtc = $Start },
+                        [pscustomobject]@{ ProcessId = 300; ParentProcessId = 200; StartUtc = $Start }
+                    )
+                }
+
+                return @([pscustomobject]@{ ProcessId = 300; ParentProcessId = 200; StartUtc = $Start })
+            }.GetNewClosure()
+
+            $Wait = Wait-WtWindowsActivationCompletion -RootProcessId 100 -RootStartUtc $Start -TimeoutSeconds 1 -NoSleep -TableSource $Table
+
+            # This is the observed bug: the launcher exited, the console it left behind did not.
+            $Wait.Completion | Should -Be 'Timeout' -Because 'a launcher that exited is not the end of the operation'
+            $Wait.Completion | Should -Not -Be 'Completed'
+            $Wait.Remaining | Should -Be 1
+            @($Wait.Members) | Should -Contain 300
+        }
+    }
+
+    It 'reports completion once the whole tree has ended' {
+        InModuleScope WindowsTweaker {
+            $Start = [datetime]::UtcNow.AddMinutes(-1)
+
+            $script:Polls = 0
+            $Table = {
+                $script:Polls++
+                if ($script:Polls -le 1)
+                {
+                    return @(
+                        [pscustomobject]@{ ProcessId = 100; ParentProcessId = 0; StartUtc = $Start },
+                        [pscustomobject]@{ ProcessId = 200; ParentProcessId = 100; StartUtc = $Start }
+                    )
+                }
+
+                # A live but unrelated process keeps the table non-empty; it is not a member of the
+                # operation's tree, and the tree itself is gone.
+                return @([pscustomobject]@{ ProcessId = 999; ParentProcessId = 0; StartUtc = $Start })
+            }.GetNewClosure()
+
+            $Wait = Wait-WtWindowsActivationCompletion -RootProcessId 100 -RootStartUtc $Start -TimeoutSeconds 5 -NoSleep -TableSource $Table
+
+            $Wait.Completion | Should -Be 'Completed'
+            $Wait.Remaining | Should -Be 0
+            $Wait.Elapsed | Should -BeFalse
+        }
+    }
+
+    It 'reports completion unknown when the process table cannot be read at all' {
+        InModuleScope WindowsTweaker {
+            $Wait = Wait-WtWindowsActivationCompletion -RootProcessId 100 -TimeoutSeconds 5 -NoSleep -TableSource { $null }
+
+            $Wait.Completion | Should -Be 'Unknown'
+            $Wait.Reason | Should -Match 'process table'
+            $Wait.ExitCode | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'ignores a recycled process id that predates the operation' {
+        InModuleScope WindowsTweaker {
+            $Root = [datetime]::UtcNow.AddMinutes(-5)
+
+            # A pid the tree once used, held by an unrelated process that started before the
+            # operation did: it must not keep the operation "alive" for ever.
+            $Table = {
+                return @([pscustomobject]@{ ProcessId = 200; ParentProcessId = 100; StartUtc = $Root.AddMinutes(-25) })
+            }.GetNewClosure()
+
+            $Wait = Wait-WtWindowsActivationCompletion -RootProcessId 100 -RootStartUtc $Root -TimeoutSeconds 5 -NoSleep -TableSource $Table
+
+            $Wait.Completion | Should -Be 'Completed'
+            $Wait.Remaining | Should -Be 0
+        }
+    }
+}
+
+Describe 'Activation action and duplicate guard' {
+
+    BeforeEach { Clear-WtToolRoot }
+
+    It 'runs the verified copy with the selected method switches and reports the observed exit code' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+
+            $script:Capture = $null
+            Mock Invoke-WtExternalToolProcess {
+                param ($FilePath, $ArgumentList, $WorkingDirectory, $Elevate)
+                $script:Capture = @{ FilePath = $FilePath; ArgumentList = $ArgumentList; WorkingDirectory = $WorkingDirectory; Elevate = $Elevate }
+                return [ordered]@{ Started = $true; Cancelled = $false; Reason = ''; Process = $null; ProcessId = 4242 }
+            }
+            Mock Wait-WtWindowsActivationCompletion {
+                return [ordered]@{ Completion = 'Completed'; ExitCode = 7; Remaining = 0; Members = @(); Reason = ''; ObservedSeconds = 2; Elapsed = $false }
+            }
+
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false
+
+            $Result.Status | Should -Be 'succeeded'
+            $Result.Code | Should -Be 'Completed'
+            $Result.ExitCode | Should -Be 7
+            $Result.CompletionDetermined | Should -BeTrue
+            $Result.Method.Id | Should -Be 'HWID'
+            $script:Capture.FilePath | Should -Be '/bin/sh'
+            $script:Capture.Elevate | Should -BeFalse
+            @($script:Capture.ArgumentList) | Should -Be @('/c', ('"{0}"' -f (Get-WtExternalToolEntryPointPath -Spec (Get-WtExternalToolSpec))), '/HWID', '/HWID-NoEditionChange')
+            Should -Invoke Wait-WtWindowsActivationCompletion -Times 1 -Exactly
+
+            # A determined completion releases the record: nothing is left claiming an open operation.
+            (Test-Path -LiteralPath (Get-WtWindowsActivationRecordPath)) | Should -BeFalse
+            (Test-WtExternalToolLaunching) | Should -BeFalse
+        }
+    }
+
+    It 'asks for an explicit elevation handoff when the session is not elevated' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+
+            $script:Elevated = $null
+            Mock Invoke-WtExternalToolProcess {
+                param ($FilePath, $ArgumentList, $WorkingDirectory, $Elevate)
+                $script:Elevated = $Elevate
+                return [ordered]@{ Started = $true; Cancelled = $false; Reason = ''; Process = $null; ProcessId = 99 }
+            }
+            Mock Wait-WtWindowsActivationCompletion { return [ordered]@{ Completion = 'Completed'; ExitCode = 0; Remaining = 0; Members = @(); Reason = '' } }
+
+            $null = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'TSforge' -Interpreter '/bin/sh' -Elevated $true
+            $script:Elevated | Should -BeTrue
+
+            $null = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'TSforge' -Interpreter '/bin/sh' -Elevated $false
+            $script:Elevated | Should -BeFalse
+        }
+    }
+
     It 'reports a launch failure without retrying' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
-            $Spec = New-WtTestSpec
-            New-WtDirectory -Path (Get-WtExternalToolRoot)
-            [System.IO.File]::WriteAllBytes((Get-WtExternalToolEntryPointPath -Spec $Spec), [System.Text.Encoding]::UTF8.GetBytes($Spec.Content))
-
+            New-WtTestInstalledCopy
             Mock Test-WtExternalToolSupported { $true }
-            Mock Invoke-WtExternalToolProcess { return [ordered]@{ Started = $false; ExitCode = $null; Cancelled = $false; Reason = 'cannot start' } }
+            Mock Invoke-WtExternalToolProcess { return [ordered]@{ Started = $false; Cancelled = $false; Reason = 'cannot start'; Process = $null; ProcessId = 0 } }
+            Mock Wait-WtWindowsActivationCompletion { throw 'the wait must not run when nothing started' }
 
-            $Result = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false
 
             $Result.Status | Should -Be 'failed'
             $Result.Code | Should -Be 'LaunchFailed'
             Should -Invoke Invoke-WtExternalToolProcess -Times 1 -Exactly
+            Should -Invoke Wait-WtWindowsActivationCompletion -Times 0 -Exactly
+            (Test-Path -LiteralPath (Get-WtWindowsActivationRecordPath)) | Should -BeFalse
         }
     }
 
-    It 'refuses to launch a copy that is not verified' {
+    It 'starts nothing when the elevation prompt is refused' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
-            $Spec = New-WtTestSpec
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+            Mock Invoke-WtExternalToolProcess { return [ordered]@{ Started = $false; Cancelled = $true; Reason = 'refused'; Process = $null; ProcessId = 0 } }
+            Mock Wait-WtWindowsActivationCompletion { throw 'nothing may be waited for' }
+
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false
+
+            $Result.Status | Should -Be 'cancelled'
+            $Result.Code | Should -Be 'UacCancelled'
+            $Result.Started | Should -BeFalse
+            (Test-Path -LiteralPath (Get-WtWindowsActivationRecordPath)) | Should -BeFalse
+        }
+    }
+
+    It 'refuses to run a copy that is not verified' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
             Mock Test-WtExternalToolSupported { $true }
             Mock Invoke-WtExternalToolProcess { throw 'nothing may be started' }
 
-            $Result = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false
 
             $Result.Status | Should -Be 'refused'
             $Result.Code | Should -Be 'NotDownloaded'
@@ -766,31 +970,108 @@ Describe 'Launch plan and process handoff' {
         }
     }
 
-    It 'never starts a second instance while one launch is in progress' {
+    It 'never starts a second activation while one is in progress in this session' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
-            $Spec = New-WtTestSpec
-            New-WtDirectory -Path (Get-WtExternalToolRoot)
-            [System.IO.File]::WriteAllBytes((Get-WtExternalToolEntryPointPath -Spec $Spec), [System.Text.Encoding]::UTF8.GetBytes($Spec.Content))
-
+            New-WtTestInstalledCopy
             Mock Test-WtExternalToolSupported { $true }
+
             $script:Inner = $null
             $script:Calls = 0
             Mock Invoke-WtExternalToolProcess {
-                param ($FilePath, $ArgumentList, $WorkingDirectory, $Elevate)
                 $script:Calls++
-                # While this launch is running, a second one is attempted.
-                $script:Inner = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
-                return [ordered]@{ Started = $true; ExitCode = 0; Cancelled = $false; Reason = '' }
+                # While this activation is running, a second one is attempted.
+                $script:Inner = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false
+                return [ordered]@{ Started = $true; Cancelled = $false; Reason = ''; Process = $null; ProcessId = 1234 }
             }
+            Mock Wait-WtWindowsActivationCompletion { return [ordered]@{ Completion = 'Completed'; ExitCode = 0; Remaining = 0; Members = @(); Reason = '' } }
 
-            $First = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
+            $First = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false
 
             $First.Status | Should -Be 'succeeded'
             $script:Inner.Status | Should -Be 'refused'
             $script:Inner.Code | Should -Be 'AlreadyLaunched'
             $script:Calls | Should -Be 1 -Because 'the nested attempt must not reach the process seam'
-            (Test-WtExternalToolLaunching) | Should -BeFalse -Because 'the guard is released when the launch returns'
+            (Test-WtExternalToolLaunching) | Should -BeFalse -Because 'the guard is released when the activation returns'
+        }
+    }
+
+    It 'keeps the record and reports completion unknown when the lifetime cannot be observed' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+            Mock Invoke-WtExternalToolProcess { return [ordered]@{ Started = $true; Cancelled = $false; Reason = ''; Process = $null; ProcessId = 777 } }
+            Mock Wait-WtWindowsActivationCompletion {
+                return [ordered]@{ Completion = 'Unknown'; ExitCode = $null; Remaining = 1; Members = @(777, 778); Reason = 'the process table could not be read'; ObservedSeconds = 3; Elapsed = $false }
+            }
+
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'OnlineKMS' -Interpreter '/bin/sh' -Elevated $false
+
+            $Result.Status | Should -Be 'unknown'
+            $Result.Code | Should -Be 'CompletionUnknown'
+            $Result.CompletionDetermined | Should -BeFalse
+            $Result.ExitCode | Should -BeNullOrEmpty
+
+            $Record = Read-WtWindowsActivationRecord
+            $Record | Should -Not -BeNullOrEmpty
+            [string](Get-WtExternalToolJsonProperty -Document $Record -Name 'completion') | Should -Be 'unknown'
+            @((Get-WtExternalToolJsonProperty -Document $Record -Name 'observedPids')) | Should -Contain 778
+        }
+    }
+
+    It 'refuses a new activation while a recorded operation is still alive' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+            Mock Invoke-WtExternalToolProcess { throw 'nothing may be started while an operation is open' }
+
+            # The record names this very process, so the tree is alive by construction.
+            Write-WtWindowsActivationRecord -Record ([ordered]@{
+                    schema       = 'windows-tweaker.activation-operation/1'
+                    method       = 'HWID'
+                    launchedUtc  = [datetime]::UtcNow.ToString('o')
+                    rootPid      = $PID
+                    rootStartUtc = ''
+                    completion   = 'running'
+                    exitCode     = $null
+                    observedPids = @()
+                })
+
+            $Table = { return @([pscustomobject]@{ ProcessId = $PID; ParentProcessId = 0; StartUtc = [datetime]::MinValue }) }.GetNewClosure()
+
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false -TableSource $Table
+
+            $Result.Status | Should -Be 'refused'
+            $Result.Code | Should -Be 'OperationActive'
+            Should -Invoke Invoke-WtExternalToolProcess -Times 0 -Exactly
+        }
+    }
+
+    It 'releases the guard once the recorded tree is gone' {
+        Clear-WtToolRoot
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+            Mock Invoke-WtExternalToolProcess { return [ordered]@{ Started = $true; Cancelled = $false; Reason = ''; Process = $null; ProcessId = 5000 } }
+            Mock Wait-WtWindowsActivationCompletion { return [ordered]@{ Completion = 'Completed'; ExitCode = 0; Remaining = 0; Members = @(); Reason = '' } }
+
+            Write-WtWindowsActivationRecord -Record ([ordered]@{
+                    schema       = 'windows-tweaker.activation-operation/1'
+                    method       = 'HWID'
+                    launchedUtc  = [datetime]::UtcNow.AddMinutes(-30).ToString('o')
+                    rootPid      = 4242
+                    rootStartUtc = ([datetime]::UtcNow.AddMinutes(-30)).ToString('o')
+                    completion   = 'running'
+                    exitCode     = $null
+                    observedPids = @()
+                })
+
+            $Result = Start-WtWindowsActivation -Spec (Get-WtExternalToolSpec) -Method 'HWID' -Interpreter '/bin/sh' -Elevated $false -TableSource { @([pscustomobject]@{ ProcessId = 1; ParentProcessId = 0; StartUtc = [datetime]::UtcNow }) }
+
+            $Result.Status | Should -Be 'succeeded'
+            Should -Invoke Invoke-WtExternalToolProcess -Times 1 -Exactly
         }
     }
 }
@@ -850,10 +1131,11 @@ Describe 'Interface view' {
             $Text | Should -Match 'github\.com/massgravel/Microsoft-Activation-Scripts'
             $Text | Should -Match ([regex]::Escape((Get-WtExternalToolSpec).Commit))
             $Text | Should -Match 'GPL-3\.0'
-            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Launch')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.RequestActivation')))
             $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Download')))
             $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Remove')))
             $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Docs')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Section.Methods')))
             $Text | Should -Match '850f979665fb93999acae93f4790c1ff8ed2041532060b7966a121c2d29a0bfa'
 
             # The warning that activation is not entitlement is on the review screen itself.
@@ -900,7 +1182,8 @@ Describe 'Interface view' {
                 Update-WtTuiView -State $State
                 $Text = (ConvertTo-WtScreenPlainText -Screen $State.Screen) -join "`n"
                 $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Title' -Language $Language)))
-                $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Launch' -Language $Language)))
+                $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.RequestActivation' -Language $Language)))
+                $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Section.Methods' -Language $Language)))
             }
 
             Set-WtLanguage -Language 'en' | Out-Null
@@ -921,24 +1204,56 @@ Describe 'Interface view' {
 
             $Text | Should -Match '\+.*Local copy'
             $Text | Should -Match '\[EXT\]|\[IN\]|\[GO\]|\[OUT\]|\[STOP\]|\[KEY\]|\[N/A\]|\[OFF\]'
-            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Launch')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.RequestActivation')))
             $State.Licensing = $null
             $State.ExternalTool = $null
         }
     }
 
-    It 'shows the external tool entry inside the licensing diagnostics' {
+    It 'shows the installed edition, the status, the selected method, the tool and the two actions' {
         InModuleScope WindowsTweaker {
-            $State = New-WtTestState -Width 100 -Height 30
+            $State = New-WtTestState -Width 100 -Height 34
             Initialize-WtTuiState -State $State
             $State.Licensing = Read-WtLicensingDiagnostics
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
             $State.ForceRepaint = $true
             Update-WtTuiView -State $State
             $Text = (ConvertTo-WtScreenPlainText -Screen $State.Screen) -join "`n"
 
-            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Tools.Title')))
-            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Mas.Title')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Section.Activation')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Edition').Split('{')[0].Trim()))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.ActStatus').Split('{')[0].Trim()))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.SelectedMethod').Split('{')[0].Trim()))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.ToolStatus').Split('{')[0].Trim()))
+
+            # The single primary action, and the settings screen that holds everything else.
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Action.Activate')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Action.Settings')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Hint')))
+
+            # No menu launch and no other method is offered from the main screen.
+            $Text | Should -Not -Match ([regex]::Escape((Get-WtString -Key 'Mas.Action.Download')))
             $State.Licensing = $null
+            $State.ActivationTool = $null
+        }
+    }
+
+    It 'states on the main screen that nothing is selected before a method is chosen' {
+        InModuleScope WindowsTweaker {
+            $State = New-WtTestState -Width 100 -Height 34
+            Initialize-WtTuiState -State $State
+            $State.Licensing = Read-WtLicensingDiagnostics
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.ForceRepaint = $true
+            Update-WtTuiView -State $State
+            $Text = (ConvertTo-WtScreenPlainText -Screen $State.Screen) -join "`n"
+
+            # No method has been selected in this test's settings root.
+            (Get-WtWindowsActivationMethodSetting) | Should -BeNullOrEmpty
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Method.None')))
+            $Text | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.Outcome.None')))
+            $State.Licensing = $null
+            $State.ActivationTool = $null
         }
     }
 }
@@ -957,7 +1272,7 @@ Describe 'Workspace actions' {
             Initialize-WtTuiState -State $State
             $State.Licensing = Read-WtLicensingDiagnostics
 
-            Show-WtTuiExternalTool -State $State
+            Show-WtTuiActivationSettings -State $State
 
             Should -Invoke Save-WtExternalToolDownload -Times 0 -Exactly
             Should -Invoke Invoke-WtExternalToolProcess -Times 0 -Exactly
@@ -980,7 +1295,7 @@ Describe 'Workspace actions' {
             Initialize-WtTuiState -State $State
             $State.Licensing = Read-WtLicensingDiagnostics
 
-            Show-WtTuiExternalTool -State $State
+            Show-WtTuiActivationSettings -State $State
 
             Should -Invoke Save-WtExternalToolDownload -Times 0 -Exactly
             Test-Path -LiteralPath (Get-WtExternalToolProvenancePath) | Should -BeFalse
@@ -1067,7 +1382,7 @@ Describe 'Workspace actions' {
             $null = Get-WtTuiExternalToolTask -State $State
             $State.ExternalToolTask.Handle = [pscustomobject]@{ IsCompleted = $false }
 
-            Show-WtTuiExternalTool -State $State
+            Show-WtTuiActivationSettings -State $State
 
             # Both Escape presses asked the transfer to stop (a third stop comes from closing a
             # task that is still busy), and neither of them left the view.
@@ -1125,70 +1440,95 @@ Describe 'Workspace actions' {
             Initialize-WtTuiState -State $State
             $State.Licensing = Read-WtLicensingDiagnostics
 
-            Show-WtTuiExternalTool -State $State
+            Show-WtTuiActivationSettings -State $State
 
             Should -Invoke Save-WtExternalToolDownload -Times 0 -Exactly
         }
     }
 
-    It 'suspends the console around the launch, resumes it afterwards and re-reads licensing' {
+    It 'suspends the console around the activation, resumes it afterwards and re-reads licensing' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
             New-WtTestInstalledCopy
             Mock Test-WtExternalToolSupported { $true }
+            $null = Set-WtWindowsActivationMethodSetting -Id 'HWID'
 
             $script:Order = [System.Collections.Generic.List[string]]::new()
             Mock Suspend-WtTuiConsole { $script:Order.Add('suspend'); return @{ Suspended = $true; Vt = $false } }
             Mock Resume-WtTuiConsole { $script:Order.Add('resume') }
             Mock Invoke-WtExternalToolProcess {
                 $script:Order.Add('launch')
-                return [ordered]@{ Started = $true; ExitCode = 3; Cancelled = $false; Reason = '' }
+                return [ordered]@{ Started = $true; Cancelled = $false; Reason = ''; Process = $null; ProcessId = 321 }
+            }
+            Mock Wait-WtWindowsActivationCompletion {
+                # The operation's lifetime is observed while the child console owns the foreground.
+                $script:Order.Add('wait')
+                return [ordered]@{ Completion = 'Completed'; ExitCode = 3; Remaining = 0; Members = @(); Reason = '' }
             }
             $script:LicenseBefore = [ordered]@{ CollectedUtc = [datetime]::UtcNow; Inventory = [ordered]@{ Unreadable = $true; Reason = 'before'; Active = $null } }
-            $script:LicenseAfter = [ordered]@{ CollectedUtc = [datetime]::UtcNow.AddSeconds(5); Inventory = [ordered]@{ Unreadable = $false; Reason = ''; Active = $null } }
+            $script:LicenseAfter = [ordered]@{
+                CollectedUtc = [datetime]::UtcNow.AddSeconds(5)
+                Inventory    = [ordered]@{
+                    Unreadable = $false
+                    Reason     = ''
+                    Active     = [pscustomobject]@{
+                        ProductName       = 'Windows 11 Pro'
+                        LicenseStatus     = 'Licensed'
+                        LicenseStatusRaw  = 1
+                        LicenseChannel    = 'Retail'
+                        GraceRemaining    = $null
+                        EvaluationEndDate = ''
+                        PartialProductKey = ''
+                    }
+                }
+            }
             Mock Read-WtLicensingDiagnostics { $script:LicenseAfter }
 
             $State = New-WtTestState -Width 100 -Height 30 -Keys @(
-                (New-WtTestKey -Name 'Char' -Character 'l'),
+                (New-WtTestKey -Name 'Char' -Character 'a'),
                 (New-WtTestKey -Name 'Char' -Character 'y'),
                 (New-WtTestKey -Name 'Enter'),
                 (New-WtTestKey -Name 'Escape')
             )
             Initialize-WtTuiState -State $State
-            $State.ExternalTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.Environment = [pscustomobject]@{ OSName = 'Windows 11 Pro'; OSBuild = 22631 }
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
             $State.Licensing = $script:LicenseBefore
 
-            Invoke-WtExternalToolLaunchAction -State $State
+            Invoke-WtWindowsActivationAction -State $State -License $script:LicenseBefore
 
-            ($script:Order -join '->') | Should -Be 'suspend->launch->resume'
+            ($script:Order -join '->') | Should -Be 'suspend->launch->wait->resume'
             Should -Invoke Suspend-WtTuiConsole -Times 1 -Exactly
             Should -Invoke Resume-WtTuiConsole -Times 1 -Exactly
             $State.Licensing | Should -Be $script:LicenseAfter
+            $State.ActivationOutcome | Should -Be (Get-WtString -Key 'Act.Outcome.Activated')
         }
     }
 
-    It 'restores the console even when the launch backend throws' {
+    It 'restores the console even when the activation backend throws' {
         Clear-WtToolRoot
         InModuleScope WindowsTweaker {
             New-WtTestInstalledCopy
             Mock Test-WtExternalToolSupported { $true }
+            $null = Set-WtWindowsActivationMethodSetting -Id 'HWID'
 
             Mock Suspend-WtTuiConsole { return @{ Suspended = $true; Vt = $false } }
             $script:Resumed = 0
             Mock Resume-WtTuiConsole { $script:Resumed++ }
-            Mock Start-WtExternalTool { throw 'unexpected backend failure' }
+            Mock Start-WtWindowsActivation { throw 'unexpected backend failure' }
             Mock Read-WtLicensingDiagnostics { [ordered]@{ Inventory = [ordered]@{ Unreadable = $true; Reason = 'unreadable'; Active = $null } } }
 
             $State = New-WtTestState -Width 100 -Height 30 -Keys @(
-                (New-WtTestKey -Name 'Char' -Character 'l'),
+                (New-WtTestKey -Name 'Char' -Character 'a'),
                 (New-WtTestKey -Name 'Char' -Character 'y'),
                 (New-WtTestKey -Name 'Enter')
             )
             Initialize-WtTuiState -State $State
-            $State.ExternalTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.Environment = [pscustomobject]@{ OSName = 'Windows 11 Pro'; OSBuild = 22631 }
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
             $State.Licensing = [ordered]@{ Inventory = [ordered]@{ Unreadable = $false; Active = $null } }
 
-            { Invoke-WtExternalToolLaunchAction -State $State } | Should -Not -Throw
+            { Invoke-WtWindowsActivationAction -State $State -License $State.Licensing } | Should -Not -Throw
             $script:Resumed | Should -Be 1
         }
     }
@@ -1203,21 +1543,6 @@ Describe 'Workspace actions' {
 
             $State.Screen.Dirty | Should -BeTrue
             $State.ForceRepaint | Should -BeTrue
-        }
-    }
-
-    It 'starts nothing when the launch is cancelled at the elevation prompt' {
-        Clear-WtToolRoot
-        InModuleScope WindowsTweaker {
-            New-WtTestInstalledCopy
-            Mock Test-WtExternalToolSupported { $true }
-            Mock Invoke-WtExternalToolProcess { return [ordered]@{ Started = $false; ExitCode = $null; Cancelled = $true; Reason = 'refused' } }
-
-            $Result = Start-WtExternalTool -Spec $Spec -Interpreter '/bin/sh' -Elevated $false
-
-            $Result.Status | Should -Be 'cancelled'
-            $Result.Code | Should -Be 'UacCancelled'
-            $Result.Started | Should -BeFalse
         }
     }
 
@@ -1296,7 +1621,7 @@ Describe 'Workspace actions' {
         }
     }
 
-    It 'refuses the download, the launch and the removal in dry-run mode and states what would run' {
+    It 'refuses the download, the activation and the removal in dry-run mode and states what would run' {
         InModuleScope WindowsTweaker {
             New-WtTestInstalledCopy
             Mock Test-WtExternalToolSupported { $true }
@@ -1305,13 +1630,17 @@ Describe 'Workspace actions' {
             $script:Messages = @()
             Mock Show-WtTuiMessage { param ($State, $Title, $Lines, $Tone) $script:Messages += ($Lines -join "`n") }
 
+            $null = Set-WtWindowsActivationMethodSetting -Id 'HWID'
+
             $State = New-WtTestState -Width 100 -Height 30 -DryRun
             Initialize-WtTuiState -State $State
             $State.ExternalTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.Licensing = Read-WtLicensingDiagnostics
 
             Invoke-WtExternalToolDownloadAction -State $State
             Invoke-WtExternalToolDownloadAction -State $State -Latest
-            Invoke-WtExternalToolLaunchAction -State $State
+            Invoke-WtWindowsActivationAction -State $State -License $State.Licensing
             Invoke-WtExternalToolRemoveAction -State $State
 
             Should -Invoke Start-WtExternalToolTask -Times 0 -Exactly
@@ -1320,11 +1649,13 @@ Describe 'Workspace actions' {
             $Text = $script:Messages -join "`n"
             $Text | Should -Match ([regex]::Escape(((Get-WtString -Key 'Mas.DryRun.Download') -split '\{0\}')[0].Trim()))
             $Text | Should -Match '/c'
+            $Text | Should -Match '/HWID'
             $Text | Should -Match ([regex]::Escape(((Get-WtString -Key 'Mas.DryRun.Remove') -split '\{0\}')[0].Trim()))
 
-            # Nothing changed on disk either.
+            # Nothing changed on disk either, and no operation record was left behind.
             Test-Path -LiteralPath (Get-WtExternalToolEntryPointPath -Spec (Get-WtExternalToolSpec)) | Should -BeTrue
             Test-Path -LiteralPath (Get-WtExternalToolProvenancePath) | Should -BeTrue
+            Test-Path -LiteralPath (Get-WtWindowsActivationRecordPath) | Should -BeFalse
         }
     }
 
@@ -1344,7 +1675,7 @@ Describe 'Workspace actions' {
             Initialize-WtTuiState -State $State
             $State.Licensing = Read-WtLicensingDiagnostics
 
-            Show-WtTuiExternalTool -State $State
+            Show-WtTuiActivationSettings -State $State
 
             Test-Path -LiteralPath (Get-WtExternalToolEntryPointPath -Spec $Spec) | Should -BeTrue
         }

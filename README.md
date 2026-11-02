@@ -124,7 +124,7 @@ Xem [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) để biết script kiểm chứng nh
 | `S` / `M` / `C` | quét kiểm tra / đề xuất / các cài đặt có nhiều lựa chọn |
 | `V` | xác minh và khôi phục: lệch cấu hình, thao tác bị ngắt, khôi phục, xuất |
 | `B` | không gian giám sát |
-| `N` | chẩn đoán cấp phép & kích hoạt (trong đó `M` mở công cụ bên ngoài Microsoft Activation Scripts) |
+| `N` | màn hình chẩn đoán & kích hoạt Windows (`A` kích hoạt, `S` cài đặt & chi tiết) |
 | `L` / `I` | đổi ngôn ngữ / chọn chế độ biểu tượng |
 | `?` | toàn bộ bảng phím và các nguyên tắc an toàn |
 | `Q` (`Ctrl+C`) | thoát - thay đổi đang chờ và thao tác đang chạy luôn được nêu rõ |
@@ -132,42 +132,51 @@ Xem [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) để biết script kiểm chứng nh
 Toàn bộ phím, kể cả phím của không gian giám sát và các hộp thoại, nằm ở
 [docs/KEYBOARD.md](docs/KEYBOARD.md).
 
-## Microsoft Activation Scripts (công cụ bên ngoài)
+## Kích hoạt Windows (công cụ bên ngoài: Microsoft Activation Scripts)
 
-`N` mở khu vực **Chẩn đoán cấp phép & kích hoạt**; trong đó `M` mở công cụ bên ngoài **Microsoft
-Activation Scripts (MAS)**. WindowsTweaker không nhúng, không sửa và không tự chạy MAS: nó tải đúng
-một tệp từ kho chính thức tại một commit cố định (tag `3.12`, commit
-`40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`), kiểm chứng kích thước, mã blob git của thượng nguồn và
-SHA-256 đã ghi lại, rồi chỉ chạy khi bạn yêu cầu.
+`N` mở màn hình **Cấp phép & kích hoạt**. Đây là nơi duy nhất để kích hoạt Windows bằng công cụ bên
+ngoài **Microsoft Activation Scripts (MAS)**: WindowsTweaker không nhúng, không sửa và không tự chạy
+MAS - nó tải đúng một tệp từ kho chính thức tại một commit cố định (tag `3.12`, commit
+`40c74d0d7f42146b1dd1ab59b5c7e836d6a56d1f`), kiểm chứng kích thước, mã blob git của thượng nguồn
+và SHA-256 đã ghi lại, rồi chạy đúng một phương pháp kích hoạt Windows theo yêu cầu của bạn.
 
 Cách dùng:
 
-1. `N` rồi `M` để mở công cụ bên ngoài. Chỉ xem thì không có gì được tải về hay chạy.
-2. `D` tải bản đã cố định; hộp thoại xác nhận mặc định là **Không**. Việc tải chạy nền: giao diện
-   vẫn nhận phím, dòng tiến trình báo đúng số byte đã nhận, `Esc` hủy lần tải đang chạy, và nhấn
-   `D`/`U` lần nữa trong lúc đang tải sẽ bị từ chối. `U` tìm bản phát hành mới hơn và hiện tag,
-   commit, kích thước trước khi tải bất cứ thứ gì.
-3. `L` chạy công cụ trong cửa sổ console riêng. Nếu phiên hiện tại chưa có quyền quản trị, Windows sẽ
-   hiện hộp thoại nâng quyền; từ chối thì không có gì được chạy và không thử lại. WindowsTweaker
-   không gửi phím, không chọn sẵn phương thức kích hoạt và không chạy lệnh kích hoạt nào - bạn tự
-   chọn trong menu của MAS.
-4. Sau khi công cụ kết thúc, WindowsTweaker đọc lại trạng thái cấp phép và nói rõ có đọc được hay
-   không. Mã thoát của tiến trình **không** phải bằng chứng đã kích hoạt.
-5. `R` xóa bản sao trên máy (tệp đã tải, phần tệp tạm còn lại và bản ghi xuất xứ). `V` mở tài liệu
-   thượng nguồn trong trình duyệt. `Esc` quay lại phần chẩn đoán.
+1. `N` mở màn hình chính. Màn hình cho biết phiên bản đã cài, trạng thái kích hoạt, phương pháp đã
+   chọn và mức sẵn sàng của công cụ. Chỉ xem thì không có gì được tải về hay chạy.
+2. Chọn phương pháp: nhấn `S` để mở màn hình cài đặt & chi tiết, rồi nhấn `1` (HWID), `2`
+   (TSforge) hoặc `3` (Online KMS). Mỗi phương pháp được hiển thị kèm mô hình thời hạn (vĩnh viễn /
+   có thời hạn) và yêu cầu Internet theo tài liệu thượng nguồn; chỉ những phương pháp tương thích với
+   phiên bản đã cài mới có thể được chọn để chạy. `Esc` quay lại màn hình chính.
+3. Trên màn hình chính, nhấn `A` để **kích hoạt Windows**: hành động chạy đúng phương pháp đã chọn,
+   với đúng tham số được tài liệu hóa của phương pháp đó, trong cửa sổ console riêng - menu tương tác
+   của MAS không bao giờ xuất hiện và không có phím nào được gửi tới nó. Các thao tác Office, ESU,
+   đổi phiên bản, KMS-host và reset không thể truy cập từ đây.
+4. Nếu tệp đã ghim chưa được tải về, `A` sẽ hỏi tải và xác minh nó trước (tiến trình hiện rõ số
+   byte, `Esc` hủy; khi hủy thì không chạy gì). Nếu phiên hiện tại chưa có quyền quản trị, Windows
+   tự hiện hộp thoại nâng quyền; từ chối thì không có gì được chạy và không thử lại.
+5. Sau khi thao tác kết thúc, WindowsTweaker đọc lại hồ sơ cấp phép và báo cáo: trạng thái trước/sau,
+   hiệu lực còn lại do Windows báo, mã lỗi có cấu trúc của dịch vụ Bảo vệ Phần mềm (nếu có), và
+   liệu mức hoàn tất có xác định được hay không. Mã thoát của tiến trình **không** phải bằng chứng đã
+   kích hoạt; nếu không quan sát được lúc kết thúc (ví dụ script đã khởi chạy lại chính nó), kết quả
+   được báo là “đã khởi chạy; chưa xác định hoàn tất” thay vì thành công. Khi một thao tác có thể còn
+   đang chạy, `A` sẽ từ chối lần thứ hai.
+6. `S` còn là nơi chứa mọi chi tiết của bản tải: nguồn gốc, URL, SHA-256, mã blob git, giấy phép,
+   cập nhật (`U`), tài liệu (`V`), xóa bản sao (`R`), và yêu cầu kích hoạt bằng giấy phép đã cài
+   (slmgr /ato, phím `T`). `R` chỉ xóa tệp đã tải và bản ghi xuất xứ; các thay đổi cấp phép mà công
+   cụ đã thực hiện vẫn giữ nguyên.
 
-Ở chế độ chạy thử (`W` trên màn hình chính), các phím `D`, `U`, `L`, `R` chỉ hiện đúng những gì sẽ
-làm - tệp và URL sẽ tải, dòng lệnh sẽ chạy, danh sách tệp sẽ xóa - và không tải, không chạy, không
-xóa gì; riêng việc chạy công cụ bị từ chối ngay cả khi bạn đã xác nhận.
+Ở chế độ chạy thử (`W` trên màn hình chính), `A`, `D`, `U`, `R` chỉ hiện đúng những gì sẽ làm -
+phương pháp và dòng lệnh sẽ chạy, tệp và URL sẽ tải, danh sách tệp sẽ xóa - và không tải, không
+chạy, không xóa gì; việc kích hoạt bị từ chối ngay cả khi bạn đã xác nhận.
 
-Lưu ý: MAS có thể thay đổi trạng thái cấp phép của Windows/Office; thời hạn phụ thuộc phương thức bạn
-chọn trong công cụ (không phải mọi phương thức đều có thời hạn, cũng không phải mọi phương thức đều
-vĩnh viễn), và **kích hoạt không đồng nghĩa với quyền sử dụng hợp pháp**. Nhật ký đăng ký của
-WindowsTweaker **không** hoàn tác được thao tác kích hoạt của công cụ này. Công cụ nằm ngoài hoàn toàn
-mọi preset, batch, tác vụ khởi động và chính sách giám sát.
+Lưu ý: kích hoạt không đồng nghĩa với quyền sử dụng hợp pháp. Nhật ký đăng ký của WindowsTweaker
+**không** hoàn tác được thao tác kích hoạt của công cụ này. Việc này không bao giờ nằm trong preset,
+batch, tác vụ khởi động, chính sách giám sát hay sửa chữa tự động, không vô hiệu hóa Defender, không
+thêm ngoại lệ bảo mật và không khởi động lại máy.
 
-Chi tiết đầy đủ (nguồn gốc, chuỗi kiểm chứng, giấy phép GPL-3.0, các giới hạn đã kiểm chứng):
-[docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
+Chi tiết đầy đủ (bằng chứng thượng nguồn cho các tham số, chuỗi kiểm chứng, giấy phép GPL-3.0, các
+giới hạn đã kiểm chứng): [docs/EXTERNAL-TOOLS.md](docs/EXTERNAL-TOOLS.md).
 
 ## Đọc tiếp ở đâu
 

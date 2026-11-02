@@ -93,6 +93,7 @@ function Read-WtSettings
         Language    = ''
         Backend     = 'Auto'
         Profile     = 'Auto'
+        ActivationMethod = ''
     }
 
     if (-not (Test-Path -LiteralPath $Settings.Path))
@@ -135,6 +136,7 @@ function Read-WtSettings
         if ($Names -contains 'language' -and $Parsed.language) { $Settings.Language = [string]$Parsed.language }
         if ($Names -contains 'backend' -and $Parsed.backend) { $Settings.Backend = [string]$Parsed.backend }
         if ($Names -contains 'profile' -and $Parsed.profile) { $Settings.Profile = [string]$Parsed.profile }
+        if ($Names -contains 'activationMethod' -and $Parsed.activationMethod) { $Settings.ActivationMethod = [string]$Parsed.activationMethod }
     }
     catch
     {
@@ -174,6 +176,7 @@ function Write-WtSettings
         language = [string]$Settings.Language
         backend  = [string]$Settings.Backend
         profile  = [string]$Settings.Profile
+        activationMethod = [string]$Settings.ActivationMethod
     }
 
     $Json = ConvertTo-WtJson -InputObject $Payload -Depth 8
