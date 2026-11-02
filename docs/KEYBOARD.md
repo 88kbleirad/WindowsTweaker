@@ -4,6 +4,10 @@ WindowsTweaker's interactive interface is keyboard-only. It never opens a window
 never changes Windows while you are browsing: a change is added to a **pending set**, and
 only `A` (after an explicit confirmation) applies the reviewed selection.
 
+The **WinUI 3 frontend** (`gui/src/WindowsTweaker.WinUI`) keeps the non-conflicting
+essentials and adds window-specific keys; see [The WinUI window](#the-winui-window) at the
+end of each language section.
+
 * [English](#english)
 * [Tiếng Việt](#tiếng-việt)
 
@@ -267,6 +271,19 @@ obligations.
 6. Files are never written outside the paths you type, and those paths are validated
    before anything runs.
 7. The terminal is restored (alternate screen, colours, cursor) on a normal exit, on
+   `Ctrl+C` and on an unexpected error.
+
+### The WinUI window
+
+| Key | Action |
+|---|---|
+| `Up` / `Down`, `PageUp` / `PageDown` | move through the list rows (native list navigation) |
+| `Tab` / `Shift+Tab` | move between controls in logical order |
+| `Enter` | activate the focused button / item; `Ctrl+Enter` inside the search box stages the selected tweak into review |
+| `/` or `Ctrl+F` | focus the search box (typed letters are always text there, never a shortcut) |
+| `Esc` | close a dialog; otherwise clear the search and return focus to the list, then move to the Tweaks workspace |
+| `F5` | refresh the current workspace (same as the toolbar button) |
+| `Alt+F4` / `X` | close the window; while an operation runs, the window asks: wait for it, cancel the queued work and wait for the safe boundary, or stay |
  ⊞ WindowsTweaker                                              Bộ cài: privacy-hardening    
  Windows11 build 22631 | PowerShell 7.4.2 | quản trị viên | thực thi | VI                   
 ├──────────────────┬──────────────────────────────────────┬────────────────────────────────┤
@@ -448,3 +465,15 @@ phần nào còn cần một máy Windows.
 6. Không ghi tệp ra ngoài đường dẫn bạn nhập, và đường dẫn được kiểm tra trước khi chạy.
 7. Terminal được khôi phục (màn hình thay thế, màu, con trỏ) khi thoát bình thường, khi nhấn
    `Ctrl+C` và khi xảy ra lỗi bất ngờ.
+
+### Cửa sổ WinUI (The WinUI window)
+
+| Phím | Tác dụng |
+|---|---|
+| `Lên`/`Xuống`, `PageUp`/`PageDown` | di chuyển trong danh sách (điều hướng của danh sách) |
+| `Tab`/`Shift+Tab` | di chuyển giữa các điều khiển theo thứ tự logic |
+| `Enter` | kích hoạt nút / mục đang chọn; `Ctrl+Enter` trong ô tìm kiếm thêm mục đang chọn vào danh sách duyệt |
+| `/` hoặc `Ctrl+F` | đưa con trỏ vào ô tìm kiếm (chữ gõ vào ô này luôn là văn bản, không bao giờ là phím tắt) |
+| `Esc` | đóng hộp thoại; nếu không có hộp thoại: xóa tìm kiếm và trả con trỏ về danh sách, rồi chuyển sang không gian "Tinh chỉnh" |
+| `F5` | làm mới không gian hiện tại (tương đương nút của dải công cụ) |
+| `Alt+F4` / nhấn `X` | đóng cửa sổ; khi có thao tác đang chạy, cửa sổ hỏi: đợi cho xong, hủy phần đang chờ rồi đợi ranh giới an toàn, hoặc ở lại |

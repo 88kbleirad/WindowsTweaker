@@ -1,9 +1,16 @@
 ﻿# WindowsTweaker - Licensing & Activation workspace (TUI).
 #
 # The main screen of Windows activation. It answers, in this order: which Windows is installed,
-# whether Windows says it is activated, which Windows-only activation method is selected and whether
-# that method is permanent or time-limited, whether the pinned upstream file is ready, and what
-# happened the last time the action ran.
+# the *observed* licensing status Windows reports (never an inference), which Windows-only
+# activation method is selected and whether that method is permanent or time-limited, whether the
+# pinned upstream file is ready, and what the last activation operation reported.
+#
+# The machine's current licensing state and the last operation's outcome are separate things and
+# stay separate on this screen: "nothing has run in this session" is never presented as "Windows
+# is not activated".
+#
+# The observed status comes from one shared, refreshed snapshot (LicensingUiState). The screen
+# shows when it was collected and marks it stale when it is older than the freshness bound.
 #
 # One primary action: A runs the selected method directly. The upstream script is started with the
 # one documented switch of that method, so its interactive menu is never shown and no keystroke is
@@ -142,13 +149,121 @@ function Get-WtActivationToolText
 
 <#
 .SYNOPSIS
+    Returns the display text of the observed licensing status, including its raw code.
+.DESCRIPTION
+    Pure: it reads the shared snapshot and produces the line, so every view that calls it
+    shows the same status. A stale or unreadable snapshot is reported as such instead of
+    being presented as a status.
+#>
+function Get-WtObservedLicensingStatusText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Ui = Get-WtLicensingUiState -State $State
+    $License = $Ui.License
+
+    if (-not $License)
+    {
+        return (Get-WtString -Key 'Lic.Status.Unreadable')
+    }
+
+    $Inventory = $License.Inventory
+    if ($Inventory.Unreadable)
+    {
+        return (Get-WtString -Key 'Lic.Status.Unreadable') + ' - ' + (Get-WtString -Key 'Lic.Status.Raw' -Arguments @('?'))
+    }
+
+    $Active = $Inventory.Active
+    if (-not $Active)
+    {
+        return (Get-WtString -Key 'Lic.Status.Unknown') + ' (' + (Get-WtString -Key 'Lic.Status.Raw' -Arguments @('?')) + ')'
+    }
+
+    return (Get-WtString -Key "Lic.Status.$($Active.LicenseStatus)") + ' (' + (Get-WtString -Key 'Lic.Status.Raw' -Arguments @($Active.LicenseStatusRaw)) + ')'
+}
+
+<#
+.SYNOPSIS
+    Returns true when the shared licensing snapshot is older than the freshness bound.
+.DESCRIPTION
+    The bound is deliberately generous - a few minutes - because the observed status is a
+    snapshot, not a live value; what matters is that the UI never presents a very old
+    snapshot as if it were the current state.
+#>
+function Test-WtLicensingSnapshotFresh
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $false)][int]$MaxAgeSeconds = 300
+    )
+
+    $Ui = Get-WtLicensingUiState -State $State
+    if (-not $Ui.LicenseCollectionUtc) { return $false }
+    return (([datetime]::UtcNow - [datetime]$Ui.LicenseCollectionUtc).TotalSeconds -le $MaxAgeSeconds)
+}
+
+<#
+.SYNOPSIS
+    Returns the display line for the last activation operation.
+.DESCRIPTION
+    This is the operation outcome, not the machine state. It is kept separate from the
+    observed status, and the "nothing run yet" case is explicit.
+#>
+function Get-WtActivationOutcomeText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Ui = Get-WtLicensingUiState -State $State
+
+    if (-not $Ui.OperationRanThisSession)
+    {
+        return (Get-WtString -Key 'Lic.Outcome.None')
+    }
+
+    if ($Ui.OperationOutcome)
+    {
+        return [string]$Ui.OperationOutcome
+    }
+
+    return (Get-WtString -Key 'Lic.Outcome.None')
+}
+
+<#
+.SYNOPSIS
+    Returns the collection-time text of the current snapshot (or '-').
+#>
+function Get-WtLicensingCollectedText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Ui = Get-WtLicensingUiState -State $State
+    if (-not $Ui.LicenseCollectionUtc)
+    {
+        return (Get-WtString -Key 'Lic.Collected.Never')
+    }
+
+    return (Get-WtString -Key 'Lic.Collected' -Arguments @(([datetime]$Ui.LicenseCollectionUtc).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss')))
+}
+
+<#
+.SYNOPSIS
     Renders the main licensing & activation screen.
 .DESCRIPTION
-    The activation block carries the installed edition, the activation status, the remaining
-    validity Windows reports, the selected method with its duration model, the readiness of the
-    pinned file and the last outcome. The read-only diagnostics (time synchronization, licensing
-    components, organization-managed configuration) follow when the terminal has rows left, and are
-    dropped first on a short window.
+    The activation block carries the installed edition, the *observed* activation status with
+    its raw code and collection time, the selected method with its duration model, the
+    readiness of the pinned file, and the last operation outcome - kept apart from the status.
+    When the snapshot is stale or the slmgr comparison disagrees, that is shown explicitly.
+    The read-only diagnostics follow when the terminal has rows left, and are dropped first on
+    a short window.
 #>
 function Add-WtLicensingView
 {
@@ -165,9 +280,13 @@ function Add-WtLicensingView
     $Bottom = $Screen.Height - $Layout.FooterRows
     $Inner = $Width - 8
 
+    $Ui = Get-WtLicensingUiState -State $State
+    Set-WtLicensingUiSnapshot -State $State -License $License -RawStatus $License.Inventory.Active
+    $Ui = Get-WtLicensingUiState -State $State
+
     Set-WtScreenText -Screen $Screen -Row 1 -Column 2 -Text (Get-WtString -Key 'Lic.Title') -Style 'Title' -MaxWidth ($Width - 4)
-    $Collected = if ($License.CollectedUtc) { $License.CollectedUtc.ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss') } else { '-' }
-    Set-WtScreenText -Screen $Screen -Row 2 -Column 2 -Text (Get-WtString -Key 'Lic.Collected' -Arguments @($Collected)) -Style 'ItemMeta' -MaxWidth ($Width - 4)
+    $Collected = Get-WtLicensingCollectedText -State $State
+    Set-WtScreenText -Screen $Screen -Row 2 -Column 2 -Text $Collected -Style 'ItemMeta' -MaxWidth ($Width - 4)
 
     $Inventory = $License.Inventory
     $Active = $Inventory.Active
@@ -177,7 +296,7 @@ function Add-WtLicensingView
     $Row = 4
     if ($Row + 9 -le $Bottom)
     {
-        Add-WtScreenBox -Screen $Screen -Row $Row -Column 2 -Width ($Width - 4) -Height 10 -Title (Get-WtString -Key 'Lic.Section.Activation') `
+        Add-WtScreenBox -Screen $Screen -Row $Row -Column 2 -Width ($Width - 4) -Height 11 -Title (Get-WtString -Key 'Lic.Section.Activation') `
             -BorderStyle 'Border' -TitleStyle 'PanelTitle' -Style 'Dialog'
 
         $Line = $Row + 1
@@ -186,21 +305,20 @@ function Add-WtLicensingView
         Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.Edition' -Arguments @($EditionText)) -Style 'Item' -MaxWidth $Inner
         $Line++
 
-        if ($Inventory.Unreadable)
+        $StatusText = Get-WtObservedLicensingStatusText -State $State
+        if (-not (Test-WtLicensingSnapshotFresh -State $State))
         {
-            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @((Get-WtString -Key 'Lic.Status.Unreadable'))) -Style 'Warning' -MaxWidth $Inner
+            $StatusText += ' ' + (Get-WtString -Key 'Lic.Status.Stale')
         }
-        elseif (-not $Active)
-        {
-            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @((Get-WtString -Key 'Lic.Status.Unknown'))) -Style 'Warning' -MaxWidth $Inner
-        }
-        else
-        {
-            $StatusText = '{0} ({1})' -f (Get-WtString -Key "Lic.Status.$($Active.LicenseStatus)"), (Get-WtString -Key 'Lic.Status.Raw' -Arguments @($Active.LicenseStatusRaw))
-            $StatusStyle = if ([int]$Active.LicenseStatusRaw -eq 1) { 'Success' } else { 'Warning' }
-            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @($StatusText)) -Style $StatusStyle -MaxWidth $Inner
-        }
+        $StatusStyle = if ($Ui.LicenseRaw -and [int]$Ui.LicenseRaw.LicenseStatusRaw -eq 1) { 'Success' } else { 'Warning' }
+        Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @($StatusText)) -Style $StatusStyle -MaxWidth $Inner
         $Line++
+
+        if ($Ui.LicenseCollectionUtc)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.CollectedAt' -Arguments @(([datetime]$Ui.LicenseCollectionUtc).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))) -Style 'ItemMeta' -MaxWidth $Inner
+            $Line++
+        }
 
         if ($Active -and $null -ne $Active.GraceRemaining)
         {
@@ -228,15 +346,15 @@ function Add-WtLicensingView
         Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.ToolStatus' -Arguments @((Get-WtActivationToolText -State $State))) -Style 'Item' -MaxWidth $Inner
         $Line++
 
-        $Outcome = if ($State.ActivationOutcome) { [string]$State.ActivationOutcome } else { Get-WtString -Key 'Lic.Outcome.None' }
+        $Outcome = Get-WtActivationOutcomeText -State $State
         Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Lic.Outcome' -Arguments @($Outcome)) -Style 'ItemMeta' -MaxWidth $Inner
 
-        $Row += 10
+        $Row += 11
     }
     else
     {
         # A very short window still shows what the action would do.
-        $Line = if ($Active) { '{0} ({1})' -f (Get-WtString -Key "Lic.Status.$($Active.LicenseStatus)"), $Active.LicenseStatusRaw } else { Get-WtString -Key 'Lic.Status.Unknown' }
+        $Line = Get-WtObservedLicensingStatusText -State $State
         Set-WtScreenText -Screen $Screen -Row $Row -Column 2 -Text (Get-WtString -Key 'Lic.ActStatus' -Arguments @($Line)) -Style 'Item' -MaxWidth ($Width - 4)
         $Row++
     }
@@ -294,13 +412,25 @@ function Add-WtLicensingView
         $Components = $License.Components
         $CompLine = (Get-WtString -Key 'Lic.Components.Slmgr' -Arguments @($(if ($Components.SlmgrAvailable) { Get-WtString -Key 'Common.Yes' } else { Get-WtString -Key 'Common.No' })))
         $CompLine += ' | ' + (Get-WtString -Key 'Lic.Components.Service' -Arguments @($Components.Service, $Components.ServiceStartType))
+        if ($Components.ServiceError)
+        {
+            $CompLine += ' - ' + (Get-WtString -Key 'Lic.Components.ServiceError' -Arguments @([string]$Components.ServiceError))
+        }
         Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $CompLine -Style 'ItemMeta' -MaxWidth $Inner
         $Row++
     }
 
-    if ($Row -le $Bottom -and $License.Components.LastActivationError)
+    if ($Row -le $Bottom -and ($License.Components.LastActivationError -or $License.Components.LastActivationErrorReadError))
     {
-        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Components.LastError' -Arguments @([string]$License.Components.LastActivationError)) -Style 'Warning' -MaxWidth $Inner
+        $ErrorLine = if ($License.Components.LastActivationError)
+        {
+            (Get-WtString -Key 'Lic.Components.LastError' -Arguments @([string]$License.Components.LastActivationError))
+        }
+        else
+        {
+            (Get-WtString -Key 'Lic.Components.LastErrorReadError' -Arguments @([string]$License.Components.LastActivationErrorReadError))
+        }
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $ErrorLine -Style 'Warning' -MaxWidth $Inner
         $Row++
     }
 
@@ -312,13 +442,31 @@ function Add-WtLicensingView
         Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text $Managed -Style 'ItemMeta' -MaxWidth $Inner
     }
 
+    # The slmgr comparison is collected in the background. While it is pending, the view
+    # says so instead of pretending the comparison exists; a discrepancy is shown, never
+    # hidden.
+    if ($State.SlmgrGeneration -gt 0 -and -not $License.Slmgr -and $Row -le $Bottom)
+    {
+        Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.Slmgr.Checking') -Style 'ItemMeta' -MaxWidth $Inner
+        $Row++
+    }
+
+    if ($License.Slmgr -and $License.Slmgr.Available -and $License.Slmgr.Dlv -and $Active)
+    {
+        $SlmgrText = [string]$License.Slmgr.Dlv
+        $CimStatus = [string]$Active.LicenseStatus
+        $Disagrees = $false
+        if ($CimStatus -eq 'Licensed' -and $SlmgrText -notmatch '(?i)licensed') { $Disagrees = $true }
+        elseif ($CimStatus -ne 'Licensed' -and $SlmgrText -notmatch '(?i)(notification|grace|unlicensed)' -and $SlmgrText -notmatch '(?i)error') { $Disagrees = $false }
+
+        if ($Disagrees -and $Row -le $Bottom)
+        {
+            Set-WtScreenText -Screen $Screen -Row $Row -Column 4 -Text (Get-WtString -Key 'Lic.SourceConflict') -Style 'Warning' -MaxWidth $Inner
+        }
+    }
+
     $Screen.Dirty = $true
 }
-
-<#
-.SYNOPSIS
-    Shows the export preview and (on confirmation) writes the redacted report.
-#>
 function Export-WtLicensingReport
 {
     [CmdletBinding()]
@@ -382,7 +530,8 @@ function Invoke-WtLicensingAction
         (Get-WtString -Key 'Lic.Activate.Purpose'),
         (Get-WtString -Key 'Lic.Activate.Network'),
         (Get-WtString -Key 'Lic.Activate.Permissions'),
-        (Get-WtString -Key 'Lic.Activate.Note')
+        (Get-WtString -Key 'Lic.Activate.Note'),
+        (Get-WtString -Key 'Lic.Activate.NotMas')
     )
 
     if (-not (Confirm-WtTui -State $State -Title (Get-WtString -Key 'Lic.Activate.Title') -Lines $Lines -Tone 'Warning'))
@@ -411,6 +560,23 @@ function Invoke-WtLicensingAction
     {
         $ReportLines += (Get-WtString -Key 'Lic.Activate.StatusUnknown')
     }
+
+    # The re-read inventory is the new authoritative snapshot for every view.
+    try
+    {
+        $Fresh = Read-WtLicensingDiagnostics -Refresh
+        $State.Licensing = $Fresh
+        Set-WtLicensingUiSnapshot -State $State -License $Fresh -RawStatus $Fresh.Inventory.Active
+    }
+    catch
+    {
+        # The operation reported its own status; the snapshot refresh failing here is not a
+        # second activation attempt. Mark the snapshot stale instead of pretending it is current.
+        Set-WtLicensingUiStale -State $State -Reason 'post-operation refresh failed'
+    }
+
+    $Outcome = if ($Result.Accepted) { (Get-WtString -Key 'Lic.Activate.Accepted') } else { (Get-WtString -Key 'Lic.Activate.Failed' -Arguments @($Result.ErrorDetail)) }
+    Set-WtLicensingUiOperation -State $State -Outcome $Outcome
 
     Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Lic.Activate.Title') -Lines $ReportLines -Tone $(if ($Result.Accepted) { 'Success' } else { 'Warning' })
 }
@@ -560,7 +726,12 @@ function Start-WtLicensingActivation
         $Components = $null
     }
 
-    if ($License) { $State.Licensing = $License }
+    if ($License)
+    {
+        $State.Licensing = $License
+        Set-WtLicensingUiSnapshot -State $State -License $License -RawStatus $License.Inventory.Active
+        Request-WtLicensingSlmgrCheck -State $State
+    }
     $State.ActivationTool = Get-WtExternalToolState -Spec $Spec
 
     $Verdict = Get-WtWindowsActivationResult -Completion ([string]$Result.Completion) -ExitCode $Result.ExitCode -Before $Before -After $After -Components $Components
@@ -637,7 +808,16 @@ function Start-WtLicensingActivation
         default { }
     }
 
-    $State.ActivationOutcome = $Outcome
+    # The operation outcome is separate from the machine's observed status. The bounded poll
+    # below watches for delayed provider updates without changing what is reported here.
+    Set-WtLicensingUiOperation -State $State -Outcome $Outcome
+    if ($Verdict.CompletionDetermined -and -not $Verdict.Verified -and -not $Verdict.AlreadyActive)
+    {
+        $Ui = Get-WtLicensingUiState -State $State
+        $Ui.OperationPollRemaining = 4
+        $Ui.OperationPollNextUtc = [datetime]::UtcNow.AddSeconds(3)
+    }
+
     Set-WtTuiStatus -State $State -Text $Outcome -Tone $(if ($Verdict.Verified) { 'StatusOk' } elseif ($Verdict.CompletionDetermined) { 'StatusWarn' } else { 'StatusInfo' })
     Show-WtTuiMessage -State $State -Title (Get-WtString -Key 'Act.Confirm.Title') -Lines $Lines -Tone $Tone
 }
@@ -840,6 +1020,83 @@ function Update-WtActivationDownload
 
 <#
 .SYNOPSIS
+    Bounded async read-only polling after an activation operation.
+.DESCRIPTION
+    Some provider updates land a few seconds after the operation's write path completes.
+    This is called once per frame while a poll window is open: it waits for the next poll
+    time (so the interface stays responsive), then performs at most one read-only refresh.
+    The poll never changes what the operation reported - it only observes whether the
+    provider has caught up. When the poll finds a changed status, the shared snapshot is
+    updated and the outcome line is not touched.
+#>
+function Update-WtLicensingOperationPoll
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    $Ui = Get-WtLicensingUiState -State $State
+    if (-not $Ui.OperationPollNextUtc) { return }
+
+    if ([datetime]::UtcNow -lt [datetime]$Ui.OperationPollNextUtc) { return }
+
+    if ($Ui.OperationPollRemaining -le 0)
+    {
+        $Ui.OperationPollNextUtc = $null
+        return
+    }
+
+    $Ui.OperationPollRemaining--
+    $Ui.OperationPollNextUtc = [datetime]::UtcNow.AddSeconds(4)
+
+    $License = $null
+    try
+    {
+        $License = Read-WtLicensingDiagnostics -Refresh
+    }
+    catch
+    {
+        Set-WtLicensingUiStale -State $State -Reason 'poll refresh failed'
+        return
+    }
+
+    if ($License)
+    {
+        # An older background response must never overwrite a newer refresh: only apply the poll
+        # when it is at least as new as what the workspace already has.
+        $CurrentUtc = if ($State.Licensing -and $State.Licensing.CollectedUtc) { [datetime]$State.Licensing.CollectedUtc } else { [datetime]::MinValue }
+        $NewUtc = if ($License.CollectedUtc) { [datetime]$License.CollectedUtc } else { [datetime]::MinValue }
+
+        if ($NewUtc -ge $CurrentUtc)
+        {
+            $State.Licensing = $License
+            Set-WtLicensingUiSnapshot -State $State -License $License -RawStatus $License.Inventory.Active
+            Request-WtLicensingSlmgrCheck -State $State
+            $State.Screen.Dirty = $true
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+    Requests a background slmgr comparison for the shared licensing snapshot.
+.DESCRIPTION
+    Child-process probes (cscript /xpr and /dlv) are never run on the UI thread: the
+    request goes to the background info collector and the result lands through
+    Update-WtInfoCollector on a later frame.
+#>
+function Request-WtLicensingSlmgrCheck
+{
+    [CmdletBinding()]
+    param ([Parameter(Mandatory = $true)][object]$State)
+
+    if (-not $State.InfoCollector) { return }
+
+    $State.SlmgrGeneration++
+    $null = Send-WtInfoCollectorRequest -Collector $State.InfoCollector -Kind 'slmgr' -Generation $State.SlmgrGeneration
+}
+
+<#
+.SYNOPSIS
     Runs the licensing & activation workspace: bounded loop, one primary action, the download of the
     pinned dependency in the background, its own key map.
 #>
@@ -851,6 +1108,8 @@ function Show-WtTuiLicensing
     $License = Read-WtLicensingDiagnostics
     $State.Licensing = $License
     $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+    Set-WtLicensingUiSnapshot -State $State -License $License -RawStatus $License.Inventory.Active
+    Request-WtLicensingSlmgrCheck -State $State
 
     $State.Screen.Dirty = $true
 
@@ -859,6 +1118,7 @@ function Show-WtTuiLicensing
         while ($true)
         {
             Update-WtActivationDownload -State $State
+            Update-WtLicensingOperationPoll -State $State
 
             $Timeout = if ($State.ContainsKey('FrameTimeoutMs')) { [int]$State.FrameTimeoutMs } else { 40 }
             $Key = Invoke-WtTuiFrame -State $State -TimeoutMs $Timeout
@@ -902,6 +1162,8 @@ function Show-WtTuiLicensing
                     $License = Read-WtLicensingDiagnostics -Refresh
                     $State.Licensing = $License
                     $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+                    Set-WtLicensingUiSnapshot -State $State -License $License -RawStatus $License.Inventory.Active
+                    Request-WtLicensingSlmgrCheck -State $State
                     Set-WtTuiStatus -State $State -Text (Get-WtString -Key 'Lic.Refreshed') -Tone 'StatusOk'
                 }
                 'e' { Export-WtLicensingReport -State $State -License $License }
@@ -913,6 +1175,7 @@ function Show-WtTuiLicensing
                     # The settings screen may have changed the method, the local copy or the
                     # diagnostics: show what is current instead of the copies this loop held.
                     if ($State.Licensing) { $License = $State.Licensing }
+                    Set-WtLicensingUiSnapshot -State $State -License $License -RawStatus $License.Inventory.Active
                     $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
                     $State.Screen.Dirty = $true
                 }
@@ -935,6 +1198,7 @@ function Show-WtTuiLicensing
         $State.ActivationOutcome = ''
         $State.ActivationPending = $false
         $State.ActivationProgressSnapshot = ''
+        $State.LicensingUi = $null
         $State.Screen.Dirty = $true
     }
 }

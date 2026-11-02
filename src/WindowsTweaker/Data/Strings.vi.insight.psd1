@@ -171,4 +171,5 @@
     'Tui.State.PendingSignOut' = 'Thiết lập này được đọc khi phiên làm việc bắt đầu, nên chỉ áp dụng sau lần đăng xuất tới.'
     'Tui.State.NoPendingRestart' = 'Không dấu hiệu khởi động lại nào còn chứa mục.'
     'Tui.State.WindowsDefault' = 'Mặc định của Windows'
+    'Cat.Tui.DimensionsPending' = 'trạng thái thực tế: đang kiểm tra trong nền…'
 }

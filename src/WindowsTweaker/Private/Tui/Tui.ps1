@@ -120,6 +120,14 @@ function New-WtTuiState
         # store), so they are cached and refreshed on a bounded cadence instead of being
         # recomputed on every key press while that pane is open.
         OverviewVerify = $null
+        # The background info collector (see InfoCollector.ps1) and the generation
+        # counters that make stale background responses harmless.
+        InfoCollector = $null
+        DriftGeneration = 0
+        SlmgrGeneration = 0
+        LicenseGeneration = 0
+        DimensionsGeneration = 0
+        DimensionPending = @{}
     }
 }
 
@@ -205,6 +213,8 @@ function Sync-WtTuiCatalog
     $State.States = @(Get-WtTweakState)
     $State.History = @(Get-WtHistory -Limit 100)
     $State.DimensionCache = @{}
+    $State.DimensionPending = @{}
+    $State.DimensionsGeneration++
     $State.OverviewVerify = $null
     Update-WtTuiCategories -State $State
     Update-WtTuiItems -State $State
@@ -397,9 +407,23 @@ function Get-WtTuiOverviewItems
     $Interrupted = 0
     if (-not $State.OverviewVerify -or (([datetime]::UtcNow - $State.OverviewVerify.Utc).TotalSeconds -ge 5))
     {
-        try { $Drifted = @(Get-WtDriftInternal -OnlyDrifted).Count } catch { $Drifted = 0 }
-        try { $Interrupted = @(Get-WtInterruptedOperationInternal).Count } catch { $Interrupted = 0 }
-        $State.OverviewVerify = @{ Utc = [datetime]::UtcNow; Drifted = $Drifted; Interrupted = $Interrupted }
+        if ($State.InfoCollector)
+        {
+            # The drift comparison reads the state store and live target values, which is
+            # far too expensive to do on the UI thread. A request goes to the background
+            # collector; until it answers, the previous figures (or zeros on the first
+            # visit) are shown.
+            $State.DriftGeneration++
+            $null = Send-WtInfoCollectorRequest -Collector $State.InfoCollector -Kind 'drift' -Generation $State.DriftGeneration
+            $State.OverviewVerify = @{ Utc = [datetime]::UtcNow; Drifted = $Drifted; Interrupted = $Interrupted }
+        }
+        else
+        {
+            # No collector (tests, minimal hosts): compute synchronously, as before.
+            try { $Drifted = @(Get-WtDriftInternal -OnlyDrifted).Count } catch { $Drifted = 0 }
+            try { $Interrupted = @(Get-WtInterruptedOperationInternal).Count } catch { $Interrupted = 0 }
+            $State.OverviewVerify = @{ Utc = [datetime]::UtcNow; Drifted = $Drifted; Interrupted = $Interrupted }
+        }
     }
     else
     {
@@ -1138,11 +1162,25 @@ function Add-WtTuiDetails
 
     # Configured, effective and ownership are three different answers, and they are cached per
     # row: each costs live reads and the pane repaints on every key press. The cache is cleared
-    # whenever the catalog is refreshed, so it cannot outlive the state it describes.
+    # whenever the catalog is refreshed, so it cannot outlive the state it describes. A cache
+    # miss is served by the background info collector instead of blocking the input loop; with
+    # no collector (tests, minimal hosts) it is computed synchronously as before.
     if (-not $State.DimensionCache) { $State.DimensionCache = @{} }
     if (-not $State.DimensionCache.ContainsKey($Entry.Id))
     {
-        $State.DimensionCache[$Entry.Id] = Get-WtStateDimensionsInternal -Tweak (Get-WtTweakInternal -Id $Entry.Id) -State ([string]$Entry.State)
+        if ($State.InfoCollector)
+        {
+            if (-not $State.DimensionPending.ContainsKey($Entry.Id))
+            {
+                $State.DimensionsGeneration++
+                $State.DimensionPending[$Entry.Id] = $State.DimensionsGeneration
+                $null = Send-WtInfoCollectorRequest -Collector $State.InfoCollector -Kind 'dimensions' -Key $Entry.Id -State ([string]$Entry.State) -Generation $State.DimensionsGeneration
+            }
+        }
+        else
+        {
+            $State.DimensionCache[$Entry.Id] = Get-WtStateDimensionsInternal -Tweak (Get-WtTweakInternal -Id $Entry.Id) -State ([string]$Entry.State)
+        }
     }
 
     $Dimensions = $State.DimensionCache[$Entry.Id]
@@ -1152,6 +1190,10 @@ function Add-WtTuiDetails
         $Sections.Add(@{ Text = (Get-WtString -Key 'Cat.Tui.Effective') + ": " + (Get-WtDimensionLabelInternal -Dimension 'Effective' -Value $Dimensions.Effective) + " (" + (Get-WtDimensionLabelInternal -Dimension 'Evidence' -Value $Dimensions.EffectiveEvidence) + ")"; Style = 'ItemMeta' })
         $Sections.Add(@{ Text = (Get-WtString -Key 'Cat.Tui.Ownership') + ": " + (Get-WtDimensionLabelInternal -Dimension 'Ownership' -Value $Dimensions.Ownership); Style = 'ItemMeta' })
         if ($Dimensions.EffectiveReason) { $Sections.Add(@{ Text = $Dimensions.EffectiveReason; Style = 'ItemMeta' }) }
+    }
+    elseif ($State.DimensionPending.ContainsKey($Entry.Id))
+    {
+        $Sections.Add(@{ Text = (Get-WtString -Key 'Cat.Tui.DimensionsPending'); Style = 'ItemMeta' })
     }
 
     $GroupForEntry = if ($Tweak -and @($Tweak.PSObject.Properties.Name) -contains 'DefinitionGroup') { $Tweak.DefinitionGroup } else { $null }
@@ -1399,6 +1441,17 @@ function Add-WtTuiFooter
             $StatusText = Get-WtString -Key 'Tui.Status.Ready' -Arguments @($Pending)
         }
 
+        # The licensing screens append the observed Windows licensing status to the status line, so
+        # the footer and the workspaces always paint the same authoritative snapshot.
+        if (($State.Licensing -or $State.ExternalTool) -and $State.LicensingUi)
+        {
+            $Observed = Get-WtObservedLicensingStatusText -State $State
+            if ($Observed)
+            {
+                $StatusText = $StatusText + ' | ' + $Observed
+            }
+        }
+
         # The footer paints the Surface background, so the status icon is composed into
         # the string and takes the tone's own colour (green/amber/red) instead of an icon
         # style with a different background.
@@ -1517,6 +1570,7 @@ function Invoke-WtTuiFrame
     )
 
     Update-WtTuiOperation -State $State
+    Update-WtInfoCollector -State $State
 
     # Performance diagnostics (opt-in): a sample is opened for this frame, populated with
     # the dispatch/construct/output durations, and completed by the caller (the main loop
@@ -1634,7 +1688,11 @@ function Invoke-WtTuiFrame
     }
 
     $Raw = Read-WtConsoleKey -TimeoutMs $TimeoutMs
-    if ($Perf) { $Dispatch.Stop() }
+    if ($Perf)
+    {
+        $Dispatch.Stop()
+        $Script:WtTuiPerfContext.WaitMs = $Dispatch.Elapsed.TotalMilliseconds
+    }
 
     if ($Script:WtConsoleInputLost)
     {
@@ -1694,7 +1752,9 @@ function Invoke-WtTuiLoopStep
     )
 
     $DefaultTimeout = if (@($State.Keys) -contains 'FrameTimeoutMs') { [int]$State.FrameTimeoutMs } else { 40 }
+    $GapWatch = if (Test-WtTuiPerf) { [System.Diagnostics.Stopwatch]::StartNew() } else { $null }
     $Key = Invoke-WtTuiFrame -State $State -TimeoutMs $DefaultTimeout
+    if ($GapWatch) { $GapWatch.Stop() }
     if ($null -eq $Key)
     {
         return
@@ -1731,6 +1791,7 @@ function Invoke-WtTuiLoopStep
     if ((Test-WtTuiPerf) -and $Script:WtTuiPerfContext)
     {
         $Script:WtTuiPerfContext.HandlerMs = $TotalHandlerMs
+        if ($GapWatch) { $Script:WtTuiPerfContext.GapMs = $GapWatch.Elapsed.TotalMilliseconds }
         Add-WtTuiPerfSample -Sample $Script:WtTuiPerfContext
         $Script:WtTuiPerfContext = $null
     }
@@ -2318,6 +2379,13 @@ function Initialize-WtTuiState
     $State.Environment = Get-WtEnvironment
     Update-WtTuiCatalog -State $State
 
+    # The background info collector serves the expensive read-only probes (drift,
+    # dimensions, slmgr comparison) without blocking the input loop.
+    if (-not $State.InfoCollector)
+    {
+        $State.InfoCollector = New-WtInfoCollector
+    }
+
     $Notices = [System.Collections.Generic.List[string]]::new()
     if (-not $State.Capability.Unicode)
     {
@@ -2734,6 +2802,12 @@ function Start-WtTui
         catch
         {
             Write-WtLog -Level Debug -Message 'Ctrl+C handling could not be removed.' -NoConsole
+        }
+
+        if ($State.InfoCollector)
+        {
+            Close-WtInfoCollector -Collector $State.InfoCollector
+            $State.InfoCollector = $null
         }
 
         Restore-WtTuiTerminal -Restore $Restore

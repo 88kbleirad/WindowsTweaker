@@ -7,3 +7,8 @@ worker/bin/
 
 # Release archives, checksums and manifest written by tools/New-ReleasePackage.ps1.
 dist/
+# WinUI frontend build output (bin/obj under gui; staged frontend payloads under
+# frontend/ are release artifacts produced by a Windows build host, never committed).
+gui/**/bin/
+gui/**/obj/
+frontend/

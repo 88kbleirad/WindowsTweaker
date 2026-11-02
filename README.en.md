@@ -19,6 +19,11 @@ rolled back to the state that actually existed before - not to a hard-coded defa
 - **Keyboard-driven terminal interface, plus a scriptable CLI.** Standalone `pwsh` - no
   installation or background service. The same backend also drives an optional WPF window
   (Windows 10/11 only).
+- **WinUI 3 desktop frontend** (replaces the console as the primary interface when built)
+  keeping the terminal look: monospace type, square panels, compact tables, explicit status
+  labels, keyboard navigation, Catppuccin Mocha. It talks to the same PowerShell engine
+  through a versioned structured bridge; no terminal, browser or WebView is embedded. See
+  [docs/FRONTEND.md](docs/FRONTEND.md) and [docs/BUILD-WINUI.md](docs/BUILD-WINUI.md).
 - **Diagnostics and configuration drift inspection.** Read-only sanity scan (`S`),
   recommendations for one objective with the reason for every decision (`M`), verification and
   recovery (`V`), capability-loss disclosure for anything a change may stop from working, and a

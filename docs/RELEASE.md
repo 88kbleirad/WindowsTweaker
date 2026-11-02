@@ -22,6 +22,14 @@ file is packaged.
 | `checksums.txt` | same | the bootstrap: the SHA-256 it verifies the download against |
 | `manifest.json` | same | release review, and `WT_BOOTSTRAP_RELEASE_URL` for self-hosters |
 
+The Windows x64 archive **additionally** contains the native WinUI 3 frontend under
+`frontend/` when the release workflow's `frontend-windows` job (a Windows GitHub Actions
+runner) built and uploaded it: the real Release XAML compilation of the app, self-contained
+and unpackaged, with the matching engine module, bridge host and localization tables.
+The internal manifest records `frontend.kind=winui3` and its entry point, and the bootstrap
+launches it only when `WT_BOOTSTRAP_FRONTEND=winui` is set. The ARM64 archive ships without
+a frontend payload until an ARM64 frontend build is validated the same way.
+
 The bootstrap resolves the asset by name (`WindowsTweaker-<platform key>-v<version>.zip`), reads
 the checksum from `checksums.txt` **of the same release**, downloads, verifies, extracts into the
 staging directory and validates what it staged. A missing `checksums.txt` is a hard failure: the
@@ -111,6 +119,42 @@ Manual equivalent: run the packaging command from section 2, then upload **exact
 files to the release - not a re-zipped copy, not a subset. Renaming an archive breaks asset
 selection; omitting `checksums.txt` breaks verification; both are hard failures at the user's end.
 
+### Exact tag command for the frontend release
+
+The Windows frontend release is tagged `v1.2.0` (matches `ModuleVersion`; no such tag exists
+in the repository today). From a clean, committed tree, in this repository:
+
+```bash
+git status --porcelain        # must be empty
+git commit -m "Release 1.2.0 (WinUI frontend)"
+git tag v1.2.0
+git push origin main
+git push origin v1.2.0
+```
+
+Pushing the tag runs `.github/workflows/release.yml`: the `frontend-windows` job builds the
+real WinUI Release frontend on Windows, runs the bridge tests there, and the `release` job
+runs the full validation gate, packages all four platforms (with the frontend payload only
+in the Windows x64 archive), and publishes the six assets. If the release must be a
+**prerelease** while it is validated, publish it with:
+
+```bash
+gh release edit v1.2.0 --prerelease
+```
+
+after the workflow completed (or create the release manually marked prerelease). The
+bootstrap's default `releases/latest` endpoint never returns prereleases, so consumers must
+use the explicit preview selection while that flag is set:
+
+```powershell
+$env:WT_BOOTSTRAP_FRONTEND = 'winui'
+$env:WT_BOOTSTRAP_PRERELEASE = '1'
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
+
+(When the release is no longer a prerelease, drop `WT_BOOTSTRAP_PRERELEASE` and the default
+endpoint selects it.)
+
 After publishing, verify as a user would (a real download is the only proof):
 
 ```powershell
@@ -121,7 +165,13 @@ irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/
 
 The bootstrap prints the resolved tag, the platform key, that the SHA-256 matched, and the staging
 path, then opens the interface. Check the staged `manifest.json` under `$State/release-<tag>/`
-against `dist/manifest.json` before trusting the run.
+against `dist/manifest.json` before trusting the run. To launch the frontend instead of the
+console in the Windows VM:
+
+```powershell
+$env:WT_BOOTSTRAP_FRONTEND = 'winui'
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
 
 ## 5. What has been validated here, and what has not
 

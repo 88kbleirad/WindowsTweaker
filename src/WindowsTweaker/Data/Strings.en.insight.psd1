@@ -1,4 +1,4 @@
-# WindowsTweaker - sanity scan, recommendation, state-dimension and choice-group strings (en).
+﻿# WindowsTweaker - sanity scan, recommendation, state-dimension and choice-group strings (en).
 #
 # A separate part file for the same reason as Strings.en.catalog.psd1: Import-PowerShellDataFile
 # refuses a hashtable literal with more than 500 entries, so feature strings live in their own
@@ -171,4 +171,5 @@
     'Tui.State.PendingSignOut' = 'This setting is read when a session starts, so it applies after the next sign-out.'
     'Tui.State.NoPendingRestart' = 'No restart marker holds entries.'
     'Tui.State.WindowsDefault' = 'Windows default'
+    'Cat.Tui.DimensionsPending' = 'live state: checking in the background…'
 }

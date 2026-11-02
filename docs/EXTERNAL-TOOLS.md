@@ -104,18 +104,22 @@ unknown build is never treated as "new enough".
 
 **Main screen (`N`)** shows, read-only:
 
-- the installed edition (from `HKLM\...\CurrentVersion` product name, fallback to the licensing
-  record);
-- the activation status with the raw status code, and the remaining validity Windows reports (grace
-  days / evaluation end date when the provider exposes them);
+- the installed edition (generation from the build number, edition label from EditionID, with the
+  raw registry name preserved in diagnostics);
+- the activation status with the raw status code, and the collection timestamp; stale or
+  unreadable snapshots are labelled explicitly;
 - the selected method and its duration model, or an explicit "nothing selected yet";
 - tool readiness (not downloaded / verified / mismatch / unsupported platform);
-- the outcome of the last run ("nothing run in this session" until the first `A`).
+- the outcome of the last operation, kept separate from the observed machine status ("nothing run
+  in this session" is never the same as "Windows is not activated").
 
-**Settings & details (`S`)** holds the method selection (keys `1`/`2`/`3`), the download provenance
-and hashes, the upstream source, the documentation link, update (`U`), removal (`R`), and the
-`slmgr /ato` request (`T`) that earlier versions of the licensing workspace offered directly. The
-main screen shows none of this: provenance, hashes, updates and removal are secondary by design.
+**Settings & details (`S`)** shows the same shared licensing snapshot (status + collection time)
+on its own line, then holds the method selection (keys `1`/`2`/`3`), the download provenance and
+hashes, the upstream source, the documentation link, update (`U`), removal (`R`), and the
+`slmgr /ato` request (`T`) - labelled "Request activation using the installed license (slmgr
+/ato) - not the MAS method", with a confirm dialog that says it does not execute the selected
+method. Changing the selected method never changes the machine's observed status. The main
+screen's `A` is the only handler for the selected MAS method.
 
 ## Download, progress and cancellation
 
@@ -154,6 +158,27 @@ method and the launch time, and it is the second half of the duplicate guard: `A
 a second activation while the record still names a live process. The guard is released as soon as
 the tree ends, or when the record is older than the staleness bound and uncheckable. Nothing here
 ever falls back to another method, retries, or starts a second instance.
+
+## Observed status: one shared snapshot, refreshed and bounded
+
+The TUI shows the machine's current Windows licensing state and the outcome of the last activation
+operation as two separate things. The observed status comes from a single shared snapshot
+(`Private/Tui/LicensingUiState.ps1`) that the main screen, the settings screen and the footer all
+paint from, so they cannot disagree.
+
+- The active record is selected from the base Windows licensing products (add-ons such as ESU are
+  kept apart, and Office has a different ApplicationId); the Licensed record wins ties, and the
+  raw status code is always reported. Nothing forces Licensed.
+- Every explicit refresh and every post-operation refresh bypasses the inventory cache. After an
+  activation whose completion was observed but whose status was not yet activated, a bounded poll
+  re-reads the provider a few times at spaced intervals, so a delayed provider update is picked up
+  without blocking the keyboard. An older poll result never overwrites a newer refresh.
+- The collection timestamp is shown, and stale or unreadable snapshots are labelled explicitly.
+- `slmgr /xpr` and `/dlv` are run read-only (through cscript, with a timeout), sanitized, and
+  compared with the CIM selection; when they disagree, the discrepancy is shown instead of a
+  verdict.
+- "Nothing run in this session" is the label of the *last operation* line; it is never presented
+  as "Windows is not activated".
 
 ## Verification: the licensing record is the only witness
 

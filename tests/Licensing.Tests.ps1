@@ -39,7 +39,8 @@ function Global:New-TestLicensingProduct
         [string]$PartialProductKey = 'ABC12',
         [int]$GraceRemaining = 0,
         [string]$EvaluationEndDate = '',
-        [string]$Description = ''
+        [string]$Description = '',
+        [string]$LicenseDependsOn = ''
     )
 
     [pscustomobject]@{
@@ -51,6 +52,7 @@ function Global:New-TestLicensingProduct
         GraceRemaining = $GraceRemaining
         EvaluationEndDate = $EvaluationEndDate
         Description = $Description
+        LicenseDependsOn = $LicenseDependsOn
     }
 }
 
@@ -82,6 +84,79 @@ Describe 'Licensing inventory and status mapping' {
             @($Inventory.Products).Count | Should -Be 2
             $Inventory.Active.LicenseStatus | Should -Be 'Licensed'
             $Inventory.Active.ProductName | Should -Be 'Windows(TM), Professional edition'
+            $Inventory.Selection.MultipleWindowsRecords | Should -BeTrue
+        }
+    }
+
+    It 'does not select an add-on or Office record, and does not force Licensed' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtLicensingAvailable { $true }
+            Mock Get-WtLicensingCim {
+                param ($ClassName)
+                if ($ClassName -eq 'SoftwareLicensingProduct')
+                {
+                    return @(
+                        # A Windows base record still in Notification state (raw 5).
+                        (New-TestLicensingProduct -Name 'Windows(TM), IoTEnterpriseS edition' -LicenseStatus 5 -PartialProductKey 'GHI78'),
+                        # An ESU add-on that depends on the base license.
+                        (New-TestLicensingProduct -Name 'Windows ESU' -LicenseStatus 1 -LicenseDependsOn 'license-id' -PartialProductKey 'ADD9X'),
+                        # An Office record with a different ApplicationId.
+                        (New-TestLicensingProduct -Name 'Microsoft Office 2021' -ApplicationId '0ff1ce15-a989-479d-af46-f275c6370663' -LicenseStatus 1 -PartialProductKey 'OFF12')
+                    )
+                }
+                return @()
+            }
+
+            $Inventory = Read-WtLicensingInventory -Refresh
+            $Inventory.Active.LicenseStatus | Should -Be 'Notification'
+            $Inventory.Active.LicenseStatusRaw | Should -Be 5
+            @($Inventory.Dependents).Count | Should -Be 1
+            $Inventory.Dependents[0].ProductName | Should -Be 'Windows ESU'
+            @($Inventory.Products).Count | Should -Be 1
+            $Inventory.Selection.Rule | Should -Be 'single-candidate'
+        }
+    }
+
+    It 'prefers the activated record over a leftover Notification record' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtLicensingAvailable { $true }
+            Mock Get-WtLicensingCim {
+                param ($ClassName)
+                if ($ClassName -eq 'SoftwareLicensingProduct')
+                {
+                    return @(
+                        (New-TestLicensingProduct -Name 'Windows(TM), IoTEnterpriseS edition' -LicenseStatus 0 -PartialProductKey 'LEF34'),
+                        (New-TestLicensingProduct -Name 'Windows(TM), IoTEnterpriseS 2024 edition' -LicenseStatus 1 -PartialProductKey 'ABC12')
+                    )
+                }
+                return @()
+            }
+
+            $Inventory = Read-WtLicensingInventory -Refresh
+            $Inventory.Active.LicenseStatus | Should -Be 'Licensed'
+            $Inventory.Active.ProductName | Should -Be 'Windows(TM), IoTEnterpriseS 2024 edition'
+        }
+    }
+
+    It 'reports a duplicate installed record without choosing the first one blindly' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtLicensingAvailable { $true }
+            Mock Get-WtLicensingCim {
+                param ($ClassName)
+                if ($ClassName -eq 'SoftwareLicensingProduct')
+                {
+                    return @(
+                        (New-TestLicensingProduct -Name 'Windows(TM), Pro edition' -LicenseStatus 1 -PartialProductKey 'KLM56'),
+                        (New-TestLicensingProduct -Name 'Windows(TM), Pro edition' -LicenseStatus 1 -PartialProductKey 'NOP78')
+                    )
+                }
+                return @()
+            }
+
+            $Inventory = Read-WtLicensingInventory -Refresh
+            $Inventory.Active.LicenseStatus | Should -Be 'Licensed'
+            $Inventory.Selection.MultipleWindowsRecords | Should -BeTrue
+            $Inventory.Selection.CandidateCount | Should -BeGreaterOrEqual 2
         }
     }
 
@@ -148,6 +223,182 @@ Describe 'Licensing inventory and status mapping' {
             $Inventory = Read-WtLicensingInventory -Refresh
             $Inventory.Unreadable | Should -BeTrue
             $Inventory.Reason | Should -Match 'only available on Windows'
+        }
+    }
+}
+
+Describe 'Licensing cache and staleness' {
+
+    BeforeEach {
+        InModuleScope WindowsTweaker {
+            Clear-WtLicensingCache
+        }
+    }
+
+    It 'serves the cached inventory until an explicit refresh replaces it' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtLicensingAvailable { $true }
+            $script:Calls = 0
+            Mock Get-WtLicensingCim {
+                $script:Calls++
+                return @((New-TestLicensingProduct -LicenseStatus 0))
+            }
+
+            $null = Read-WtLicensingInventory
+            $Second = Read-WtLicensingInventory
+            $script:Calls | Should -Be 1
+
+            $Third = Read-WtLicensingInventory -Refresh
+            $script:Calls | Should -Be 2
+            $Third.CollectedUtc | Should -BeGreaterOrEqual $Second.CollectedUtc
+        }
+    }
+
+    It 'bypasses the cache on every explicit and post-operation refresh' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtLicensingAvailable { $true }
+            $script:ProductCalls = 0
+            Mock Get-WtLicensingCim {
+                param ($ClassName)
+                if ($ClassName -eq 'SoftwareLicensingProduct') { $script:ProductCalls++ }
+                return @((New-TestLicensingProduct -LicenseStatus 1))
+            }
+
+            $null = Get-WtLicensingDiagnostics
+            $null = Get-WtLicensingDiagnostics -Refresh
+            $null = Get-WtLicensingDiagnostics -Refresh
+            $script:ProductCalls | Should -Be 3
+        }
+    }
+
+    It 'reports stale snapshots explicitly' {
+        InModuleScope WindowsTweaker {
+            $State = New-WtTestState -Width 100 -Height 30
+            Initialize-WtTuiState -State $State
+            $State.Licensing = [ordered]@{
+                CollectedUtc = [datetime]::UtcNow.AddMinutes(-20)
+                Inventory = [ordered]@{ Unreadable = $false; Active = [pscustomobject]@{ LicenseStatus = 'Licensed'; LicenseStatusRaw = 1; ProductName = 'Windows 11 Pro'; LicenseChannel = 'Retail'; GraceRemaining = $null; EvaluationEndDate = '' } }
+                Time = [ordered]@{}
+                Components = [ordered]@{}
+                Org = [ordered]@{}
+            }
+            Set-WtLicensingUiSnapshot -State $State -License $State.Licensing -RawStatus $State.Licensing.Inventory.Active
+
+            (Test-WtLicensingSnapshotFresh -State $State) | Should -BeFalse
+            $Text = Get-WtObservedLicensingStatusText -State $State
+            $Text | Should -Match 'Licensed'
+        }
+    }
+
+    It 'keeps session outcome separate from the observed machine status' {
+        InModuleScope WindowsTweaker {
+            $State = New-WtTestState -Width 100 -Height 30
+            Initialize-WtTuiState -State $State
+            Set-WtLicensingUiSnapshot -State $State -License $null
+
+            (Get-WtActivationOutcomeText -State $State) | Should -Match 'nothing run in this session'
+
+            Set-WtLicensingUiOperation -State $State -Outcome 'activated'
+            (Get-WtActivationOutcomeText -State $State) | Should -Match 'activated'
+            (Get-WtLicensingUiState -State $State).OperationRanThisSession | Should -BeTrue
+        }
+    }
+
+    It 'does not let an older poll overwrite a newer explicit refresh' {
+        InModuleScope WindowsTweaker {
+            $State = New-WtTestState -Width 100 -Height 30
+            Initialize-WtTuiState -State $State
+
+            # The workspace already holds a newer snapshot (CollectedUtc = now).
+            $Newer = [ordered]@{
+                CollectedUtc = [datetime]::UtcNow
+                Inventory = [ordered]@{ Unreadable = $false; Active = [pscustomobject]@{ LicenseStatus = 'Licensed'; LicenseStatusRaw = 1; ProductName = 'Windows 11 Pro'; LicenseChannel = 'Retail' } }
+                Time = [ordered]@{}
+                Components = [ordered]@{}
+                Org = [ordered]@{}
+            }
+            $State.Licensing = $Newer
+            Set-WtLicensingUiSnapshot -State $State -License $Newer -RawStatus $Newer.Inventory.Active
+
+            # The poll is a snapshot that is already older than what the workspace holds.
+            $Older = [ordered]@{
+                CollectedUtc = [datetime]::UtcNow.AddSeconds(-30)
+                Inventory = [ordered]@{ Unreadable = $false; Active = [pscustomobject]@{ LicenseStatus = 'Notification'; LicenseStatusRaw = 5; ProductName = 'Windows(TM)'; LicenseChannel = 'Retail' } }
+                Time = [ordered]@{}
+                Components = [ordered]@{}
+                Org = [ordered]@{}
+            }
+            Mock Read-WtLicensingDiagnostics { return $Older }
+
+            $Ui = Get-WtLicensingUiState -State $State
+            $Ui.OperationPollRemaining = 2
+            $Ui.OperationPollNextUtc = [datetime]::UtcNow.AddSeconds(-1)
+
+            Update-WtLicensingOperationPoll -State $State
+
+            # The older response is discarded; the observed status stays the newer Licensed one.
+            $State.Licensing.Inventory.Active.LicenseStatus | Should -Be 'Licensed'
+            (Get-WtObservedLicensingStatusText -State $State) | Should -Match 'Licensed'
+        }
+    }
+}
+
+Describe 'Licensing edition label' {
+
+    It 'derives the generation from the build, not the legacy registry name' {
+        InModuleScope WindowsTweaker {
+            $Environment = [pscustomobject]@{
+                OSName = 'Windows 10 IoT Enterprise LTSC 2024'
+                OSBuild = 26100
+                OSEditionID = 'IoTEnterpriseS'
+            }
+
+            $Edition = Get-WtWindowsActivationEdition -Environment $Environment
+
+            $Edition.Generation | Should -Be 'Windows11'
+            $Edition.Name | Should -Match 'Windows 11'
+            $Edition.Name | Should -Match 'IoT Enterprise LTSC'
+            $Edition.RegistryName | Should -Be 'Windows 10 IoT Enterprise LTSC 2024'
+            $Edition.EditionId | Should -Be 'IoTEnterpriseS'
+        }
+    }
+
+    It 'falls back to the registry name when the edition id is missing' {
+        InModuleScope WindowsTweaker {
+            $Environment = [pscustomobject]@{ OSName = 'Windows 10 Enterprise'; OSBuild = 19045; OSEditionID = $null }
+            $Edition = Get-WtWindowsActivationEdition -Environment $Environment
+            $Edition.Generation | Should -Be 'Windows10'
+            $Edition.Name | Should -Be 'Windows 10 Enterprise'
+        }
+    }
+}
+
+Describe 'slmgr comparison probe' {
+
+    It 'runs the read-only probes and sanitizes the output' {
+        InModuleScope WindowsTweaker {
+            Mock Test-WtLicensingAvailable { $true }
+            Mock Get-Command {
+                param ($Name)
+                if ($Name -match 'cscript') { return [pscustomobject]@{ Source = 'C:\Windows\System32\cscript.exe' } }
+                if ($Name -match 'slmgr') { return [pscustomobject]@{ Source = 'C:\Windows\System32\slmgr.vbs' } }
+                return $null
+            }
+            Mock Invoke-WtSlmgrProbe {
+                param ($Argument)
+                if ($Argument -eq '/xpr')
+                {
+                    return @{ Available = $true; Output = "ERROR CODE: 0x00000000`nWindows(R), Professional edition`nThe machine is permanently activated."; Error = '' }
+                }
+                return @{ Available = $true; Output = "License Status: Licensed`nPartial Product Key: ABC12`nKMS machine name from DNS: kms.example.internal"; Error = '' }
+            }
+
+            $Comparison = Get-WtSlmgrComparison
+            $Comparison.Available | Should -BeTrue
+            $Comparison.Xpr | Should -Match 'permanently activated'
+            $Comparison.Dlv | Should -Match 'License Status'
+            # Hostnames are sanitized.
+            $Comparison.Dlv | Should -Not -Match 'kms\.example'
         }
     }
 }

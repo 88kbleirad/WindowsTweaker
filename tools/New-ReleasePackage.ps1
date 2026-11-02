@@ -60,7 +60,13 @@ param(
     # platform table.
     [Parameter(Mandatory = $false)][switch]$WorkersOnly,
 
-    [Parameter(Mandatory = $false)][int]$WorkerProtocol = 1
+    [Parameter(Mandatory = $false)][int]$WorkerProtocol = 1,
+
+    # Directory holding per-platform frontend payloads as `frontend/<platform-key>/...`
+    # (default: the repository root's `frontend/` folder). The release workflow stages
+    # the CI-built frontend here before packaging; tests use this parameter to point at
+    # a fixture without touching the repository tree.
+    [Parameter(Mandatory = $false)][string]$FrontendRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -257,6 +263,27 @@ try {
                 Add-WtPackageFile -Archive $Archive -EntryName "licenses/$Relative" -SourcePath $File.FullName -Records $Records
             }
 
+            # Native WinUI frontend (optional, Windows platforms only): when `frontend/`
+            # exists at the repository root with a per-platform build, it ships inside the
+            # archive under `frontend/`. The bootstrap launches it only on explicit request
+            # (WT_BOOTSTRAP_FRONTEND=winui) and only when it is present, so releases
+            # without a frontend build are unchanged (and Linux archives never carry one).
+            if ($Platform.Os -eq 'windows') {
+                $FrontendRoot = if ($FrontendRoot) { $FrontendRoot } else { Join-Path $Root 'frontend' }
+                if (Test-Path -LiteralPath $FrontendRoot -PathType Container) {
+                    foreach ($FrontendFile in @(Get-ChildItem -LiteralPath $FrontendRoot -Recurse -File |
+                        Where-Object { $_.FullName -match [regex]::Escape($Platform.Key) } |
+                        Sort-Object FullName)) {
+                        # One archive carries exactly one frontend build, so the platform
+                        # folder is dropped: the staged layout is `frontend/<file>`, which
+                        # is the path the bootstrap resolves.
+                        $Relative = $FrontendFile.FullName.Substring($FrontendRoot.Length + 1) -replace '\\', '/'
+                        $Relative = ($Relative -split '/', 2)[1]
+                        Add-WtPackageFile -Archive $Archive -EntryName "frontend/$Relative" -SourcePath $FrontendFile.FullName -Records $Records
+                    }
+                }
+            }
+
             # Worker binary: the canonical path for this platform key, built above.
             $WorkerSource = Join-Path $Root ($Platform.WorkerPath -replace '/', [System.IO.Path]::DirectorySeparatorChar)
             if (-not (Test-Path -LiteralPath $WorkerSource -PathType Leaf)) {
@@ -288,6 +315,14 @@ try {
                 files = @($Records.ToArray())
                 createdUtc = $CreatedUtc
                 note = 'This manifest is part of the archive and intentionally carries no archive hash; release integrity is published separately in checksums.txt and the release manifest.'
+            }
+            $FrontendRecords = @($Records | Where-Object { $_.path -like 'frontend/*' })
+            if ($FrontendRecords.Count -gt 0) {
+                $Manifest.frontend = [ordered]@{
+                    kind = 'winui3'
+                    entryPoint = 'frontend/WindowsTweaker.WinUI.exe'
+                    builtOn = 'windows-latest (GitHub Actions, x64)'
+                }
             }
             $ManifestJson = $Manifest | ConvertTo-Json -Depth 8
             $ManifestEntry = $Archive.CreateEntry('manifest.json', [System.IO.Compression.CompressionLevel]::Optimal)

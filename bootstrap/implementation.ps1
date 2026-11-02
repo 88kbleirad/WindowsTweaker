@@ -839,8 +839,50 @@ function Get-WtBootstrapContent {
     Fetches the release metadata (GitHub API or explicit override URL).
 #>
 function Get-WtBootstrapRelease {
-    $ReleaseUrl = "https://api.github.com/repos/$($Script:WtBootstrapRepository)/releases/latest"
-    if ($env:WT_BOOTSTRAP_RELEASE_URL) { $ReleaseUrl = $env:WT_BOOTSTRAP_RELEASE_URL }
+    # Selection order (all explicit, none of them "maybe"):
+    #   1. WT_BOOTSTRAP_RELEASE_URL      - exact metadata URL (unchanged, highest priority).
+    #   2. WT_BOOTSTRAP_RELEASE_TAG      - exact tag on the project repository, including a
+    #                                      prerelease tag. The tag may be given with or
+    #                                      without the leading 'v'.
+    #   3. WT_BOOTSTRAP_PRERELEASE=1    - the newest release of the project repository,
+    #                                      including prereleases. The default endpoint below
+    #                                      never returns prereleases, so this is the only
+    #                                      way the preview-selection contract is honest.
+    #   4. default                        - `releases/latest` (the latest *non-prerelease*
+    #                                      release; GitHub's endpoint excludes prereleases).
+    $ReleaseUrl = ''
+    if ($env:WT_BOOTSTRAP_RELEASE_URL) {
+        $ReleaseUrl = [string]$env:WT_BOOTSTRAP_RELEASE_URL
+    } elseif ($env:WT_BOOTSTRAP_RELEASE_TAG) {
+        $Tag = ([string]$env:WT_BOOTSTRAP_RELEASE_TAG).Trim()
+        if ($Tag.StartsWith('v')) { $Tag = $Tag.Substring(1) }
+        if (-not $Tag) { throw 'PACKAGE: WT_BOOTSTRAP_RELEASE_TAG is empty.' }
+        $Tag = [uri]::EscapeDataString($Tag)
+        $ReleaseUrl = "https://api.github.com/repos/$($Script:WtBootstrapRepository)/releases/tags/$Tag"
+    } elseif ($env:WT_BOOTSTRAP_PRERELEASE -eq '1') {
+        $ListUrl = "https://api.github.com/repos/$($Script:WtBootstrapRepository)/releases?per_page=100"
+        $Bytes = Get-WtBootstrapContent -Url $ListUrl -MaxBytes 2MB
+        try {
+            $List = [System.Text.Encoding]::UTF8.GetString($Bytes) | ConvertFrom-Json
+        } catch {
+            throw "PACKAGE: Release list from $ListUrl is not valid JSON: $($_.Exception.Message)"
+        }
+        if ($null -eq $List -or @($List).Count -eq 0) {
+            throw "PACKAGE: No releases were found for $($Script:WtBootstrapRepository) (PRERELEASE selection)."
+        }
+        # The API returns releases newest-first. Drafts are never served by the API, so the
+        # newest entry is the newest released work - prerelease or stable.
+        $Json = @($List)[0]
+        # Normalise the list entry to the single-release shape the rest of the bootstrap
+        # consumes (the list endpoint returns all fields a release object has, so this is
+        # just a shape guard for 5.1's ConvertFrom-Json array handling).
+        if ($Json.PSObject.Properties['tag_name'] -and $Json.PSObject.Properties['assets']) {
+            return $Json
+        }
+        throw "PACKAGE: The newest release for $($Script:WtBootstrapRepository) is missing tag_name or assets."
+    } else {
+        $ReleaseUrl = "https://api.github.com/repos/$($Script:WtBootstrapRepository)/releases/latest"
+    }
 
     $Bytes = Get-WtBootstrapContent -Url $ReleaseUrl -MaxBytes 2MB
     try {
@@ -1353,6 +1395,25 @@ function Resolve-WtBootstrapEntryPoint {
     if ($env:WT_BOOTSTRAP_ENTRYPOINT) {
         return [System.IO.Path]::GetFullPath($env:WT_BOOTSTRAP_ENTRYPOINT)
     }
+
+    # The native WinUI frontend is an opt-in launch target: it is only selected when the
+    # caller asked for it. When it was requested but the release does not ship it, that is
+    # an actionable error - never a silent fallback to the console TUI, because a user who
+    # asked for the frontend must learn the release has none instead of ending up in a
+    # different interface.
+    if ($env:WT_BOOTSTRAP_FRONTEND) {
+        $RequestedFrontend = [string]$env:WT_BOOTSTRAP_FRONTEND
+        if ($RequestedFrontend -ne 'winui') {
+            throw "LAUNCH: WT_BOOTSTRAP_FRONTEND must be 'winui' or empty; got '$RequestedFrontend'."
+        }
+
+        $Frontend = Join-Path $Staging 'frontend/WindowsTweaker.WinUI.exe'
+        if (Test-Path -LiteralPath $Frontend -PathType Leaf) {
+            return $Frontend
+        }
+        throw "PACKAGE: WT_BOOTSTRAP_FRONTEND=winui was requested but the staged release does not contain a frontend build (expected $Frontend). Use the console interface instead (clear WT_BOOTSTRAP_FRONTEND), or use a release that includes the frontend."
+    }
+
     return (Join-Path $Staging 'WindowsTweaker.ps1')
 }
 
@@ -1424,22 +1485,7 @@ function Invoke-WtBootstrapLaunch {
         throw "LAUNCH: Entry point not found after staging: $EntryPoint"
     }
 
-    $HostExe = $PwshPath
-    if (-not $HostExe -or -not (Test-Path -LiteralPath $HostExe -PathType Leaf)) {
-        $HostExe = ''
-        foreach ($Command in @(Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Ignore)) {
-            if ($Command -and $Command.Source) { $HostExe = [string]$Command.Source; break }
-        }
-        if (-not $HostExe) {
-            foreach ($Command in @(Get-Command -Name 'powershell' -CommandType Application -ErrorAction Ignore)) {
-                if ($Command -and $Command.Source) { $HostExe = [string]$Command.Source; break }
-            }
-        }
-    }
-    if (-not $HostExe) { throw 'LAUNCH: No PowerShell host executable found to start the interface.' }
-
     $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $StartInfo.FileName = $HostExe
     $StartInfo.UseShellExecute = $false
     $StartInfo.CreateNoWindow = $false
     $StartInfo.RedirectStandardInput = $false
@@ -1451,8 +1497,31 @@ function Invoke-WtBootstrapLaunch {
         $StartInfo.WorkingDirectory = [System.IO.Path]::GetTempPath()
     }
 
-    $AllArguments = @('-NoProfile', '-File', $EntryPoint) + @($Argument)
-    $StartInfo.Arguments = ConvertTo-WtBootstrapArgumentString -Argument $AllArguments
+    # The native frontend is an executable entry point; a PowerShell entry point (the
+    # console TUI or the CLI) is launched through the best available PowerShell host.
+    if ($EntryPoint -match '\.exe$') {
+        $StartInfo.FileName = $EntryPoint
+        $StartInfo.Arguments = ConvertTo-WtBootstrapArgumentString -Argument $Argument
+    } else {
+        $HostExe = $PwshPath
+        if (-not $HostExe -or -not (Test-Path -LiteralPath $HostExe -PathType Leaf)) {
+            $HostExe = ''
+            foreach ($Command in @(Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Ignore)) {
+                if ($Command -and $Command.Source) { $HostExe = [string]$Command.Source; break }
+            }
+            if (-not $HostExe) {
+                foreach ($Command in @(Get-Command -Name 'powershell' -CommandType Application -ErrorAction Ignore)) {
+                    if ($Command -and $Command.Source) { $HostExe = [string]$Command.Source; break }
+                }
+            }
+        }
+        if (-not $HostExe) { throw 'LAUNCH: No PowerShell host executable found to start the interface.' }
+
+        $StartInfo.FileName = $HostExe
+        $AllArguments = @('-NoProfile', '-File', $EntryPoint) + @($Argument)
+        $StartInfo.Arguments = ConvertTo-WtBootstrapArgumentString -Argument $AllArguments
+    }
+
     foreach ($Key in $EnvironmentVariable.Keys) {
         $StartInfo.EnvironmentVariables[[string]$Key] = [string]$EnvironmentVariable[$Key]
     }

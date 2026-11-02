@@ -1256,6 +1256,169 @@ Describe 'Interface view' {
             $State.ActivationTool = $null
         }
     }
+
+    It 'paints the same refreshed status on the main screen, the settings screen and the footer' {
+        InModuleScope WindowsTweaker {
+            function New-LocalLicensingProduct
+            {
+                param ([string]$Name, [int]$LicenseStatus, [string]$PartialProductKey)
+                [pscustomobject]@{
+                    Name = $Name
+                    ApplicationId = '55c92734-d682-4d71-983e-d6ec3f16059f'
+                    LicenseStatus = $LicenseStatus
+                    LicenseChannel = 'Retail'
+                    PartialProductKey = $PartialProductKey
+                    GraceRemaining = $null
+                    EvaluationEndDate = ''
+                    Description = ''
+                    LicenseDependsOn = ''
+                }
+            }
+
+            Mock Test-WtLicensingAvailable { $true }
+            $script:Rows = @(
+                (New-LocalLicensingProduct -Name 'Windows(TM), IoTEnterpriseS edition' -LicenseStatus 5 -PartialProductKey 'GHI78'),
+                (New-LocalLicensingProduct -Name 'Windows(TM), Professional edition' -LicenseStatus 0 -PartialProductKey 'LEF34')
+            )
+            Mock Get-WtLicensingCim { param ($ClassName) if ($ClassName -eq 'SoftwareLicensingProduct') { return $script:Rows } return @() }
+
+            $State = New-WtTestState -Width 100 -Height 34
+            Initialize-WtTuiState -State $State
+            $State.Licensing = Read-WtLicensingDiagnostics -Refresh
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            Set-WtLicensingUiSnapshot -State $State -License $State.Licensing -RawStatus $State.Licensing.Inventory.Active
+
+            # Main screen.
+            $State.ForceRepaint = $true
+            Update-WtTuiView -State $State
+            $Main = (ConvertTo-WtScreenPlainText -Screen $State.Screen) -join "`n"
+            $Main | Should -Match 'Notification'
+            $Main | Should -Match 'status code 5'
+            $Main | Should -Match ([regex]::Escape((Get-WtString -Key 'Lic.CollectedAt').Split('{')[0].Trim()))
+
+            # Settings screen uses the same snapshot.
+            $State.ExternalTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.ForceRepaint = $true
+            Update-WtTuiView -State $State
+            $Settings = (ConvertTo-WtScreenPlainText -Screen $State.Screen) -join "`n"
+            $Settings | Should -Match 'Notification'
+            $Settings | Should -Match 'status code 5'
+
+            # Footer appends the same observed status.
+            $Footer = ($Main -split "`n") | Select-Object -Last 2
+            ($Footer -join ' ') | Should -Match 'Notification'
+            $State.Licensing = $null
+            $State.ExternalTool = $null
+            $State.ActivationTool = $null
+        }
+    }
+
+    It 'changing the selected method does not change the observed status' {
+        InModuleScope WindowsTweaker {
+            function New-LocalLicensingProduct
+            {
+                param ([int]$LicenseStatus)
+                [pscustomobject]@{
+                    Name = 'Windows(TM), Professional edition'
+                    ApplicationId = '55c92734-d682-4d71-983e-d6ec3f16059f'
+                    LicenseStatus = $LicenseStatus
+                    LicenseChannel = 'Retail'
+                    PartialProductKey = 'ABC12'
+                    GraceRemaining = $null
+                    EvaluationEndDate = ''
+                    Description = ''
+                    LicenseDependsOn = ''
+                }
+            }
+
+            Mock Test-WtLicensingAvailable { $true }
+            Mock Get-WtLicensingCim { param ($ClassName) if ($ClassName -eq 'SoftwareLicensingProduct') { return @((New-LocalLicensingProduct -LicenseStatus 5)) } return @() }
+
+            $State = New-WtTestState -Width 100 -Height 34
+            Initialize-WtTuiState -State $State
+            $State.Licensing = Read-WtLicensingDiagnostics -Refresh
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            Set-WtLicensingUiSnapshot -State $State -License $State.Licensing -RawStatus $State.Licensing.Inventory.Active
+
+            $Before = Get-WtObservedLicensingStatusText -State $State
+
+            $null = Set-WtWindowsActivationMethodSetting -Id 'HWID'
+
+            $After = Get-WtObservedLicensingStatusText -State $State
+            $After | Should -Be $Before
+            $After | Should -Match 'Notification'
+        }
+    }
+}
+
+Describe 'Activation action dispatch' {
+
+    It 'runs only the selected-method action from A on the main workspace' {
+        InModuleScope WindowsTweaker {
+            New-WtTestInstalledCopy
+            Mock Test-WtExternalToolSupported { $true }
+            $null = Set-WtWindowsActivationMethodSetting -Id 'HWID'
+            $script:MethodRan = $false
+            $script:InstalledRan = $false
+            Mock Start-WtLicensingActivation { param ($State, $Method, $Tool) $script:MethodRan = $true; return $null }
+            Mock Invoke-WtLicensingAction { $script:InstalledRan = $true }
+
+            # A then confirmation.
+            $State = New-WtTestState -Width 100 -Height 30 -Keys @(
+                (New-WtTestKey -Name 'Char' -Character 'a'),
+                (New-WtTestKey -Name 'Char' -Character 'y'),
+                (New-WtTestKey -Name 'Enter'),
+                (New-WtTestKey -Name 'Escape')
+            )
+            Initialize-WtTuiState -State $State
+            $State.Environment = [pscustomobject]@{ OSName = 'Windows 11 Pro'; OSBuild = 26100; OSEditionID = 'Professional' }
+            $State.ActivationTool = Get-WtExternalToolState -Spec (Get-WtExternalToolSpec)
+            $State.Licensing = Read-WtLicensingDiagnostics
+
+            Invoke-WtWindowsActivationAction -State $State -License $State.Licensing
+
+            $script:MethodRan | Should -BeTrue
+            $script:InstalledRan | Should -BeFalse
+        }
+    }
+
+    It 'routes T to the installed-license request and never to the selected method' {
+        InModuleScope WindowsTweaker {
+            $script:MethodRan = $false
+            $script:InstalledRan = $false
+            Mock Start-WtLicensingActivation { $script:MethodRan = $true }
+            Mock Invoke-WtLicensingAction { $script:InstalledRan = $true }
+
+            # T then confirmation inside the settings screen.
+            $State = New-WtTestState -Width 100 -Height 30 -Keys @(
+                (New-WtTestKey -Name 'Char' -Character 't'),
+                (New-WtTestKey -Name 'Char' -Character 'y'),
+                (New-WtTestKey -Name 'Enter'),
+                (New-WtTestKey -Name 'Escape')
+            )
+            Initialize-WtTuiState -State $State
+            $State.Licensing = Read-WtLicensingDiagnostics
+
+            Show-WtTuiActivationSettings -State $State
+
+            $script:InstalledRan | Should -BeTrue
+            $script:MethodRan | Should -BeFalse
+        }
+    }
+
+    It 'keyboard dispatch cannot confuse the two activation actions' {
+        InModuleScope WindowsTweaker {
+            # The handlers are distinct functions with distinct names; the switch arms are exact.
+            $MainSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../src/WindowsTweaker/Private/Tui/LicensingWorkspace.ps1') -Raw
+            $SettingsSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../src/WindowsTweaker/Private/Tui/ExternalToolWorkspace.ps1') -Raw
+
+            $MainSource | Should -Match "'a' \{ Invoke-WtWindowsActivationAction"
+            $MainSource | Should -Not -Match "'a' \{ Invoke-WtLicensingAction"
+            $SettingsSource | Should -Match "'t'"
+            $SettingsSource | Should -Match 'Invoke-WtLicensingAction -State \$State -License \$License'
+            $SettingsSource | Should -Not -Match "'t'[\s\S]*Start-WtLicensingActivation"
+        }
+    }
 }
 
 Describe 'Workspace actions' {
@@ -1501,7 +1664,8 @@ Describe 'Workspace actions' {
             Should -Invoke Suspend-WtTuiConsole -Times 1 -Exactly
             Should -Invoke Resume-WtTuiConsole -Times 1 -Exactly
             $State.Licensing | Should -Be $script:LicenseAfter
-            $State.ActivationOutcome | Should -Be (Get-WtString -Key 'Act.Outcome.Activated')
+            (Get-WtActivationOutcomeText -State $State) | Should -Be (Get-WtString -Key 'Act.Outcome.Activated')
+            (Get-WtLicensingUiState -State $State).OperationRanThisSession | Should -BeTrue
         }
     }
 

@@ -86,6 +86,8 @@ function New-WtTuiPerfSample
         HandlerMs   = [double]0
         ConstructMs = [double]0
         OutputMs    = [double]0
+        WaitMs      = [double]0
+        GapMs       = [double]0
         RowsWritten = 0
         Painted     = $false
     }
@@ -189,6 +191,8 @@ function Write-WtTuiPerfSummary
     $Construct = @($Samples | Where-Object { $_.Painted } | ForEach-Object { [double]$_.ConstructMs } | Sort-Object)
     $Output   = @($Samples | Where-Object { $_.Painted } | ForEach-Object { [double]$_.OutputMs } | Sort-Object)
     $Rows     = @($Samples | Where-Object { $_.Painted } | ForEach-Object { [double]$_.RowsWritten } | Sort-Object)
+    $Wait     = @($Samples | ForEach-Object { [double]$_.WaitMs } | Sort-Object)
+    $Gap     = @($Samples | ForEach-Object { [double]$_.GapMs } | Sort-Object)
 
     $Elapsed = ([datetime]::UtcNow - $Perf.WallStart).TotalSeconds
     $Cpu = [double]0
@@ -203,6 +207,8 @@ function Write-WtTuiPerfSummary
     Write-WtLog -Level Information -Message "TUI performance handler (ms): median=$(Get-WtPerfPercentile -Values ([double[]]$Handler) -Percentile 0.5) p95=$(Get-WtPerfPercentile -Values ([double[]]$Handler) -Percentile 0.95) max=$(Get-WtPerfPercentile -Values ([double[]]$Handler) -Percentile 1)" -NoConsole
     Write-WtLog -Level Information -Message "TUI performance frame build (ms): median=$(Get-WtPerfPercentile -Values ([double[]]$Construct) -Percentile 0.5) p95=$(Get-WtPerfPercentile -Values ([double[]]$Construct) -Percentile 0.95) max=$(Get-WtPerfPercentile -Values ([double[]]$Construct) -Percentile 1)" -NoConsole
     Write-WtLog -Level Information -Message "TUI performance frame output (ms): median=$(Get-WtPerfPercentile -Values ([double[]]$Output) -Percentile 0.5) p95=$(Get-WtPerfPercentile -Values ([double[]]$Output) -Percentile 0.95) max=$(Get-WtPerfPercentile -Values ([double[]]$Output) -Percentile 1)" -NoConsole
+    Write-WtLog -Level Information -Message "TUI performance input wait (ms): median=$(Get-WtPerfPercentile -Values ([double[]]$Wait) -Percentile 0.5) p95=$(Get-WtPerfPercentile -Values ([double[]]$Wait) -Percentile 0.95) max=$(Get-WtPerfPercentile -Values ([double[]]$Wait) -Percentile 1)" -NoConsole
+    Write-WtLog -Level Information -Message "TUI performance loop gap (ms): median=$(Get-WtPerfPercentile -Values ([double[]]$Gap) -Percentile 0.5) p95=$(Get-WtPerfPercentile -Values ([double[]]$Gap) -Percentile 0.95) max=$(Get-WtPerfPercentile -Values ([double[]]$Gap) -Percentile 1)" -NoConsole
     if ($Rows.Count -gt 0)
     {
         Write-WtLog -Level Information -Message "TUI performance rows written per painted frame: median=$(Get-WtPerfPercentile -Values ([double[]]$Rows) -Percentile 0.5) p95=$(Get-WtPerfPercentile -Values ([double[]]$Rows) -Percentile 0.95) max=$(Get-WtPerfPercentile -Values ([double[]]$Rows) -Percentile 1)" -NoConsole

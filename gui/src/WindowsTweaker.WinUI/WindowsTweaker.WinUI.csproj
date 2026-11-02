@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WindowsTweaker.WinUI - the native WinUI 3 frontend.
+
+    Windows App SDK 1.8.260921001 (latest stable 1.8 servicing, verified on NuGet) on
+    .NET 10 (LTS). The engine lives in PowerShell; this project is only presentation +
+    the bridge client (which comes from the shared WindowsTweaker.Gui.Core project).
+    The Windows App SDK 2.x line is the current major (2.6.4 as of 2026-10) with the
+    same OS floor and is a drop-in upgrade path; 1.8 is kept because the project was
+    authored against it and no Windows build environment is available in this
+    repository to validate a major bump (see docs/FRONTEND.md).
+
+    Build prerequisites (al documented in docs/FRONTEND.md and docs/BUILD-WINUI.md):
+      * Windows 10/11 with the Visual Studio 2022 workloads "Windows application
+        development" (the Windows App SDK C# templates) and ".NET desktop development";
+      * .NET SDK 10.0.x (the TFM targets 10.0.19041.0, which works on server and
+        build machines; the OS floor for running is Windows 10 1809+, so Windows 11
+        IoT Enterprise LTSC 2024 (build 26100) is comfortably inside);
+      * the Windows App SDK 1.8 runtime (installed by the MSIX package automatically).
+
+    Single-project MSIX: `dotnet publish` produces the package, and the app runs
+    packaged. It is marked unpackaged-compatible for development (`WindowsPackageType`
+    can be set to None to launch straight from the build output against a locally
+    installed runtime).
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <RootNamespace>WindowsTweaker.WinUI</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifier Condition="'$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(Platform)' != 'ARM64'">win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Debug is unpackaged (fast development, runs against a locally installed Windows
+         App SDK runtime); Release is the single-project MSIX package. These two cannot
+         coexist: the MSIX packaging targets reject WindowsPackageType=None + AppxPackage
+         (verified during restore/build). -->
+    <EnableMsixTooling Condition="'$(Configuration)' != 'Debug'">true</EnableMsixTooling>
+    <AppxPackage Condition="'$(Configuration)' != 'Debug'">true</AppxPackage>
+    <AppxPackageSigningEnabled Condition="'$(Configuration)' != 'Debug'">false</AppxPackageSigningEnabled>
+    <WindowsPackageType Condition="'$(Configuration)' == 'Debug'">None</WindowsPackageType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <!-- BuildTools floor comes from Microsoft.WindowsAppSDK 1.8.260921001's dependency
+         (NU1605 verified during restore: >= 10.0.26100.4654). -->
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WindowsTweaker.Gui.Core/WindowsTweaker.Gui.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The engine (PowerShell module + bridge host) ships inside the package. -->
+  <ItemGroup>
+    <None Include="..\..\..\src\WindowsTweaker\**\*" Link="engine/%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\src\WindowsTweaker\WindowsTweaker.psd1" Link="engine/WindowsTweaker.psd1"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\WindowsTweaker.ps1" Link="engine/WindowsTweaker.ps1"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**" />
+  </ItemGroup>
+
+</Project>

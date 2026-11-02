@@ -252,4 +252,31 @@ Describe 'Performance diagnostics' {
             (Get-WtPerfPercentile -Values $Values -Percentile 1) | Should -BeLessThan 100
         }
     }
+
+    It 'records input wait and loop gap metrics on a real frame' {
+        InModuleScope WindowsTweaker {
+            Set-WtTuiPerf -Enabled $true
+
+            $State = New-WtTestState -Width 100 -Height 30 -Keys @(,(New-WtTestKey -Name 'Down'))
+            Initialize-WtTuiState -State $State
+            try
+            {
+                Invoke-WtTuiFrame -State $State -TimeoutMs 30
+                Invoke-WtTuiFrame -State $State -TimeoutMs 30
+
+                $Samples = Get-WtTuiPerfSamples
+                $Samples.Count | Should -BeGreaterOrEqual 1
+                foreach ($Sample in $Samples)
+                {
+                    $Sample.WaitMs | Should -BeGreaterOrEqual 0
+                    $Sample.GapMs | Should -BeGreaterOrEqual 0
+                }
+            }
+            finally
+            {
+                if ($State.InfoCollector) { Close-WtInfoCollector -Collector $State.InfoCollector }
+                $State.InfoCollector = $null
+            }
+        }
+    }
 }

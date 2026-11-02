@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WindowsTweaker.Gui.Core - the presentation-independent half of the native frontend.
+
+    It holds the bridge protocol client, the projected models and the view models. It has
+    no UI dependency at all, so it builds and is tested on any platform (this repository
+    validates it on Linux against the real PowerShell backend).
+
+    TargetFramework: net10.0 (LTS). The WinUI application project reuses the same sources
+    through a project reference and adds the Windows-only UI on top.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>WindowsTweaker.Gui.Core</RootNamespace>
+    <AssemblyName>WindowsTweaker.Gui.Core</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+</Project>

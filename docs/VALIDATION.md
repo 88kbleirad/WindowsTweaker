@@ -133,18 +133,19 @@ done, so they are smaller by construction.
 | `MultiHost.Tests.ps1` | 10 | 0 | fleet targets and conditions, incident timelines and evidence kinds, read-only playbooks, support-bundle preview/export with redaction and traversal-safe import, and versioned monitoring configuration |
 | `PrivacyPowerTools.Tests.ps1` | 6 | 0 | the privacy summary/activity report shapes, power settings, SRUM history and the Explorer copy-path tweak |
 | `SetupPlans.Tests.ps1` | 10 | 0 | checkpointed setup plans: data-only import, identity-bound resume registrations, refusal on tampering, a failed step stopping the plan, no automatic retry of uncertain steps and bounded reboot counts |
-| `Licensing.Tests.ps1` | 26 | 0 | the licensing inventory (status-code mapping, active-product selection, unreadable-provider and non-Windows reporting), the time and component probes, organization-managed configuration (presence only), the activation request (accepted/failed/refused, structured SLMGR code, status re-read after the request), the activation evidence (read-only snapshots that never carry a full key, the activated state read from the post-run record even when the before-read was unreadable, no success claimed when completion was not determined, already-active only when both reads agree, the structured error code copied verbatim, a completed run that did not change the licence reported as not activated), the redacted export, the cache/redaction contract and the workspace render. Every provider is doubled; nothing here activates anything |
-| `ExternalTool.Tests.ps1` | 76 | 0 | the pinned upstream definition (commit, size, blob id, URL that names the commit and not a branch, licence); the HTTPS host allow-list and per-hop redirect validation; the size bound enforced while reading; the verification chain with a fixture (size + git blob id + SHA-256, publish only after verification, provenance contents, a digest mismatch refused, a failed re-download leaving the previous copy intact, staging left empty); provenance state (missing copy, corrupt record falling back to the shipped pin, a user-update pin, a copy that no longer matches); removal touching only this feature's files; the closed method table (only HWID/TSforge/OnlineKMS, each with the documented switch, duration model and upstream evidence; the edition-change-forbidding switches travel with the methods that can otherwise change the edition; every other id refused); the activation plan (the exact method switches and nothing else, a plan without a method refused, a forged method object refused, path guards, an unknown method refused before anything is planned); the backend activation action (method resolution, platform gate, verified-copy gate, the in-process duplicate guard, the operation-record duplicate guard with a live-process fixture and a cleared-tree fixture, UAC cancellation, launch failure without retry, a determined completion removing the operation record, an undetermined completion keeping it and recording the observed process ids); the operation lifetime on inert process-table fixtures (a launcher exit while a detached grandchild is still in the table is never completion, completion is only the empty tree, an unreadable table is unknown, recycled process ids are ignored); the main screen (edition, status, selected method with duration model, tool readiness, outcome, the two actions, nothing-selected state, no download/launch strings of the old flow); the settings screen (method box with durations and compatibility, actions, both languages, ASCII fallback, busy hint, transfer progress); the console handoff around the activation (suspend → launch → wait → resume, resume after an unexpected backend failure, full-frame invalidation); background execution (the reader's progress and cancellation, a cancelled transfer classified and cleaned up, the real runspace task delivering its result and releasing its handle, a second start refused while one runs, a stop reporting what it targets, and a source scan proving the task never writes to the terminal); dry-run and `-WhatIf` refusal at both layers for activation, download and removal, with the activation preview naming the exact method switches and leaving no operation record; the interface's background flow (start after confirmation, duplicate refused, `Esc` cancels without leaving the view, real byte counts painted, the busy hint, completion and cancellation reporting, resolved-release confirmation). Three further tests read real response headers only, behind `WT_EXTERNAL_TOOL_LIVE_TEST=1`. No test downloads or executes MAS, activates Windows, elevates or reboots |
+| `Licensing.Tests.ps1` | 37 | 0 | the licensing inventory (status-code mapping, active-product selection that excludes add-ons and Office and prefers the activated duplicate over a leftover Notification record, unreadable-provider and non-Windows reporting), cache and staleness (cached reads, explicit refresh bypass, stale-snapshot display, session outcome separate from machine status, out-of-order poll refusal), the edition label (generation from the build, not the legacy registry name), the sanitized slmgr comparison probe, the time and component probes with sanitized service/log errors, organization-managed configuration (presence only), the activation request (accepted/failed/refused, structured SLMGR code, status re-read after the request), the activation evidence, the redacted export, the cache/redaction contract and the workspace render. Every provider is doubled; nothing here activates anything |
+| `ExternalTool.Tests.ps1` | 81 | 0 | the pinned upstream definition (commit, size, blob id, URL that names the commit and not a branch, licence); the HTTPS host allow-list and per-hop redirect validation; the size bound enforced while reading; the verification chain with a fixture (size + git blob id + SHA-256, publish only after verification, provenance contents, a digest mismatch refused, a failed re-download leaving the previous copy intact, staging left empty); provenance state (missing copy, corrupt record falling back to the shipped pin, a user-update pin, a copy that no longer matches); removal touching only this feature's files; the closed method table (only HWID/TSforge/OnlineKMS, each with the documented switch, duration model and upstream evidence; the edition-change-forbidding switches travel with the methods that can otherwise change the edition; every other id refused); the activation plan (the exact method switches and nothing else, a plan without a method refused, a forged method object refused, path guards, an unknown method refused before anything is planned); the backend activation action (method resolution, platform gate, verified-copy gate, the in-process duplicate guard, the operation-record duplicate guard with a live-process fixture and a cleared-tree fixture, UAC cancellation, launch failure without retry, a determined completion removing the operation record, an undetermined completion keeping it and recording the observed process ids); the operation lifetime on inert process-table fixtures (a launcher exit while a detached grandchild is still in the table is never completion, completion is only the empty tree, an unreadable table is unknown, recycled process ids are ignored); the main screen (edition, status with raw code and collection time, selected method with duration model, tool readiness, operation outcome separate from status, the two actions, nothing-selected state, no download/launch strings of the old flow); the settings screen (observed status line from the same snapshot, method box with durations and compatibility, actions, both languages, ASCII fallback, busy hint, transfer progress); the shared snapshot across main screen, settings screen and footer; changing the selected method never changes the observed status; activation-action dispatch (A runs only the selected method, T runs only the installed-license request, and the source-level arm assertions cannot confuse them); the console handoff around the activation (suspend → launch → wait → resume, resume after an unexpected backend failure, full-frame invalidation); background execution (the reader's progress and cancellation, a cancelled transfer classified and cleaned up, the real runspace task delivering its result and releasing its handle, a second start refused while one runs, a stop reporting what it targets, and a source scan proving the task never writes to the terminal); dry-run and `-WhatIf` refusal at both layers for activation, download and removal, with the activation preview naming the exact method switches and leaving no operation record; the interface's background flow (start after confirmation, duplicate refused, `Esc` cancels without leaving the view, real byte counts painted, the busy hint, completion and cancellation reporting, resolved-release confirmation). Three further tests read real response headers only, behind `WT_EXTERNAL_TOOL_LIVE_TEST=1`. No test downloads or executes MAS, activates Windows, elevates or reboots |
 | `Quarantine.Tests.ps1` | 11 | 0 | the quarantine scan, move and manifest durability (the object is moved with its manifest before the store is updated), and restore (identity and hash checks, refusal of a tampered or missing object, the original location restored) |
 | `Restart.Tests.ps1` | 29 | 0 | restart requirement classification (reboot / application / none / unknown kept apart), eligibility gates (pending work, journal integrity, verification, compensation), single-owner scheduling, the adapter contract (no `/f`, no forced close, one request site), the TUI flows and the command-line request path |
 | `TuiBatchResults.Tests.ps1` | 7 | 0 | batch progress counters, the failure-first result summary with scope labelling and per-failure detail, and the localized screen-text replacement |
 | `TuiBatchState.Tests.ps1` | 7 | 0 | batch pending-queue reconciliation against the batch that actually ran (clean batch, failures, requests edited while the batch ran, foreign requests) and the performance-profile knobs (resolution, low-resource selection off a non-VT console, the safety boundary) |
-| `TuiRender.Tests.ps1` | 10 | 0 | screen row invalidation and forced repaint, the row-diff console writers (whole first frame, nothing for an identical frame, only the changed row), key batching and frame coalescing (no key lost, Escape/Enter never dropped) and the performance diagnostics ring |
-| **Total** | **712** | **0** | 703 passed, 9 skipped (the opt-in live GitHub, published-launcher, whole-downloader and external-tool header tests) |
+| `TuiRender.Tests.ps1` | 11 | 0 | screen row invalidation and forced repaint, the row-diff console writers (whole first frame, nothing for an identical frame, only the changed row), key batching and frame coalescing (no key lost, Escape/Enter never dropped), the overview drift/interrupted cache cadence, and the performance diagnostics ring (bounded, percentiles, input-wait and loop-gap metrics) |
+| `InfoCollector.Tests.ps1` | 3 | 0 | the background info collector: a round-trip job in the runspace, the bounded request queue dropping the oldest, and the generation guard that refuses stale responses |
+| **Total** | **732** | **0** | 723 passed, 9 skipped (the opt-in live GitHub, published-launcher, whole-downloader and external-tool header tests) |
 
-`tools/Invoke-Validation.ps1` phase 6 on this tree reported `Tests passed: 703 | failed: 0 |
-skipped: 9` (712 tests in 30 files) and ended with `ALL EXECUTED CHECKS PASSED`; the same run reported
-`PSScriptAnalyzer: no findings` (phase 4), `COMPATIBILITY GATE PASSED` (phase 5) and `Files parsed: 169,
+`tools/Invoke-Validation.ps1` phase 6 on this tree reported `Tests passed: 723 | failed: 0 |
+skipped: 9` (732 tests in 31 files) and ended with `ALL EXECUTED CHECKS PASSED`; the same run reported
+`PSScriptAnalyzer: no findings` (phase 4), `COMPATIBILITY GATE PASSED` (phase 5) and `Files parsed: 172,
 Parse errors: 0` (phases 1 and 7). Six of the skipped tests are the live transport and
 published-command checks, which need `WT_BOOTSTRAP_LIVE_TEST=1` and network access - the pre-existing
 three were run separately and are recorded in section 12, and the launcher/downloader checks can only
@@ -1182,9 +1183,9 @@ pwsh -NoProfile -File tools/Invoke-Validation.ps1       # the whole gate
 | Backend action (executed) | platform gate, verified-copy gate, the in-process duplicate guard, the operation-record duplicate guard (a record naming a live process refuses; a record whose tree is gone does not), UAC cancellation, launch failure without retry, no fallback to another method |
 | Operation lifetime (executed on inert process-table fixtures) | a launcher exit while a detached grandchild is still in the table is **not** completion (the reported bug), completion is only the empty tree, an unreadable table is "unknown", recycled process ids are ignored, a determined completion removes the operation record, an undetermined one keeps it |
 | Dry run / `-WhatIf` (executed) | `Start-WtWindowsActivation -WhatIf` refuses and still reports the exact command line with the method switches and leaves no operation record; the interface refuses `A`, `D`, `U`, `R` in dry-run mode while naming what would run |
-| `tools/Test-ExternalToolSmoke.ps1` (executed here, inert child) | 22 passed, 0 failed, 4 Windows-only: plan with the exact method switches and the absence of every Office/ESU/edition/reset switch, the platform refusal, the process seam starting the inert child and observing exit code 7 via the lifetime wait, the marker file it wrote, full-frame invalidation, the licensing re-read (honest "unreadable" off Windows), the inert lifetime fixtures (wrapper exit not completion; whole-tree completion) and the background task plumbing with a refused host |
+| `tools/Test-ExternalToolSmoke.ps1` (executed here, inert child) | 23 passed, 0 failed, 5 Windows-only: plan with the exact method switches and the absence of every Office/ESU/edition/reset switch, the platform refusal, the process seam starting the inert child and observing exit code 7 via the lifetime wait, the marker file it wrote, full-frame invalidation, the licensing re-read (honest "unreadable" off Windows), the slmgr comparison reported as unavailable off Windows, the inert lifetime fixtures (wrapper exit not completion; whole-tree completion) and the background task plumbing with a refused host |
 | Head-less renders (100x30, 60x16, ASCII mode, EN and VI) | the main screen shows edition, status, selected method with duration model, tool readiness, outcome and the two actions; the settings screen shows the method box with durations and compatibility, the local copy and the pinned source; the footer hint is the workspace hint while the view is open |
-| The whole gate, `tools/Invoke-Validation.ps1` | exit 0: `Files parsed: 169, Parse errors: 0`; `COMPATIBILITY GATE PASSED`; `Tests passed: 703 | failed: 0 | skipped: 9`; `ALL EXECUTED CHECKS PASSED` |
+| The whole gate, `tools/Invoke-Validation.ps1` | exit 0: `Files parsed: 172, Parse errors: 0`; `COMPATIBILITY GATE PASSED`; `Tests passed: 723 | failed: 0 | skipped: 9`; `ALL EXECUTED CHECKS PASSED` |
 | Real pty run (python3 `pty`, 100x34, the actual entry point), EN | `N` opened the main screen (`Activation status`, `Installed edition`, `Tool readiness`, `Last outcome`, `A Activate Windows`, `S Settings & details`); `S` opened the settings screen; `3` selected Online KMS and reported `Selected method: Online KMS - time-limited`; returning to the main screen showed `Activation method: Online KMS - time-limited`; a second session read the same selection from the settings file (`activationMethod: OnlineKMS`); `A` opened the confirmation naming the method; the interface left the alternate screen buffer on quit. The pty harness does not assert the process exit code (this container keeps the process alive after the interface restores the terminal, identically on the baseline commit); the smoke tool asserts the restore path instead |
 
 ### Repeated from a clean copy
@@ -1322,6 +1323,57 @@ presets and the explicit "not ported" list.
   points back at a repair that names that rule's own finding), `tools/Invoke-Validation.ps1`
   (the harness above, now with the insight invariants as phase 3), and the schema/loader
   anti-drift assertions in `tests/Catalog.Tests.ps1`.
+
+## 24. WinUI frontend bridge (executed on Linux against the real backend)
+
+The frontend is two halves: `WindowsTweaker.Gui.Core` (presentation-independent) and the
+WinUI window. The Core half builds and is tested on Linux; the window needs a Windows
+build host (see below).
+
+### Executed here
+
+* **Core library builds**: `dotnet build gui/src/WindowsTweaker.Gui.Core` (net10.0, zero
+  warnings as errors).
+* **Core test suite**: `dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests` — **30/30
+  passed** (2026-11-02, PowerShell 7.6.9). Coverage: protocol framing/parsing and stale
+  lines; handshake reports protocol + allowlist; the frontend string-key contract against
+  the served merged tables in both languages; full catalog; structured state for one
+  tweak (honest `Unsupported` on non-Windows); preview target enumeration; dry-run apply
+  reporting without writing; progress events; allowlist refusal (`system.exec` → UnknownOperation);
+  privileged-operation refusal without elevation (`slmgr.request` → RequiresElevation);
+  tiny-deadline failure leaving the session usable (stale-response protection); clean
+  shutdown; one session answering many requests without respawn; stdout carrying frames
+  only; environment honesty; defensive projections on empty payloads.
+* **Engine-side contract tests**: `tests/BridgeProtocol.Tests.ps1` (new) — the frontend
+  key list must be a subset of every merged language table, and the gui table carries no
+  undeclared keys. 3/3 passed.
+* **Release packaging with an optional frontend**: `tools/New-ReleasePackage.ps1` gains an
+  opt-in `frontend/` payload (per-platform, flattened to `frontend/<file>`); validated end
+  to end with a synthetic build: archive, checksums, internal manifest
+  (`frontend.kind=winui3`), bootstrap resolution (`Resolve-WtBootstrapEntryPoint` returns
+  `WindowsTweaker.WinUI.exe` only when `WT_BOOTSTRAP_FRONTEND=winui` and the file is
+  staged), and launch of an executable entry point without a PowerShell host.
+* **Bridge latency measurement** (throwaway harness; same spawn path as the client): cold
+  start (spawn + module import + handshake) **6.95 s** on this workstation; warm request
+  latency: ping 58 ms, strings.get 60 ms, env.status 446 ms, catalog.list 291 ms,
+  state.get (one tweak) 3.52 s, preview.get 1.88 s, history.list 1.62 s,
+  journal.operation 1.61 s, history.interrupted 1.56 s, licensing.diagnostics 1.81 s,
+  exttool.status 1.68 s, monitor.cycle 1.82 s. These are cold-cache first calls on a
+  Linux host without a Windows registry; the window performs the expensive ones once per
+  workspace load on a background task, never on the UI thread.
+
+### Not executed here (Windows-only)
+
+* The WinUI window itself: the XAML markup compiler is a Windows process and cannot run on
+  Linux (verified: `MarkupCompilePass1` fails with `WMC9999` before any project-specific
+  error). All C# sources pass parse/compile checks against the restored reference
+  assemblies; the XAML files are well-formed XML. A Windows build host must run
+  `dotnet build gui/src/WindowsTweaker.WinUI -c Debug` and `-c Release` (the Release
+  package) — see `docs/BUILD-WINUI.md`.
+* The runtime interaction (window → backend → window) on a real Windows session, the
+  elevation relaunch (UAC prompt, handoff, operation re-issue), and VM/GPU rendering under
+  QEMU/KVM, VMware and VirtualBox. These belong in a disposable Windows VM; nothing in
+  this section claims otherwise.
 * **Mocked behaviour**: `tests/Insight.Tests.ps1` runs the engine against a registry double and
   mocked probes (scan outcomes, recommendation gates, dimension evidence, boundary verdicts,
   pending-restart marker states, group current states). `tests/InsightTui.Tests.ps1` drives the
@@ -1332,3 +1384,143 @@ presets and the explicit "not ported" list.
   and the `bcdedit` read are real code paths that require a Windows session; they are exercised
   only through fakes here and belong in a disposable Windows VM.
 * **Observed runtime effect**: none is claimed. No test asserts a performance or behaviour change.
+
+## 23. Stale/incorrect licensing status: root cause and concrete fix
+
+### Root cause
+
+The report came from two separate defects interacting:
+
+1. **The active-product selection picked the wrong record.** `Read-WtLicensingInventory` selected
+   the Windows product with the *highest numeric* license status. The status codes are not an
+   ordering - a Notification record (5) outranks a Licensed record (1). On a machine with several
+   Windows records (for example a leftover base edition in Notification state plus the activated
+   record), the TUI therefore showed Notification / raw 5 even though Windows itself reported the
+   activated record. The selection also did not distinguish add-ons (ESU) or Office (a different
+   ApplicationId), and duplicated records were resolved by provider order.
+2. **The observed status and the session outcome were conflated.** The "Last outcome" line showed
+   "nothing run in this session" until an operation ran in that session, and this line was read as
+   if it were the machine's current licensing state. "Not run in this session" is not "Windows is
+   not activated", and they are now separate fields.
+
+Two display problems were reported alongside:
+
+* **Software Protection Service "unreadable" without explanation** - the read failure message was
+  dropped; it is now captured, sanitized and shown.
+* **"Windows 10 IoT Enterprise LTSC 2024" on a Windows 11 IoT LTSC VM** - the registry ProductName
+  string is a legacy label that lags the actual build. The generation is now derived from the
+  build number, the edition label from the EditionID registry value, and the raw strings are
+  preserved in diagnostics.
+
+### Concrete fix
+
+* **Selection** (`Read-WtLicensingInventory`): base records only (dependents like ESU are kept
+  apart), candidates are the records with a partial key when any exist, and the *licensed* record
+  wins - ties resolve by matching the installed edition, then by the presence of a partial key.
+  Nothing forces Licensed; the selected record's raw code is what is reported, and the selection
+  rule and duplicate count are recorded in the inventory diagnostics.
+* **Shared snapshot** (`LicensingUiState`): one authoritative, refreshed licensing snapshot is
+  owned by the licensing workspace and reused by the settings screen and the footer. Collection
+  time is displayed; stale or unreadable snapshots are labelled explicitly instead of being
+  presented as a status.
+* **Separation** (session outcome vs machine status): the observed status line and the "last
+  operation outcome" line are distinct, and the outcome label says "nothing run in this session"
+  only when nothing ran in this session.
+* **Bounded post-operation polling** (`Update-WtLicensingOperationPoll`): after an activation whose
+  completion was observed but whose status was not yet activated, the workspace re-reads the
+  provider a bounded number of times (spaced a few seconds apart) so delayed provider updates are
+  picked up. An older poll result never overwrites a newer refresh (collection-time guard).
+* **slmgr comparison** (`Get-WtSlmgrComparison`): the probe runs `slmgr /xpr` and `/dlv` through
+  cscript with a timeout; output is sanitized (keys, IPs, host names) and only status/expiry lines
+  are kept. When the CIM selection and slmgr disagree, the screen says so instead of inventing a
+  verdict.
+* **Edition label** (`Get-WtWindowsActivationEdition`): generation from build (`>= 22000` →
+  Windows 11), edition label from EditionID, raw registry name preserved. The registry ProductName
+  is no longer the basis for the Windows-generation claim.
+* **Service read failure** (`Read-WtLicensingComponents`): the sanitized failure message is kept
+  and displayed (no service restart, no licensing change, no reboot).
+* **Action separation**: the settings screen's `T` action is "Request activation using the
+  installed license (slmgr /ato) - not the MAS method", and its confirm dialog says it does not
+  execute the selected method; the main screen's `A` is the only handler for the selected MAS
+  method. Tests assert the dispatch cannot cross.
+
+### Verified
+
+* Full gate: `ALL EXECUTED CHECKS PASSED` (719 passed / 0 failed / 9 skipped), PSScriptAnalyzer
+  clean, 5.1 compatibility + BOM passed, `Files parsed: 170`.
+* Regression tests added: multiple Windows records (Licensed beats a leftover Notification),
+  add-on/Office exclusion, duplicate records, cache bypass on refresh, stale-snapshot display,
+  session-outcome-versus-machine-status, out-of-order poll refusal, edition label from build,
+  sanitized slmgr probe, service-error reporting, shared snapshot across main/settings/footer,
+  method selection not changing observed status, and A/T dispatch separation.
+* Smoke: 23 passed / 0 failed / 5 Windows-only (real Windows probes - `slmgr /xpr|/dlv`,
+  UAC, child console, focus handover - unexecuted here and listed in section 22's manual
+  procedure).
+
+## 24. Keyboard-response delay: bottleneck candidates and the concrete fix
+
+### What the report is
+
+The user reported a 5–7 s pause between a key press and the visual response on a Windows 11
+IoT Enterprise LTSC 2024 VM (classic Windows Console, Windows PowerShell 5.1). No Windows host
+is available in this environment, so the actual reported delay was not reproduced here; the
+work below identifies the synchronous work that can explain a multi-second stall on the UI
+thread, moves it off that thread, and adds measurement so the next Windows run can confirm the
+remaining delay before/after.
+
+### Where the UI thread can block (inspected call sites)
+
+* `Read-WtLicensingDiagnostics` (Private/Licensing.ps1) ran `slmgr /xpr` and `/dlv` through
+  cscript **synchronously on every diagnostics read** - two process spawns, each with an 8 s
+  timeout, on the input thread, for every open/refresh of the licensing workspace.
+* `Get-WtTuiOverviewItems` recomputed `Get-WtDriftInternal` + `Get-WtInterruptedOperationInternal`
+  (state store reads plus per-target live registry reads) directly on the UI thread when the
+  5 s cache was stale.
+* `Add-WtTuiDetails` computed live state dimensions (`Get-WtStateDimensionsInternal`) on the UI
+  thread on every cache miss.
+* The input reader correctly polls in 15 ms slices, so the *key read* is not the source of a
+  multi-second gap; a long gap is a handler/frame duration, which the two points above can
+  produce.
+
+### Fix
+
+A reusable background runspace (`Private/Tui/InfoCollector.ps1`) now serves those probes:
+
+* bounded request queue (oldest dropped), bounded response queue, one worker reused for the
+  session and closed on exit;
+* generations on every request; a response whose generation is older than the current one is
+  discarded, so a slow background job can never overwrite a newer refresh;
+* callers fall back to the previous synchronous computation when no collector exists (minimal
+  hosts, tests), so correctness never depends on the collector;
+* `Read-WtLicensingDiagnostics` no longer spawns slmgr; the licensing workspace requests the
+  comparison through the collector and shows a "checking…" line until it lands;
+* perf diagnostics now also record input-wait and loop-gap durations so a real run can tell
+  "the key took long to read" (input wait) from "the work after the key blocked" (handler +
+  frame build/output).
+
+### Measured here
+
+* Linux/PowerShell 7 run: all focused suites and the full gate pass (`Tests passed: 723 |
+  failed: 0 | skipped: 9`; `ALL EXECUTED CHECKS PASSED`; analyzer clean; 5.1 gate clean).
+* The collector round-trip, bounded queue and stale-generation guard are covered by
+  `tests/InfoCollector.Tests.ps1`; the wait/gap metrics by `tests/TuiRender.Tests.ps1`.
+* Not executed here: the real Windows VM measurement (the actual 5–7 s reproduction, before
+  and after, median/p95 and max loop gaps, render cost). The manual procedure for a Windows
+  VM follows.
+
+### Manual Windows-VM measurement (not executed here)
+
+```powershell
+# Run with diagnostics on both builds (before and after the fix):
+$env:WT_TUI_PERF_DIAGNOSTICS = '1'
+.\WindowsTweaker.ps1
+# Drive: idle navigation, held-arrow batches, a dialog, open History, open Licensing,
+# refresh (R), and the activation settings screen. Quit, then read the log summary:
+#   TUI performance (ms): dispatch ... input wait ... loop gap ... handler ...
+#   TUI performance frame build/output (ms): ...
+# Loop gap max is the key-to-key stall indicator; handler max is the blocking-work clue.
+```
+
+The before/after comparison must use the same VM, runtime (Windows PowerShell 5.1), console,
+terminal size, and workload. Slow-provider automation is covered by the inert fixtures in
+`tests/InfoCollector.Tests.ps1`; the real-` numbers still need the Windows host.

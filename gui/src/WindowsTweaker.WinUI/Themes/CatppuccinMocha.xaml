@@ -1,0 +1,126 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Catppuccin Mocha, as the terminal interface uses it (src/.../Private/Tui/Theme.ps1). -->
+    <SolidColorBrush x:Key="WtBase" Color="#1e1e2e"/>
+    <SolidColorBrush x:Key="WtMantle" Color="#181825"/>
+    <SolidColorBrush x:Key="WtCrust" Color="#11111b"/>
+    <SolidColorBrush x:Key="WtSurface0" Color="#313244"/>
+    <SolidColorBrush x:Key="WtSurface1" Color="#45475a"/>
+    <SolidColorBrush x:Key="WtSurface2" Color="#585b70"/>
+    <SolidColorBrush x:Key="WtOverlay0" Color="#6c7086"/>
+    <SolidColorBrush x:Key="WtText" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="WtSubtext" Color="#a6adc8"/>
+    <SolidColorBrush x:Key="WtBlue" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="WtGreen" Color="#a6e3a1"/>
+    <SolidColorBrush x:Key="WtYellow" Color="#f9e2af"/>
+    <SolidColorBrush x:Key="WtRed" Color="#f38ba8"/>
+    <SolidColorBrush x:Key="WtMauve" Color="#cba6f7"/>
+    <SolidColorBrush x:Key="WtPeach" Color="#fab387"/>
+    <SolidColorBrush x:Key="WtSky" Color="#89dceb"/>
+    <SolidColorBrush x:Key="WtSapphire" Color="#74c7ec"/>
+    <SolidColorBrush x:Key="WtTeal" Color="#94e2d5"/>
+
+    <Style x:Key="WtPanel" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource WtMantle}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtSurface1}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <!-- Square corners: the TUI look has no rounded edges on app-owned surfaces. -->
+        <Setter Property="CornerRadius" Value="0"/>
+    </Style>
+
+    <Style x:Key="WtPanelTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WtBlue}"/>
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Margin" Value="10,10,10,6"/>
+    </Style>
+
+    <Style x:Key="WtText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+        <Setter Property="FontSize" Value="14"/>
+    </Style>
+
+    <Style x:Key="WtMutedText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WtSubtext}"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style x:Key="WtTerminalText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style x:Key="WtButton" TargetType="Button">
+        <Setter Property="Background" Value="{StaticResource WtSurface0}"/>
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtSurface2}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="12,6"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style x:Key="WtAccentButton" TargetType="Button" BasedOn="{StaticResource WtButton}">
+        <Setter Property="Background" Value="{StaticResource WtBlue}"/>
+        <Setter Property="Foreground" Value="{StaticResource WtCrust}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtBlue}"/>
+    </Style>
+
+    <Style x:Key="WtDangerButton" TargetType="Button" BasedOn="{StaticResource WtButton}">
+        <Setter Property="Background" Value="{StaticResource WtRed}"/>
+        <Setter Property="Foreground" Value="{StaticResource WtCrust}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtRed}"/>
+    </Style>
+
+    <Style x:Key="WtTextBox" TargetType="TextBox">
+        <Setter Property="Background" Value="{StaticResource WtCrust}"/>
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtSurface1}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CaretBrush" Value="{StaticResource WtText}"/>
+        <Setter Property="Padding" Value="8,5"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style x:Key="WtComboBox" TargetType="ComboBox">
+        <Setter Property="Background" Value="{StaticResource WtMantle}"/>
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtSurface1}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace"/>
+        <Setter Property="FontSize" Value="13"/>
+    </Style>
+
+    <Style x:Key="WtCheckBox" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+    </Style>
+
+    <!-- Status badge: text + color, never color alone. -->
+    <Style x:Key="WtBadge" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource WtSurface0}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtSurface2}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="Padding" Value="8,2"/>
+    </Style>
+
+    <Style x:Key="WtBadgeOk" TargetType="Border" BasedOn="{StaticResource WtBadge}">
+        <Setter Property="BorderBrush" Value="{StaticResource WtGreen}"/>
+    </Style>
+
+    <Style x:Key="WtBadgeWarn" TargetType="Border" BasedOn="{StaticResource WtBadge}">
+        <Setter Property="BorderBrush" Value="{StaticResource WtYellow}"/>
+    </Style>
+
+    <Style x:Key="WtBadgeError" TargetType="Border" BasedOn="{StaticResource WtBadge}">
+        <Setter Property="BorderBrush" Value="{StaticResource WtRed}"/>
+    </Style>
+</|inc_tool_call_ml|Dictionary>

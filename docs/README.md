@@ -14,6 +14,8 @@ the evidence and the list of unexecuted checks.
 | [CLI.md](CLI.md) | Every entry-point switch, exit codes, the exported module API, environment variables and where state/log/settings live |
 | [KEYBOARD.md](KEYBOARD.md) | Every key, dialog, row marker, icon mode and layout, in English and Vietnamese |
 | [DEPENDENCIES.md](DEPENDENCIES.md) | PowerShell version, terminal requirements, Windows-only modules per feature, and what happens when one is missing |
+| [FRONTEND.md](FRONTEND.md) | The WinUI 3 interface: architecture, bridge protocol, runtime prerequisites, elevation, localization |
+| [BUILD-WINUI.md](BUILD-WINUI.md) | Building and packaging the WinUI frontend: prerequisites, commands, package versions, gaps |
 
 ## Tweaks, catalogs and packs
 

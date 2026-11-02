@@ -54,6 +54,7 @@ $LoadOrder = @(
     @(Get-ChildItem -Path (Join-Path $PrivateRoot 'Insight') -Filter '*.ps1' -File | Sort-Object -Property Name)
     @(Get-ChildItem -Path (Join-Path $PrivateRoot 'Providers') -Filter '*.ps1' -File | Sort-Object -Property Name)
     @(Get-ChildItem -Path (Join-Path $PrivateRoot 'Tui') -Filter '*.ps1' -File | Sort-Object -Property Name)
+    @(Get-ChildItem -Path (Join-Path $PrivateRoot 'Bridge') -Filter '*.ps1' -File | Sort-Object -Property Name)
     @(Get-ChildItem -Path $PublicRoot -Filter '*.ps1' -File | Sort-Object -Property Name)
     @(Get-ChildItem -Path $TweaksRoot -Filter '*.ps1' -File -Recurse | Sort-Object -Property FullName)
     @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'Gui') -Filter '*.ps1' -File | Sort-Object -Property Name)

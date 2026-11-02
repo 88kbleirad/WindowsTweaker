@@ -18,6 +18,12 @@ hoàn tác về đúng trạng thái đã tồn tại - không phải về một
 - **Giao diện terminal điều khiển bằng bàn phím, kèm dòng lệnh tự động hóa.** Chạy bằng `pwsh`,
   không cần cài đặt và không có dịch vụ nền. Cùng backend đó cũng chạy một cửa sổ WPF tùy chọn
   (chỉ trên Windows 10/11).
+- **Ứng dụng desktop WinUI 3** (thay thế console làm giao diện chính khi build) giữ nguyên
+  phong cách terminal: phông đơn khoảng cách, panel vuông, bảng gọn, nhãn trạng thái rõ ràng,
+  điều hướng bằng bàn phím và bảng màu Catppuccin Mocha. Giao diện này nói chuyện với cùng một
+  động cơ PowerShell qua một giao thức có phiên bản (cầu nối); nó không nhúng terminal, trình
+  duyệt hay WebView. Xem [docs/FRONTEND.md](docs/FRONTEND.md) và
+  [docs/BUILD-WINUI.md](docs/BUILD-WINUI.md).
 - **Chẩn đoán và kiểm tra lệch cấu hình.** Quét kiểm tra chỉ đọc (`S`), đề xuất theo một mục tiêu
   kèm lý do cho từng quyết định (`M`), xác minh và khôi phục (`V`), công bố mất năng lực cho những
   thứ có thể ngừng hoạt động sau một thay đổi, và nhật ký theo từng thao tác kèm so sánh giá trị đã
@@ -109,6 +115,24 @@ irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/
 
 Xem [docs/BOOTSTRAP.md](docs/BOOTSTRAP.md) để biết script kiểm chứng những gì, và
 [docs/RELEASE.md](docs/RELEASE.md) để biết một bản release gồm những tệp nào.
+
+## Ứng dụng WinUI (dùng nhanh)
+
+Frontend WinUI 3 được build riêng (xem [docs/BUILD-WINUI.md](docs/BUILD-WINUI.md)); nó không
+yêu cầu quyền quản trị để mở và duyệt. Cách dùng tóm tắt:
+
+1. **Mở** bản đã build (`WindowsTweaker.WinUI.exe` hoặc gói MSIX). Thanh đầu hiện môi trường,
+   backend và nút **Nâng quyền** xuất hiện khi phiên hiện tại không có quyền quản trị (chỉ cần
+   cho các thao tác đánh dấu cần quyền; UAC hỏi khi nâng).
+2. **Tinh chỉnh** (trái): gõ `/` hoặc `Ctrl+F` để tìm, chọn dòng, chọn trạng thái đích, bấm
+   **Thêm vào duyệt** (hoặc `Ctrl+Enter`).
+3. **Duyệt** (trái): xem danh sách đang chờ, **Xem trước** để thấy từng đích và ràng buộc,
+   bật **Chạy thử** nếu chỉ muốn báo cáo, rồi **Áp dụng** (xác nhận; engine đọc lại trạng thái
+   ngay trước khi ghi). Kết quả từng mục hiện ở bảng phía dưới kèm dấu xác minh đọc lại.
+4. **Lịch sử** (trái): xem lịch sử, nhật ký và các thao tác bị ngắt; chọn một dòng rồi
+   **Khôi phục** để hoàn tác về đúng trạng thái đã chụp.
+5. **Đóng cửa sổ** khi có thao tác đang chạy: cửa sổ hỏi rõ — đợi xong, hủy phần đang chờ
+   rồi đợi ranh giới an toàn, hoặc ở lại. Không bao giờ giết backend giữa chừng khi đang ghi.
 
 ## Phím thiết yếu
 

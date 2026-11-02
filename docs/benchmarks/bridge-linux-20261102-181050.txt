@@ -1,0 +1,13 @@
+cold_start_ms=5594.1 handshake_protocol=1 ops=50 keys=144
+ping_ms=47
+strings.get_ms=53.32
+env.status_ms=374.54
+catalog.list_ms=280.83
+state.get_ms=2842.97
+preview.get_ms=1331.39
+history.list_ms=1358.13
+journal.operation_ms=1308.24
+history.interrupted_ms=1223.62
+licensing.diagnostics_ms=1429.93
+exttool.status_ms=1258.62
+monitor.cycle_ms=1452.51

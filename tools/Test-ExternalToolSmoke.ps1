@@ -349,6 +349,19 @@ $After = & $Module {
 Write-Check 'the diagnostics were read again' ($After.Read) 'the read is attempted after every launch'
 Write-Check 'the result is reported honestly' ($true) $(if ($After.Unreadable) { "unreadable: $($After.Reason)" } else { "status: $($After.Status)" })
 
+# The slmgr comparison probe: read-only, sanitized, and reported as unavailable off Windows.
+$Slmgr = & $Module { Get-WtSlmgrComparison }
+if ($OnWindows)
+{
+    Write-Check 'the slmgr comparison probe ran' ($Slmgr.Available) ("error: " + [string]$Slmgr.Error)
+    Write-Check 'the comparison output is sanitized' (($Slmgr.Xpr + $Slmgr.Dlv) -notmatch '\b\d{5}(?:-\d{5}){2,5}\b') 'no full keys in the summary'
+}
+else
+{
+    Write-Check 'the slmgr comparison is honestly reported as unavailable off Windows' (-not $Slmgr.Available)
+    Write-Skip 'the sanitized /xpr and /dlv comparison' 'needs Windows: cscript slmgr.vbs'
+}
+
 # ------------------------------------------- stage 6: operation-lifetime classification
 
 Write-Stage '6. Operation-lifetime classification (inert process-table fixtures)'

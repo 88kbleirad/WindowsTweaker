@@ -1710,13 +1710,18 @@ function Set-WtWindowsActivationMethodSetting
 .SYNOPSIS
     Describes the installed Windows edition the method checks are made against.
 .DESCRIPTION
-    The registry product name is the readable one ("Windows 11 Pro", "Windows Server 2022
-    Standard", "Windows 10 Enterprise Evaluation"); the licensing record's product name is the
-    fallback, because SPP names the same edition "Windows(R), Professional edition". Both strings
-    are kept for the pattern checks. The build number comes from the environment snapshot, and 0
-    means it could not be read - which is reported as unknown rather than assumed to be new enough.
+    The name is assembled from three raw sources so none of them is trusted alone:
+      * the registry product name (ProductName) is kept as the raw source, but it is not the
+        basis for the generation claim - a legacy "Windows 10 IoT Enterprise" string can outlive
+        an installed Windows 11 build;
+      * the build number decides the Windows generation (>= 22000 is Windows 11);
+      * the edition id (EditionID), when readable, decides the edition tokens (Professional,
+        Core, Enterprise, IoT, LTSC, Server, Evaluation, ...).
+    Both raw strings are preserved in the result for diagnostics. The licensing record's product
+    name is a fallback for the search text only.
 .OUTPUTS
-    An ordered dictionary: Name, RegistryName, LicensingName, Build, IsServer, IsEvaluation, Known.
+    An ordered dictionary: Name, Generation, RegistryName, LicensingName, EditionId, Build,
+    IsServer, IsEvaluation, Known.
 #>
 function Get-WtWindowsActivationEdition
 {
@@ -1729,10 +1734,12 @@ function Get-WtWindowsActivationEdition
 
     $RegistryName = ''
     $Build = 0
+    $EditionId = ''
     if ($Environment)
     {
         if ($Environment.OSName) { $RegistryName = [string]$Environment.OSName }
         if ($null -ne $Environment.OSBuild) { $Build = [int]$Environment.OSBuild }
+        if ($Environment.OSEditionID) { $EditionId = [string]$Environment.OSEditionID }
     }
 
     $LicensingName = ''
@@ -1741,15 +1748,33 @@ function Get-WtWindowsActivationEdition
         $LicensingName = [string]$License.Inventory.Active.ProductName
     }
 
-    $Name = $RegistryName
-    if (-not $Name) { $Name = $LicensingName }
+    # The generation comes from the build, never from the (potentially legacy) ProductName string.
+    $Generation = 'Unknown'
+    if ($Build -ge 22000) { $Generation = 'Windows11' }
+    elseif ($Build -ge 10240) { $Generation = 'Windows10' }
 
-    $Search = ($RegistryName + ' ' + $LicensingName).Trim()
+    # The display name: generation plus the documented edition label for EditionID, with the
+    # registry raw name as the fallback when the edition id is unknown.
+    $EditionLabel = Get-WtEditionDisplayLabel -EditionId $EditionId
+    if ($Generation -ne 'Unknown' -and $EditionLabel)
+    {
+        $GenerationText = ($Generation -replace '(?i)^windows', 'Windows ')
+        $Name = $GenerationText + ' ' + $EditionLabel
+    }
+    else
+    {
+        $Name = $RegistryName
+        if (-not $Name) { $Name = $LicensingName }
+    }
+
+    $Search = ($RegistryName + ' ' + $LicensingName + ' ' + $EditionId).Trim()
 
     $Result = [ordered]@{
         Name         = $Name
+        Generation   = $Generation
         RegistryName = $RegistryName
         LicensingName = $LicensingName
+        EditionId    = $EditionId
         Build        = $Build
         IsServer     = [bool]($Search -match '(?i)\bserver\b')
         IsEvaluation = [bool]($Search -match '(?i)eval')

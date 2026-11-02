@@ -92,6 +92,8 @@ function Get-WtEnvironmentInternal
         OSBuild       = $null
         OSUBR         = $null
         OSDisplayVersion = $null
+        OSEditionID   = $null
+        OSInstallationType = $null
         OSVersionKey  = 'Unknown'
         Architecture  = Get-WtPlatformArchitecture
         IsVirtualMachine = $null
@@ -131,6 +133,8 @@ function Get-WtEnvironmentInternal
             $Environment.OSBuild = [int]$Info.CurrentBuildNumber
             $Environment.OSUBR = [int]$Info.UBR
             $Environment.OSDisplayVersion = $Info.DisplayVersion
+            $Environment.OSEditionID = $Info.EditionID
+            $Environment.OSInstallationType = $Info.InstallationType
         }
         catch
         {

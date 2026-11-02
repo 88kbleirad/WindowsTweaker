@@ -1095,3 +1095,97 @@ Describe 'Error classification' {
         }
     }
 }
+
+Describe 'Release selection (latest vs preview vs tag)' {
+
+    BeforeAll {
+        . $script:BootstrapPath
+    }
+
+    It 'uses releases/latest by default and never claims it returns prereleases' {
+        # The default endpoint is the GitHub `releases/latest` endpoint. GitHub's own
+        # contract for that endpoint excludes prereleases; this test pins the URL so a
+        # future change cannot silently switch to a prerelease-inclusive endpoint.
+        $env:WT_BOOTSTRAP_RELEASE_URL = 'https://api.github.com/repos/cli/cli/releases/latest'
+        try {
+            $Release = Get-WtBootstrapRelease
+            $Release.tag_name | Should -Match '^v?\d+\.'
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_RELEASE_URL -ErrorAction Ignore
+        }
+    }
+
+    It 'selects a release by exact tag through WT_BOOTSTRAP_RELEASE_TAG (leading v accepted)' {
+        $CalledUrl = $null
+        Mock Get-WtBootstrapContent {
+            param ($Url, $MaxBytes)
+            $script:CalledUrl = $Url
+            $Json = @{ tag_name = 'v2.0.0'; assets = @(@{ name = 'WindowsTweaker-win-x64-v2.0.0.zip'; browser_download_url = 'https://example.invalid/win-x64.zip'; size = 1000 }) }
+            return [System.Text.Encoding]::UTF8.GetBytes(($Json | ConvertTo-Json -Depth 5))
+        }
+
+        $env:WT_BOOTSTRAP_RELEASE_TAG = 'v2.0.0'
+        try {
+            $Release = Get-WtBootstrapRelease
+            $Release.tag_name | Should -Be 'v2.0.0'
+            $script:CalledUrl | Should -Match 'releases/tags/2\.0\.0$'
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_RELEASE_TAG -ErrorAction Ignore
+        }
+    }
+
+    It 'selects the newest release including prereleases when WT_BOOTSTRAP_PRERELEASE=1' {
+        $CalledUrl = $null
+        Mock Get-WtBootstrapContent {
+            param ($Url, $MaxBytes)
+            $script:CalledUrl = $Url
+            # Newest first, exactly as the GitHub releases list endpoint returns it.
+            $Releases = @(
+                @{ tag_name = 'v2.1.0-preview.1'; draft = $false; prerelease = $true; assets = @(@{ name = 'WindowsTweaker-win-x64-v2.1.0-preview.1.zip'; browser_download_url = 'https://example.invalid/win-x64-preview.zip'; size = 1000 }) }
+                @{ tag_name = 'v2.0.0'; draft = $false; prerelease = $false; assets = @(@{ name = 'WindowsTweaker-win-x64-v2.0.0.zip'; browser_download_url = 'https://example.invalid/win-x64.zip'; size = 1000 }) }
+            )
+            return [System.Text.Encoding]::UTF8.GetBytes(($Releases | ConvertTo-Json -Depth 6))
+        }
+
+        $env:WT_BOOTSTRAP_PRERELEASE = '1'
+        try {
+            $Release = Get-WtBootstrapRelease
+            $Release.tag_name | Should -Be 'v2.1.0-preview.1'
+            $script:CalledUrl | Should -Match 'releases\?per_page=100$'
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_PRERELEASE -ErrorAction Ignore
+        }
+    }
+
+    It 'rejects an invalid WT_BOOTSTRAP_FRONTEND value' {
+        $env:WT_BOOTSTRAP_FRONTEND = 'browser'
+        try {
+            { Resolve-WtBootstrapEntryPoint -Staging $script:TestRoot } | Should -Throw -ExpectedMessage '*must be ''winui''*'
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_FRONTEND -ErrorAction Ignore
+        }
+    }
+
+    It 'reports an actionable error when winui is requested but the release has no frontend' {
+        $env:WT_BOOTSTRAP_FRONTEND = 'winui'
+        try {
+            { Resolve-WtBootstrapEntryPoint -Staging $script:TestRoot } | Should -Throw -ExpectedMessage '*does not contain a frontend build*'
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_FRONTEND -ErrorAction Ignore
+        }
+    }
+
+    It 'resolves the frontend exe when the staged release ships one' {
+        $FrontendDir = Join-Path $script:TestRoot 'frontend'
+        New-Item -ItemType Directory -Force -Path $FrontendDir | Out-Null
+        $FakeExe = Join-Path $FrontendDir 'WindowsTweaker.WinUI.exe'
+        Set-Content -LiteralPath $FakeExe -Value 'placeholder' -Encoding ascii
+        $env:WT_BOOTSTRAP_FRONTEND = 'winui'
+        try {
+            $Resolved = Resolve-WtBootstrapEntryPoint -Staging $script:TestRoot
+            $Resolved | Should -Be $FakeExe
+        } finally {
+            Remove-Item Env:\WT_BOOTSTRAP_FRONTEND -ErrorAction Ignore
+        }
+    }
+}

@@ -36,8 +36,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Builds the actual WinUI 3 frontend on Windows. This is the only place the XAML
+  # markup compiler (a Windows process) can run; the output is a real, self-contained,
+  # unpackaged build - never a synthetic executable. The x64 build is the one validated
+  # against a Windows VM and the one the release archives carry; an ARM64 frontend build
+  # is not produced until it can be validated the same way (the ARM64 *archive* still
+  # ships - it simply ships without a frontend payload, exactly as a release without any
+  # frontend does).
+  frontend-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build the WinUI frontend (Release, self-contained, unpackaged)
+        shell: pwsh
+        run: |
+          dotnet publish gui/src/WindowsTweaker.WinUI/WindowsTweaker.WinUI.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:AppxPackage=false -p:EnableMsixTooling=false -p:WindowsPackageType=None `
+            -p:WindowsAppSDKSelfContained=true `
+            -o frontend-build/win-x64
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with $LASTEXITCODE" }
+          # The archive contract needs the native exe and the engine payload (module, bridge
+          # host, string tables). Verify all three are present before anything is uploaded.
+          $Root = "frontend-build/win-x64"
+          if (-not (Test-Path (Join-Path $Root 'WindowsTweaker.WinUI.exe'))) { throw 'frontend exe missing' }
+          if (-not (Test-Path (Join-Path $Root 'engine/WindowsTweaker.psd1'))) { throw 'engine manifest missing' }
+          if (-not (Test-Path (Join-Path $Root 'engine/Bridge/wt-bridge.ps1'))) { throw 'bridge host missing' }
+          Write-Host "frontend payload for win-x64 verified"
+
+      - name: Frontend bridge tests on Windows (live backend)
+        shell: pwsh
+        run: |
+          dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests/WindowsTweaker.Gui.Core.Tests.csproj -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { throw "dotnet test failed with $LASTEXITCODE" }
+
+      - name: Upload the frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-win-x64
+          path: frontend-build/win-x64
+          if-no-files-found: error
+
   release:
     runs-on: ubuntu-latest
+    needs: frontend-windows
     steps:
       - name: Check out
         uses: actions/checkout@v5
@@ -63,6 +114,24 @@ jobs:
             throw "Refusing to release '$Version': the module declares ModuleVersion '$ModuleVersion'. Bump the module first, then tag."
           }
           "version=$Version" >> $env:GITHUB_OUTPUT
+
+      - name: Download the Windows frontend builds
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-win-x64
+          path: frontend-artifacts
+
+      - name: Stage the frontend payloads for packaging
+        shell: pwsh
+        run: |
+          # New-ReleasePackage.ps1 takes `frontend/<platform-key>/...` at the repository
+          # root and flattens each platform into `frontend/<file>` inside its archive.
+          $Src = "frontend-artifacts"
+          if (-not (Test-Path $Src)) { throw "Frontend artifact for win-x64 is missing (job did not build it)." }
+          $Dest = "frontend/win-x64"
+          New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+          Copy-Item -Path "$Src/*" -Destination $Dest -Recurse -Force
+          Get-ChildItem frontend -Recurse -File | Select-Object -ExpandProperty FullName
 
       - name: Set up Go
         uses: actions/setup-go@v6

@@ -70,6 +70,152 @@ function Test-WtLicensingAvailable
 
 <#
 .SYNOPSIS
+    Sanitizes a message before it is shown or logged.
+.DESCRIPTION
+    Product keys (five five-character groups), IPv4 addresses and host names are replaced
+    with markers; the message is truncated at MaxLength. Used for provider errors that can
+    carry machine or network identifiers.
+#>
+function Get-WtSanitizedMessage
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param
+    (
+        [Parameter(Mandatory = $true)][string]$Message,
+        [Parameter(Mandatory = $false)][int]$MaxLength = 300
+    )
+
+    $Text = $Message
+
+    $Text = [regex]::Replace($Text, '\b\d{5}(?:-\d{5}){2,5}\b', '[KEY REDACTED]')
+    $Text = [regex]::Replace($Text, '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', '[IP REDACTED]')
+    $Text = [regex]::Replace($Text, '(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b', '[HOSTNAME REDACTED]')
+
+    if ($Text.Length -gt $MaxLength)
+    {
+        $Text = $Text.Substring(0, $MaxLength) + '...'
+    }
+
+    return $Text
+}
+
+<#
+.SYNOPSIS
+    Runs one slmgr.vbs query through cscript and returns its sanitized text.
+.DESCRIPTION
+    Read-only, bounded and failure-tolerated: /xpr and /dlv are the two slmgr views that
+    state the machine's license status. Output is sanitized (keys, addresses, host names)
+    so full keys or organization identifiers never leave this function. A probe that does
+    not answer within 8 seconds is killed and reported as a timeout.
+#>
+function Invoke-WtSlmgrProbe
+{
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param
+    (
+        [Parameter(Mandatory = $true)][string]$Argument,
+        [Parameter(Mandatory = $false)][int]$TimeoutMilliseconds = 8000
+    )
+
+    $Result = @{
+        Available = $false
+        Argument = $Argument
+        Output = ''
+        Error = ''
+        ExitCode = $null
+    }
+
+    if (-not (Test-WtLicensingAvailable)) { return $Result }
+
+    $Cscript = Get-Command -Name 'cscript.exe' -ErrorAction Ignore
+    $Slmgr = Get-Command -Name 'slmgr.vbs' -ErrorAction Ignore
+    if (-not $Cscript -or -not $Slmgr) { return $Result }
+
+    $Result.Available = $true
+
+    try
+    {
+        $Process = [System.Diagnostics.Process]::new()
+        $Process.StartInfo.FileName = $Cscript.Source
+        $Process.StartInfo.Arguments = '"{0}" {1}' -f $Slmgr.Source, $Argument
+        $Process.StartInfo.UseShellExecute = $false
+        $Process.StartInfo.RedirectStandardOutput = $true
+        $Process.StartInfo.RedirectStandardError = $true
+        $Process.StartInfo.CreateNoWindow = $true
+
+        if (-not $Process.Start()) { return $Result }
+
+        if (-not $Process.WaitForExit($TimeoutMilliseconds))
+        {
+            try { $Process.Kill() } catch { Write-WtLog -Level Debug -Message 'The timed-out slmgr probe could not be killed.' -NoConsole }
+            $Result.Error = 'The slmgr probe timed out.'
+            return $Result
+        }
+
+        $Result.ExitCode = $Process.ExitCode
+        $StdOut = $Process.StandardOutput.ReadToEnd()
+        $StdErr = $Process.StandardError.ReadToEnd()
+        $Result.Output = Get-WtSanitizedMessage -Message ($StdOut.Trim()) -MaxLength 1000
+        if ($StdErr)
+        {
+            $Result.Error = Get-WtSanitizedMessage -Message ($StdErr.Trim()) -MaxLength 300
+        }
+    }
+    catch
+    {
+        $Result.Error = Get-WtSanitizedMessage -Message $_.Exception.Message -MaxLength 300
+    }
+
+    return $Result
+}
+
+<#
+.SYNOPSIS
+    Reads a sanitized slmgr comparison report for the running system.
+.DESCRIPTION
+    Uses /xpr and /dlv. The summary carries the first lines of each report that look like
+    status or expiry statements, sanitized. This is what an operator compares with the
+    selected CIM record; nothing here changes licensing state.
+#>
+function Get-WtSlmgrComparison
+{
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param ()
+
+    $Result = @{
+        Available = $false
+        Xpr = ''
+        Dlv = ''
+        Error = ''
+        CollectedUtc = [datetime]::UtcNow.ToString('o')
+    }
+
+    if (-not (Test-WtLicensingAvailable)) { return $Result }
+
+    $Xpr = Invoke-WtSlmgrProbe -Argument '/xpr'
+    $Dlv = Invoke-WtSlmgrProbe -Argument '/dlv'
+
+    if ($Xpr.Available -or $Dlv.Available) { $Result.Available = $true }
+
+    # Keep only lines that talk about status or expiry; the sanitizer already stripped keys
+    # and host names, and the rest of the report is dropped.
+    $Result.Xpr = @($Xpr.Output -split "`r?`n" | Where-Object { $_ -match '(?i)(license status|permanently activated|activated until|expires|remaining|grace|status)' } | Select-Object -First 3) -join "`n"
+    $Result.Dlv = @($Dlv.Output -split "`r?`n" | Where-Object { $_ -match '(?i)(license status|partial product key|channel|installed|status)' } | Select-Object -First 6) -join "`n"
+
+    $Errors = @($Xpr.Error, $Dlv.Error | Where-Object { $_ })
+    if ($Errors.Count -gt 0)
+    {
+        $Result.Error = ($Errors -join ' | ')
+    }
+
+    return $Result
+}
+
+<#
+.SYNOPSIS
     Wrapper over the CIM provider so tests can mock the exact seam.
 #>
 function Get-WtLicensingCim
@@ -129,9 +275,8 @@ function Get-WtLicensingWinEvent
     Normalises a licensing product into a display-friendly record.
 .DESCRIPTION
     Only products that describe the *Windows* license are considered. The active license is
-    the one with the highest ApplicationId match for Windows; records that are not the
-    active Windows license are reported separately (as inventory, never as the active
-    license).
+    selected from the Windows licensing products; records that are not the active Windows
+    license are reported separately (as inventory, never as the active license).
 #>
 function ConvertTo-WtLicensingView
 {
@@ -178,6 +323,7 @@ function ConvertTo-WtLicensingView
         GraceRemaining   = if ($null -ne $Product.GraceRemaining) { [int]$Product.GraceRemaining } else { $null }
         EvaluationEndDate = if ($null -ne $Product.EvaluationEndDate) { [string]$Product.EvaluationEndDate } else { '' }
         Description       = [string]$Product.Description
+        LicenseDependsOn  = if ($null -ne $Product.LicenseDependsOn) { [string]$Product.LicenseDependsOn } else { '' }
     }
 }
 
@@ -202,14 +348,157 @@ function Copy-WtLicensingRedactedRecord
 
 <#
 .SYNOPSIS
+    Returns the documented display label for an OS edition id.
+.DESCRIPTION
+    Only the ids Microsoft documents for the Windows editions the activation methods support
+    are mapped; anything else falls back to the raw id so nothing is invented. The id is the
+    EditionID registry value, which is more reliable than the legacy ProductName string.
+#>
+function Get-WtEditionDisplayLabel
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ([Parameter(Mandatory = $false)][AllowEmptyString()][string]$EditionId = '')
+
+    if (-not $EditionId) { return '' }
+
+    switch -Regex ($EditionId)
+    {
+        '(?i)^professional(N|EducationN|WorkstationN)?$' { return 'Pro' }
+        '(?i)^professionalEducation$' { return 'Pro Education' }
+        '(?i)^professionalWorkstation$' { return 'Pro for Workstations' }
+        '(?i)^core(N)?$' { return 'Home' }
+        '(?i)^coreSingleLanguage$' { return 'Home Single Language' }
+        '(?i)^coreCountrySpecific$' { return 'Home China' }
+        '(?i)^education(N)?$' { return 'Education' }
+        '(?i)^enterprise(N|G|GN)?$' { return 'Enterprise' }
+        '(?i)^enterpriseS(N)?$' { return 'Enterprise LTSC' }
+        '(?i)^iotEnterprise$' { return 'IoT Enterprise' }
+        '(?i)^iotEnterpriseS(K)?$' { return 'IoT Enterprise LTSC' }
+        '(?i)^cloud(Edition)?(N)?$' { return 'SE' }
+        '(?i)^server(Standard|Datacenter|Solution|Web|Enterprise|HyperCore|StorageStandard|StorageWorkgroup|Turbine|AzureCor|ARM64|Rdsh|Core|V)?$' { return 'Server' }
+        '(?i)^embeddedIndustry(A|E)?$' { return 'Embedded Industry' }
+        '(?i)^starter$' { return 'Starter' }
+        '(?i)^ppiPro$' { return 'Team' }
+        default { return $EditionId }
+    }
+}
+
+<#
+.SYNOPSIS
+    Maps an OS edition id to search tokens used to match the installed edition.
+.DESCRIPTION
+    The token list is a deliberately small, documented vocabulary: the tokens are matched
+    case-insensitively against product names and descriptions, and they come from the
+    edition ids Microsoft defines for the editions the methods support. A record that
+    matches the installed edition wins the tie when several Windows records have the same
+    license status.
+#>
+function Get-WtLicensingEditionTokens
+{
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param ([Parameter(Mandatory = $false)][AllowEmptyString()][string]$EditionId = '')
+
+    $Tokens = [System.Collections.Generic.List[string]]::new()
+    if (-not $EditionId) { return @() }
+
+    switch -Regex ($EditionId)
+    {
+        '(?i)(^|.*)professional' { $Tokens.Add('professional') }
+        '(?i)(^|.*)core' { $Tokens.Add('core') }
+        '(?i)(^|.*)education' { $Tokens.Add('education') }
+        '(?i)(^|.*)enterprise' { $Tokens.Add('enterprise') }
+        '(?i)(^|.*)iot' { $Tokens.Add('iot') }
+        '(?i)(^|.*)server' { $Tokens.Add('server') }
+    }
+
+    if ($EditionId -match '(?i)ltsc') { $Tokens.Add('ltsc') }
+    if ($EditionId -match '(?i)eval') { $Tokens.Add('eval') }
+    if ($EditionId -match '(?i)singlelanguage') { $Tokens.Add('single language') }
+    if ($EditionId -match '(?i)countryspecific') { $Tokens.Add('country specific') }
+
+    return @($Tokens)
+}
+
+<#
+.SYNOPSIS
+    Scores how well one licensing record matches the installed OS edition.
+.DESCRIPTION
+    Pure. 2 when a token for the installed edition appears in the record's name or
+    description, 1 when it appears in the channel, 0 otherwise.
+#>
+function Get-WtLicensingEditionMatchScore
+{
+    [CmdletBinding()]
+    [OutputType([int])]
+    param
+    (
+        [Parameter(Mandatory = $true)][object]$Product,
+        [Parameter(Mandatory = $false)][string]$EditionId = ''
+    )
+
+    $Tokens = @(Get-WtLicensingEditionTokens -EditionId $EditionId)
+    if ($Tokens.Count -eq 0) { return 0 }
+
+    $Text = ([string]$Product.Name + ' ' + [string]$Product.Description).ToLowerInvariant()
+    $Channel = ([string]$Product.LicenseChannel).ToLowerInvariant()
+
+    foreach ($Token in $Tokens)
+    {
+        if ($Text.Contains($Token)) { return 2 }
+    }
+    foreach ($Token in $Tokens)
+    {
+        if ($Channel.Contains($Token)) { return 1 }
+    }
+
+    return 0
+}
+
+<#
+.SYNOPSIS
+    Reads the installed OS edition id from the registry ('' when unavailable).
+#>
+function Get-WtInstalledEditionId
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param ()
+
+    try
+    {
+        $Info = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop
+        if ($Info.EditionID) { return [string]$Info.EditionID }
+    }
+    catch
+    {
+        Write-WtLog -Level Debug -Message 'The installed edition id could not be read.' -NoConsole
+    }
+
+    return ''
+}
+
+<#
+.SYNOPSIS
     Reads the Windows licensing inventory from CIM/WMI.
 .DESCRIPTION
-    Bounded and read-only: the SoftwareLicensingProduct class is queried for the products
-    whose ApplicationId identifies Windows (55c92734-d682-4d71-983e-d6ec3f16059f). The
-    active product is selected by LicenseStatus/ProductKeyChannel heuristics documented by
-    Microsoft for slmgr; a status is never inferred from other records.
-    Returns a hashtable with Products (the inventory), Active (the selected active
-    product, or $null), and a Reason when the overall source is unavailable.
+    Bounded and read-only. The SoftwareLicensingProduct class is queried for the products
+    whose ApplicationId identifies Windows (55c92734-d682-4d71-983e-d6ec3f16059f).
+
+    The active product is selected, never assumed:
+      * records that depend on another license (add-ons such as ESU or APPX) are excluded
+        from the selection and reported separately;
+      * the candidate set is the base-installed records - those with a partial product key
+        when any exists, otherwise all base records;
+      * the candidate with the highest license status wins; ties are broken by matching the
+        installed OS edition, then by the presence of a partial key, then by the order the
+        provider returned them.
+    Nothing here forces Licensed: the raw code of the selected record is what is reported.
+    The selection is recorded (Selection), with the count of base records and whether
+    several Windows records are installed. A status is never inferred from other records.
+    Returns a hashtable with Products (the inventory), Active (the selected active product,
+    or $null), Dependents, Selection, and a Reason when the overall source is unavailable.
 #>
 function Read-WtLicensingInventory
 {
@@ -232,6 +521,14 @@ function Read-WtLicensingInventory
         Source = 'CIM/WMI SoftwareLicensingProduct'
         Products = @()
         Active = $null
+        Dependents = @()
+        Selection = [ordered]@{
+            Rule = ''
+            BaseCount = 0
+            CandidateCount = 0
+            MultipleWindowsRecords = $false
+            EditionId = ''
+        }
         Unreadable = $false
         Reason = ''
     }
@@ -243,18 +540,60 @@ function Read-WtLicensingInventory
         return $Result
     }
 
+    $EditionId = Get-WtInstalledEditionId
+    $Result.Selection.EditionId = $EditionId
+
     try
     {
         $All = @(Get-WtLicensingCim -ClassName SoftwareLicensingProduct)
         $Windows = @($All | Where-Object { [string]$_.ApplicationId -eq $WindowsAppId })
-        $Result.Products = @($Windows | ForEach-Object { ConvertTo-WtLicensingView -Product $_ -IncludePartialKey:$IncludePartialKey })
+        $Base = @($Windows | Where-Object { -not $_.LicenseDependsOn })
+        $Result.Dependents = @($Windows | Where-Object { $_.LicenseDependsOn } | ForEach-Object { ConvertTo-WtLicensingView -Product $_ -IncludePartialKey:$IncludePartialKey })
+        $Result.Products = @($Base | ForEach-Object { ConvertTo-WtLicensingView -Product $_ -IncludePartialKey:$IncludePartialKey })
+
+        $Result.Selection.BaseCount = $Base.Count
+        $Result.Selection.MultipleWindowsRecords = ($Base.Count -gt 1)
 
         if ($Windows.Count -gt 0)
         {
-            # Active selection: the product with the highest license status is the running
-            # license; ties resolve to the first (the OS's own record).
-            $Active = $Windows | Sort-Object -Property @{ Expression = { [int]$_.LicenseStatus }; Descending = $true } | Select-Object -First 1
-            $Result.Active = ConvertTo-WtLicensingView -Product $Active -IncludePartialKey:$IncludePartialKey
+            $Candidates = @($Base | Where-Object { -not [string]::IsNullOrEmpty([string]$_.PartialProductKey) })
+            if ($Candidates.Count -eq 0)
+            {
+                $Candidates = @($Base)
+            }
+            $Result.Selection.CandidateCount = $Candidates.Count
+
+            if ($Candidates.Count -gt 0)
+            {
+                $Best = $null
+                $BestScore = -1
+                $BestEditionScore = -1
+                $BestHasKey = $false
+
+                foreach ($Candidate in $Candidates)
+                {
+                    $Status = [int]$Candidate.LicenseStatus
+                    $EditionScore = Get-WtLicensingEditionMatchScore -Product $Candidate -EditionId $EditionId
+                    $HasKey = -not [string]::IsNullOrEmpty([string]$Candidate.PartialProductKey)
+
+                    if ($EditionScore -gt $BestEditionScore -or ($EditionScore -eq $BestEditionScore -and $Status -gt $BestScore) -or ($EditionScore -eq $BestEditionScore -and $Status -eq $BestScore -and $HasKey -and -not $BestHasKey))
+                    {
+                        $Best = $Candidate
+                        $BestScore = $Status
+                        $BestEditionScore = $EditionScore
+                        $BestHasKey = $HasKey
+                    }
+                }
+
+                if ($Best)
+                {
+                    $Result.Active = ConvertTo-WtLicensingView -Product $Best -IncludePartialKey:$IncludePartialKey
+
+                    if ($Candidates.Count -eq 1) { $Result.Selection.Rule = 'single-candidate' }
+                    elseif ($BestEditionScore -gt 0) { $Result.Selection.Rule = 'highest-status-with-edition-match' }
+                    else { $Result.Selection.Rule = 'highest-license-status' }
+                }
+            }
         }
     }
     catch
@@ -347,8 +686,10 @@ function Read-WtLicensingComponents
         SlmgrAvailable = $false
         Service = 'unknown'
         ServiceStartType = 'unknown'
+        ServiceError = ''
         LastActivationError = ''
         LastActivationErrorUtc = ''
+        LastActivationErrorReadError = ''
     }
 
     try
@@ -370,6 +711,7 @@ function Read-WtLicensingComponents
     catch
     {
         $Result.Service = 'unreadable'
+        $Result.ServiceError = (Get-WtSanitizedMessage -Message $_.Exception.Message -MaxLength 160)
     }
 
     try
@@ -383,7 +725,8 @@ function Read-WtLicensingComponents
     }
     catch
     {
-        Write-WtLog -Level Debug -Message 'The Software Protection Service log is unreadable; the last activation error stays unknown.' -NoConsole
+        $Result.LastActivationErrorReadError = (Get-WtSanitizedMessage -Message $_.Exception.Message -MaxLength 160)
+        Write-WtLog -Level Debug -Message ('The Software Protection Service log is unreadable; the last activation error stays unknown. ' + $Result.LastActivationErrorReadError) -NoConsole
     }
 
     return $Result
@@ -445,7 +788,8 @@ function Read-WtLicensingDiagnostics
     param
     (
         [Parameter(Mandatory = $false)][switch]$Refresh,
-        [Parameter(Mandatory = $false)][switch]$IncludePartialKey
+        [Parameter(Mandatory = $false)][switch]$IncludePartialKey,
+        [Parameter(Mandatory = $false)][switch]$IncludeSlmgr
     )
 
     $Inventory = Read-WtLicensingInventory -Refresh:$Refresh -IncludePartialKey:$IncludePartialKey
@@ -453,7 +797,7 @@ function Read-WtLicensingDiagnostics
     $Components = Read-WtLicensingComponents
     $Org = Read-WtLicensingOrgConfig
 
-    return @{
+    $Diagnostics = @{
         CollectedUtc = [datetime]::UtcNow
         Inventory = $Inventory
         Time = $Time
@@ -461,6 +805,20 @@ function Read-WtLicensingDiagnostics
         Org = $Org
         Redacted = $false
     }
+
+    # The slmgr comparison (cscript /xpr and /dlv) is a child-process probe and is never
+    # run synchronously on the UI thread. It is only computed by the background info
+    # collector (see InfoCollector.ps1), which sets Slmgr on the workspace's snapshot.
+    if ($IncludeSlmgr)
+    {
+        $Diagnostics.Slmgr = Get-WtSlmgrComparison
+    }
+    else
+    {
+        $Diagnostics.Slmgr = $null
+    }
+
+    return $Diagnostics
 }
 
 <#

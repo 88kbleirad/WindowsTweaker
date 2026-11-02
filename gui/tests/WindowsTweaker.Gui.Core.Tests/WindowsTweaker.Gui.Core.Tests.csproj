@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for the presentation-independent half of the frontend.
+
+    These run on any platform and drive the *real* PowerShell backend: the bridge host is
+    started as a child process and spoken to over stdio, so what is verified is the
+    contract that matters (framing, handshake, allowlist, timeouts, cancellation, clean
+    shutdown) rather than a mock of it.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>WindowsTweaker.Gui.Core.Tests</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- A skipped test must say why; a suite that silently passes without a backend
+         would overstate what was executed. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.23" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/WindowsTweaker.Gui.Core/WindowsTweaker.Gui.Core.csproj" />
+  </ItemGroup>
+
+</Project>

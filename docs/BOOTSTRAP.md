@@ -193,6 +193,9 @@ and recovery data are untouched, and the cleanup in the `finally` block removes 
 | `WT_BOOTSTRAP_NO_INSTALL` | Never offer the `winget` installation; print the manual alternative instead. |
 | `WT_BOOTSTRAP_PWSH` | Explicit executable to probe and hand off to (release engineering and tests). |
 | `WT_BOOTSTRAP_LANGUAGE` / `WT_BOOTSTRAP_COLOUR` / `WT_BOOTSTRAP_ASCII` / `WT_BOOTSTRAP_WORKER_BACKEND` | Options forwarded to the interface when the bootstrap is invoked through `irm \| iex` (which cannot pass parameters). `WT_LANG` is the language fallback. |
+| `WT_BOOTSTRAP_FRONTEND` | `winui` launches the packaged WinUI frontend (`frontend/WindowsTweaker.WinUI.exe`) **only** when the staged release ships one; if the release has none (or the value is anything else), the bootstrap fails with an actionable `PACKAGE`/`LAUNCH` error instead of silently opening the console TUI. Without this variable the bootstrap behaviour is unchanged. |
+| `WT_BOOTSTRAP_RELEASE_TAG` | Selects an exact release tag on the project repository (leading `v` accepted), including a prerelease tag. Takes precedence over the default latest-release endpoint. |
+| `WT_BOOTSTRAP_PRERELEASE` | `1` selects the newest release of the project repository including prereleases. The default `releases/latest` endpoint never returns prereleases; this is the only way to select a prerelease. |
 | `WT_BOOTSTRAP_HANDOFF`, `WT_BOOTSTRAP_DEPTH`, `WT_BOOTSTRAP_PARENT` | Internal loop-prevention markers; set by the bootstrap for the child process, never by a user. |
 
 Self-hosting: point `WT_BOOTSTRAP_RELEASE_URL` at the release's own `manifest.json`. Its
@@ -221,7 +224,37 @@ publishing steps are in [RELEASE.md](RELEASE.md). Each archive holds `WindowsTwe
 `PSScriptAnalyzerSettings.psd1`, `THIRD-PARTY-NOTICES.md`, the module tree under
 `src/WindowsTweaker/`, `licenses/**` verbatim, the matching Go worker binary, and the internal
 `manifest.json`. `checksums.txt` and the external release `manifest.json` are written beside the
-archives and are not part of any archive.
+archives and are not part of any archive. Windows archives **may** also contain a native WinUI 3
+frontend under `frontend/` (built on a Windows GitHub Actions runner, never a synthetic
+executable); when present, the internal manifest records `frontend.kind=winui3` and its entry
+point, and the bootstrap launches it only on explicit request.
+
+## Downloading and launching the WinUI frontend
+
+The native frontend is opt-in; the default behaviour (console TUI) is unchanged. To download the
+latest release and launch the frontend instead of the console (the exact user command for a
+Windows VM or host):
+
+```powershell
+$env:WT_BOOTSTRAP_FRONTEND = 'winui'
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
+
+To select a **prerelease** (for example the first release carrying the frontend, published as a
+prerelease) instead of the default latest-stable endpoint — the default `releases/latest` never
+returns prereleases, so this is the explicit preview-selection option:
+
+```powershell
+$env:WT_BOOTSTRAP_FRONTEND = 'winui'
+$env:WT_BOOTSTRAP_PRERELEASE = '1'
+irm "https://raw.githubusercontent.com/88kbleirad/WindowsTweaker/main/bootstrap/bootstrap.ps1" | iex
+```
+
+Or select an exact tag (including a prerelease tag) with `WT_BOOTSTRAP_RELEASE_TAG=1.2.0`
+(leading `v` accepted). If the selected release has no frontend, the bootstrap stops with an
+actionable `PACKAGE` error naming the expected `frontend/WindowsTweaker.WinUI.exe` path rather
+than silently opening the console TUI. The frontend opens as a standard user; privileged
+operations are handled by the app's own UAC handoff (see `docs/FRONTEND.md`).
 
 ## Executed vs not executed
 

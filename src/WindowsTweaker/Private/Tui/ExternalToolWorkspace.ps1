@@ -94,7 +94,19 @@ function Add-WtExternalToolView
 
     Set-WtScreenText -Screen $Screen -Row 1 -Column 2 -Text (Get-WtString -Key 'Mas.Title') -Style 'Title' -MaxWidth ($Width - 4)
 
-    $Row = 2
+    # The machine's observed licensing status: the same authoritative snapshot the main screen
+    # paints, on its own line directly under the title. It is deliberately separate from the tool
+    # readiness below - selecting a method or downloading a file never changes this line.
+    $Observed = Get-WtObservedLicensingStatusText -State $State
+    $ObservedLine = (Get-WtString -Key 'Lic.ActStatus' -Arguments @($Observed))
+    if (-not (Test-WtLicensingSnapshotFresh -State $State))
+    {
+        $ObservedLine += ' ' + (Get-WtString -Key 'Lic.Status.Stale')
+    }
+    $ObservedLine += ' | ' + (Get-WtLicensingCollectedText -State $State)
+    Set-WtScreenText -Screen $Screen -Row 2 -Column 2 -Text $ObservedLine -Style 'Item' -MaxWidth ($Width - 4)
+
+    $Row = 3
     foreach ($Line in (Format-WtWrappedText -Text (Get-WtString -Key 'Mas.Warning.Summary') -Width ($Width - 4)))
     {
         if ($Row -gt $Bottom) { break }
@@ -177,7 +189,7 @@ function Add-WtExternalToolView
     # Local copy and upstream source: the status a reviewer needs, and what it is pinned to.
     # One box, so a typical window sees the whole story; the details box below absorbs the long
     # notes when there is room.
-    if ($Row + 10 -le $Bottom)
+    if ($Row + 9 -le $Bottom)
     {
         $Look = Get-WtExternalToolStatusLook -Tool $Tool
         $StatusText = Get-WtString -Key 'Mas.StatusLabel' -Arguments @((Get-WtString -Key (Get-WtExternalToolStatusKey -Status $Tool.Status)))
@@ -186,17 +198,12 @@ function Add-WtExternalToolView
             $StatusText = Get-WtString -Key 'Mas.Status.Unsupported'
         }
 
-        Add-WtScreenBox -Screen $Screen -Row $Row -Column 2 -Width ($Width - 4) -Height 11 -Title (Get-WtString -Key 'Mas.Section.Local') `
+        Add-WtScreenBox -Screen $Screen -Row $Row -Column 2 -Width ($Width - 4) -Height 10 -Title (Get-WtString -Key 'Mas.Section.Local') `
             -BorderStyle 'Border' -TitleStyle 'PanelTitle' -Style 'Dialog'
 
         $Inner = $Width - 8
         $Line = $Row + 1
         Set-WtScreenIconText -Screen $Screen -Row $Line -Column 4 -Width $Inner -IconKey $Look.IconKey -Text $StatusText -Style $Look.Tone
-        $Line++
-
-        $FileLine = Get-WtString -Key 'Mas.File' -Arguments @([string]$Tool.Path)
-        if ($Tool.Installed) { $FileLine += ' (' + $Tool.Bytes + ' bytes)' }
-        Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text $FileLine -Style 'ItemMeta' -MaxWidth $Inner
         $Line++
 
         Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Mas.Sha256' -Arguments @($(if ($Tool.Sha256) { $Tool.Sha256 } else { [string]$Tool.Pin.Sha256 }))) -Style 'ItemMeta' -MaxWidth $Inner
@@ -224,7 +231,7 @@ function Add-WtExternalToolView
 
         Set-WtScreenText -Screen $Screen -Row $Line -Column 4 -Text (Get-WtString -Key 'Mas.Documentation' -Arguments @([string]$Spec.DocumentationUrl)) -Style 'Item' -MaxWidth $Inner
 
-        $Row += 11
+        $Row += 10
     }
 
     # Details: the parts that need more than one line, when the terminal has room.
@@ -701,10 +708,11 @@ function Select-WtActivationMethod
 
     $Text = '{0} - {1}' -f (Get-WtActivationMethodText -Method $Method), (Get-WtActivationDurationModelText -Method $Method)
 
-    # The duration model and the internet requirement are repeated here because they are the two
-    # facts the choice turns on, quoted from upstream documentation for this method.
+    # Selecting a method only chooses what the main A action would run. It does not change the
+    # machine's licensing status - the observed status line is untouched and stays as it was.
     Show-WtTuiMessage -State $State -Title $Title -Lines @(
         (Get-WtString -Key 'Mas.Method.Selected' -Arguments @($Text)),
+        (Get-WtString -Key 'Mas.Method.NoStatusChange'),
         (Get-WtString -Key 'Mas.Method.Duration' -Arguments @((Get-WtActivationDurationText -Method $Method))),
         (Get-WtString -Key 'Mas.Method.Internet' -Arguments @((Get-WtActivationInternetText -Method $Method)))
     ) -Tone 'Success'

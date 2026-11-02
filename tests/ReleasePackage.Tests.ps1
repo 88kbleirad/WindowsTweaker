@@ -146,6 +146,63 @@ Describe 'Release package set' {
     }
 }
 
+Describe 'Frontend payload (Windows archives only)' {
+
+    BeforeAll {
+        # Build a second archive with a fake frontend payload staged the same way the
+        # release workflow stages the real CI build (frontend/win-x64/... -> frontend/...).
+        $script:FeRoot = Join-Path $script:TestRoot 'frontend-fixture'
+        $script:FeOutDir = Join-Path $script:TestRoot 'dist-frontend'
+        [System.IO.Directory]::CreateDirectory($script:FeRoot) | Out-Null
+        [System.IO.Directory]::CreateDirectory($script:FeOutDir) | Out-Null
+
+        # Only a Windows platform can carry a frontend; the fixture is built for the host
+        # platform when the host is Linux, the frontend must be omitted entirely.
+        $script:FePlatform = Get-WtBootstrapPlatform -PlatformKey $script:HostKey
+        if ($script:FePlatform.Os -eq 'windows') {
+            $FePayload = Join-Path $script:FeRoot "$($script:HostKey)/WindowsTweaker.WinUI.exe"
+            New-Item -ItemType Directory -Force -Path (Split-Path $FePayload -Parent) | Out-Null
+            Set-Content -LiteralPath $FePayload -Value 'placeholder exe (packaging contract only)' -Encoding utf8 -NoNewline
+        }
+
+        $FeArgs = @{
+            Version = $script:Version
+            OutDir = $script:FeOutDir
+            Platforms = @($script:HostKey)
+            FrontendRoot = $script:FeRoot
+        }
+        if (-not $script:WorkerIsReal) { $FeArgs['SkipWorkerBuild'] = $true }
+
+        & $script:PackagingScript @FeArgs | Out-Null
+
+        $script:FeZipName = "WindowsTweaker-$($script:HostKey)-v$($script:Version).zip"
+        $script:FeZipPath = Join-Path $script:FeOutDir $script:FeZipName
+        $script:FeStaging = Join-Path $script:TestRoot 'staging-frontend'
+        [System.IO.Directory]::CreateDirectory($script:FeStaging) | Out-Null
+        Expand-WtBootstrapArchive -Bytes ([System.IO.File]::ReadAllBytes($script:FeZipPath)) -Staging $script:FeStaging
+        $script:FeInternalManifest = Get-Content -LiteralPath (Join-Path $script:FeStaging 'manifest.json') -Raw | ConvertFrom-Json
+    }
+
+    It 'includes the frontend payload only in a Windows archive' {
+        $FeFiles = @($script:FeInternalManifest.files | Where-Object { $_.path -like 'frontend/*' })
+        if ($script:FePlatform.Os -eq 'windows') {
+            $FeFiles.Count | Should -BeGreaterThan 0
+            $FeFiles[0].path | Should -Be 'frontend/WindowsTweaker.WinUI.exe'
+            $script:FeInternalManifest.frontend.kind | Should -Be 'winui3'
+            $script:FeInternalManifest.frontend.entryPoint | Should -Be 'frontend/WindowsTweaker.WinUI.exe'
+        } else {
+            $FeFiles.Count | Should -Be 0
+            $script:FeInternalManifest.PSObject.Properties.Name | Should -Not -Contain 'frontend'
+        }
+    }
+
+    It 'verifies the frontend payload hash through the bootstrap validator' {
+        # Test-WtBootstrapRelease checks every declared file hash against the staged file,
+        # so a frontend file listed with a wrong hash fails validation. The pass is the proof.
+        $Null = Test-WtBootstrapRelease -Staging $script:FeStaging -PlatformKey $script:HostKey
+    }
+}
+
 Describe 'Validation with the bootstrap code' {
 
     It 'validates the real archive through manifest, required files and every file hash' {
