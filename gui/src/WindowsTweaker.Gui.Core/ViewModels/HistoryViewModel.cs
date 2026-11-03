@@ -505,6 +505,7 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     private string _technicalDetailsText = string.Empty;
     private bool _technicalDetailsVisible;
     private bool _technicalCopied;
+    private bool _logCopied;
     private readonly ObservableCollection<string> _diagnostics = new();
 
     public DiagnosticsViewModel(ShellViewModel shell)
@@ -615,6 +616,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     /// <summary>Localized status line for the report section.</summary>
     public string ReportStatusText => StatusTextFor(_report);
 
+    /// <summary>Semantic tone of <see cref="ReportStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string ReportStatusTone => ToneFor(_report);
+
+    /// <summary>True when the report's summarized content should be shown.</summary>
+    public bool ReportSummaryVisible => SummaryVisibleFor(_report);
+
     /// <summary>The generated diagnostics report, readable.</summary>
     public string ReportSummary => SummarizeText(_report);
 
@@ -635,6 +642,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
 
     /// <summary>Localized status line for the scan section.</summary>
     public string ScanStatusText => StatusTextFor(_scan);
+
+    /// <summary>Semantic tone of <see cref="ScanStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string ScanStatusTone => ToneFor(_scan);
+
+    /// <summary>True when the scan's summarized content should be shown.</summary>
+    public bool ScanSummaryVisible => SummaryVisibleFor(_scan);
 
     /// <summary>The directory scan result, readable.</summary>
     public string ScanSummary => SummarizeText(_scan);
@@ -664,6 +677,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     /// <summary>Localized status line for the monitor section.</summary>
     public string MonitorStatusText => StatusTextFor(_monitor);
 
+    /// <summary>Semantic tone of <see cref="MonitorStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string MonitorStatusTone => ToneFor(_monitor);
+
+    /// <summary>True when the monitor's summarized content should be shown.</summary>
+    public bool MonitorSummaryVisible => SummaryVisibleFor(_monitor);
+
     /// <summary>The monitoring cycle result, readable.</summary>
     public string MonitorSummary => SummarizeText(_monitor);
 
@@ -684,6 +703,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
 
     /// <summary>Localized status line for the devices section.</summary>
     public string DeviceStatusText => StatusTextFor(_devices);
+
+    /// <summary>Semantic tone of <see cref="DeviceStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string DeviceStatusTone => ToneFor(_devices);
+
+    /// <summary>True when the device inventory's summarized content should be shown.</summary>
+    public bool DeviceSummaryVisible => SummaryVisibleFor(_devices);
 
     /// <summary>The device inventory summary, readable.</summary>
     public string DeviceSummary => SummarizeText(_devices);
@@ -706,6 +731,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     /// <summary>Localized status line for the power section.</summary>
     public string PowerStatusText => StatusTextFor(_power);
 
+    /// <summary>Semantic tone of <see cref="PowerStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string PowerStatusTone => ToneFor(_power);
+
+    /// <summary>True when the power section's summarized content should be shown.</summary>
+    public bool PowerSummaryVisible => SummaryVisibleFor(_power);
+
     /// <summary>The power settings summary, readable.</summary>
     public string PowerSummary => SummarizeText(_power);
 
@@ -726,6 +757,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
 
     /// <summary>Localized status line for the privacy section.</summary>
     public string PrivacyStatusText => StatusTextFor(_privacy);
+
+    /// <summary>Semantic tone of <see cref="PrivacyStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string PrivacyStatusTone => ToneFor(_privacy);
+
+    /// <summary>True when the privacy section's summarized content should be shown.</summary>
+    public bool PrivacySummaryVisible => SummaryVisibleFor(_privacy);
 
     /// <summary>The privacy activity summary, readable.</summary>
     public string PrivacySummary => SummarizeText(_privacy);
@@ -748,6 +785,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     /// <summary>Localized status line for the quarantine section.</summary>
     public string QuarantineStatusText => StatusTextFor(_quarantine);
 
+    /// <summary>Semantic tone of <see cref="QuarantineStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string QuarantineStatusTone => ToneFor(_quarantine);
+
+    /// <summary>True when the quarantine section's summarized content should be shown.</summary>
+    public bool QuarantineSummaryVisible => SummaryVisibleFor(_quarantine);
+
     /// <summary>The quarantine summary, readable.</summary>
     public string QuarantineSummary => SummarizeText(_quarantine);
 
@@ -768,6 +811,12 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
 
     /// <summary>Localized status line for the setup section.</summary>
     public string SetupStatusText => StatusTextFor(_setup);
+
+    /// <summary>Semantic tone of <see cref="SetupStatusText"/> (idle/loading/success/unsupported/error).</summary>
+    public string SetupStatusTone => ToneFor(_setup);
+
+    /// <summary>True when the setup section's summarized content should be shown.</summary>
+    public bool SetupSummaryVisible => SummaryVisibleFor(_setup);
 
     /// <summary>The setup plans summary, readable.</summary>
     public string SetupSummary => SummarizeText(_setup);
@@ -791,6 +840,25 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     /// <summary>Localized count of the recorded backend activity lines.</summary>
     public string CountText => Strings.Get("Gui.Diagnostics.Lines", _diagnostics.Count);
 
+    /// <summary>
+    /// The whole log as one selectable block, for the read-only copyable log viewport.
+    /// Rebuilt lazily from the bounded collection each time a line arrives; the cap is
+    /// 200 lines, so rebuilding stays cheap.
+    /// </summary>
+    public string DiagnosticsText => string.Join(Environment.NewLine, _diagnostics);
+
+    /// <summary>Label of the log copy action: Copy, or Copied immediately after a copy.</summary>
+    public string LogCopyText => _logCopied
+        ? Strings["Gui.Diagnostics.Copied"]
+        : Strings["Gui.Diagnostics.Copy"];
+
+    /// <summary>Records that the view copied <see cref="DiagnosticsText"/> to the clipboard.</summary>
+    public void MarkLogCopied()
+    {
+        _logCopied = true;
+        Raise(nameof(LogCopyText));
+    }
+
     /// <summary>Appends one diagnostic line, keeping the tail bounded.</summary>
     public void AddDiagnostic(string message)
     {
@@ -803,6 +871,7 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
             }
 
             Raise(nameof(CountText));
+            Raise(nameof(DiagnosticsText));
         });
     }
 
@@ -1026,8 +1095,40 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     {
         Raise(prefix + "State");
         Raise(prefix + "StatusText");
+        Raise(prefix + "StatusTone");
+        Raise(prefix + "SummaryVisible");
         Raise(prefix + "Summary");
         Raise(prefix + "Raw");
+    }
+
+    /// <summary>
+    /// The logical state of a section as a stable semantic name the view maps to a colour:
+    /// idle (nothing requested), loading, success, or failed. It is never localized, and
+    /// it is kept separate from <see cref="StatusTextFor"/> so the label text and the
+    /// colour can never contradict each other.
+    /// </summary>
+    private static string ToneFor(SectionState section) => section.State switch
+    {
+        LoadState.Idle => "idle",
+        LoadState.Loading => "loading",
+        LoadState.Failed => "error",
+        LoadState.Ready when !HasContent(section) => "unsupported",
+        _ => "success",
+    };
+
+    /// <summary>
+    /// True when a section has a successful result with real content to summarize. A
+    /// successful-but-empty answer is described by the status line alone ("not available
+    /// on this host"), so the summary never duplicates it.
+    /// </summary>
+    private static bool SummaryVisibleFor(SectionState section) =>
+        section.State == LoadState.Ready && HasContent(section);
+
+    /// <summary>True when a section's stored raw result has real content.</summary>
+    private static bool HasContent(SectionState section)
+    {
+        var raw = section.Raw;
+        return !string.IsNullOrWhiteSpace(raw) && raw is not "{}" and not "[]";
     }
 
     /// <summary>
@@ -1043,6 +1144,7 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         }
 
         Raise(nameof(TechnicalDetailsCopyText));
+        Raise(nameof(LogCopyText));
         Raise(nameof(ScanActionText));
         Raise(nameof(ReportActionText));
         Raise(nameof(CountText));
@@ -1059,6 +1161,9 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         LoadState.Idle => Strings["Gui.Overview.NotLoaded"],
         LoadState.Loading => Strings["Gui.Overview.Loading"],
         LoadState.Failed => string.IsNullOrEmpty(section.StatusText) ? Strings["Gui.Connection.Failed"] : section.StatusText,
+        // A successful-but-empty answer and a state never reached are both "not available on
+        // this host": the summary is hidden for them, so the status line is the only text.
+        LoadState.Ready when !HasContent(section) => Strings["Gui.Diagnostics.Unavailable"],
         _ => Strings["Gui.Ready"],
     };
 

@@ -137,6 +137,31 @@ public sealed class BridgeSession : IAsyncDisposable
     public bool IsRunning => !_disposed && !_process.HasExited;
 
     /// <summary>
+    /// The process's exit code when it has ended, otherwise -1 ("unknown" — the process is
+    /// still alive, or its code was not reapable). It is what the runner reports for the
+    /// disconnected state and for the exit event, so both always agree.
+    /// </summary>
+    public int LastExitCode
+    {
+        get
+        {
+            if (_disposed || !_process.HasExited)
+            {
+                return -1;
+            }
+
+            try
+            {
+                return _process.ExitCode;
+            }
+            catch (Exception)
+            {
+                return -1;
+            }
+        }
+    }
+
+    /// <summary>
     /// Starts a backend session. Discovers a PowerShell host, launches the bridge host
     /// script, and waits for the handshake. Throws <see cref="BridgeException"/> when no
     /// host exists, the script is missing, the handshake does not arrive, or the protocol

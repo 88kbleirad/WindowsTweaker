@@ -15,6 +15,14 @@ public enum Workspace
     Licensing,
 }
 
+/// <summary>
+/// One point of a time-series chart. <see cref="Value"/> is null when the reading for
+/// that instant is absent; a chart must skip such points, never draw them as zero.
+/// </summary>
+/// <param name="Time">When the sample was taken, in local time.</param>
+/// <param name="Value">The measured 0..100 percentage, or null when nothing was measured.</param>
+public sealed record DataPoint(DateTimeOffset Time, double? Value);
+
 /// <summary>Where the backend connection is, as the window renders it.</summary>
 public enum ConnectionState
 {
@@ -508,6 +516,40 @@ public sealed class OverviewViewModel : WorkspaceViewModel
     /// <summary>True when the trend holds enough points to draw (two or more).</summary>
     public bool CpuTrendVisible => CpuTrend.Count >= 2;
 
+    /// <summary>
+    /// The CPU chart's points, oldest first, one per second, each stamped with the local
+    /// sample time. It replaces <see cref="CpuTrend"/> as the chart's source; the raw
+    /// trend stays for back-compatibility. A point whose reading is absent is never
+    /// added, so a chart never draws a fabricated zero.
+    /// </summary>
+    public ObservableCollection<DataPoint> CpuHistory { get; } = new();
+
+    /// <summary>
+    /// The RAM chart's points, oldest first, one per second, measured as used percentage.
+    /// See <see cref="CpuHistory"/> for the gap rule.
+    /// </summary>
+    public ObservableCollection<DataPoint> RamHistory { get; } = new();
+
+    /// <summary>
+    /// True when the CPU chart holds two or more fresh points. A collection with fewer
+    /// points (or points older than the sample window) is not drawn.
+    /// </summary>
+    public bool CpuChartVisible => CountFresh(CpuHistory) >= 2;
+
+    /// <summary>True when the RAM chart holds two or more fresh points.</summary>
+    public bool RamChartVisible => CountFresh(RamHistory) >= 2;
+
+    /// <summary>
+    /// True when the four gauge cards show measurements from the live connection. It is
+    /// false before the first sample, while a sample is in flight, and after a sampling
+    /// failure - the cards then keep their last values, and the view marks them stale
+    /// with <see cref="StaleNote"/>.
+    /// </summary>
+    public bool QuadFresh => _metrics is not null && MetricsState == LoadState.Ready;
+
+    /// <summary>Localized note that the gauges show stale data.</summary>
+    public string StaleNote => Strings["Gui.Data.Stale"];
+
     /// <summary>True only while the sampling loop is running for this workspace.</summary>
     public bool MetricsSampling => Volatile.Read(ref _metricsRunning) == 1;
 
@@ -890,6 +932,8 @@ public sealed class OverviewViewModel : WorkspaceViewModel
         MetricsErrorDetail = string.Empty;
         MetricsState = LoadState.Ready;
 
+        var stamp = _metricsUpdatedAt ?? DateTimeOffset.Now;
+
         if (snapshot.Cpu.Percent is { } percent)
         {
             // Only a measured value enters the trend: a gap must not be drawn as a zero.
@@ -897,6 +941,21 @@ public sealed class OverviewViewModel : WorkspaceViewModel
             while (CpuTrend.Count > CpuTrendCapacity)
             {
                 CpuTrend.RemoveAt(0);
+            }
+
+            CpuHistory.Add(new DataPoint(stamp, Math.Clamp(percent, 0d, 100d)));
+            while (CpuHistory.Count > CpuTrendCapacity)
+            {
+                CpuHistory.RemoveAt(0);
+            }
+        }
+
+        if (snapshot.Memory.TotalBytes is { } total && snapshot.Memory.UsedBytes is { } used && total > 0)
+        {
+            RamHistory.Add(new DataPoint(stamp, Math.Clamp(used / total * 100d, 0d, 100d)));
+            while (RamHistory.Count > CpuTrendCapacity)
+            {
+                RamHistory.RemoveAt(0);
             }
         }
 
@@ -909,6 +968,7 @@ public sealed class OverviewViewModel : WorkspaceViewModel
         MetricsErrorDetail = string.IsNullOrWhiteSpace(message) ? code : $"{code}: {message}";
         MetricsErrorText = Shell.DescribeFailure(code, message);
         MetricsState = LoadState.Failed;
+        Raise(nameof(QuadFresh));
     }
 
     /// <summary>Re-publishes every property this dashboard computes, after a sample or a language switch.</summary>
@@ -920,6 +980,10 @@ public sealed class OverviewViewModel : WorkspaceViewModel
         Raise(nameof(CpuValueText));
         Raise(nameof(CpuDetailText));
         Raise(nameof(CpuTrendVisible));
+        Raise(nameof(CpuChartVisible));
+        Raise(nameof(RamChartVisible));
+        Raise(nameof(QuadFresh));
+        Raise(nameof(StaleNote));
         Raise(nameof(RamTotalBytes));
         Raise(nameof(RamUsedBytes));
         Raise(nameof(RamValueText));
@@ -946,6 +1010,26 @@ public sealed class OverviewViewModel : WorkspaceViewModel
         Raise(nameof(GpuNote));
         Raise(nameof(MetricsUpdatedText));
         Raise(nameof(MetricsState));
+    }
+
+    /// <summary>
+    /// Counts the history points that are fresh enough to draw: within the bounded sample
+    /// window (60 s at one sample per second), so a collection with one fresh point and a
+    /// tail that stopped an hour ago never draws a chart.
+    /// </summary>
+    private static int CountFresh(ObservableCollection<DataPoint> history)
+    {
+        var cutoff = DateTimeOffset.Now - TimeSpan.FromSeconds(CpuTrendCapacity + 5);
+        var fresh = 0;
+        foreach (var point in history)
+        {
+            if (point.Time >= cutoff)
+            {
+                fresh++;
+            }
+        }
+
+        return fresh;
     }
 
     /// <summary>A whole percentage ("42%"), or the localized text for "nothing was measured".</summary>

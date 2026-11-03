@@ -75,7 +75,22 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      All assets, fonts included. Fonts must reach the publish folder verbatim and the
+      font license must ship beside the face, so the bundle stays redistributable.
+    -->
     <Content Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Fonts also travel through the None/Link publish path — the same mechanism that ships
+      the engine and is proven to reach dotnet publish in this project. Without it, an
+      unpackaged publish (WindowsPackageType=None) would silently ship without the fonts,
+      and the ui would fall back to the machine's fonts (or missing glyphs).
+    -->
+    <None Include="Assets\Fonts\**" Link="Assets/Fonts/%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!--

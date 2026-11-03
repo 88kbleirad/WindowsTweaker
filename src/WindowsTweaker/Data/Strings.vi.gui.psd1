@@ -256,4 +256,22 @@
     'Gui.LoadingTweaksList'      = 'Đang tải danh sách tinh chỉnh...'
     'Gui.Idle'                   = 'Sẵn sàng'
     'Gui.LoadingWorkspace'       = 'Đang tải {0}...'
+    # Đồng hồ đo và biểu đồ ở Tổng quan: nhãn trạng thái (màu không phải tín hiệu duy nhất).
+    'Gui.Metrics.StatusNormal'   = 'Bình thường'
+    'Gui.Metrics.StatusElevated' = 'Hơi cao'
+    'Gui.Metrics.StatusHigh'     = 'Cao'
+    'Gui.Metrics.StatusVeryHigh' = 'Rất cao'
+    'Gui.Metrics.Utilization'    = 'Mức sử dụng'
+    'Gui.Metrics.UsedCapacity'   = 'Dung lượng đã dùng'
+    'Gui.Metrics.Last60'         = '60 giây gần nhất'
+    'Gui.Metrics.Now'            = 'hiện tại'
+    'Gui.Metrics.SecondsAgo'     = '-{0} giây'
+    'Gui.Metrics.StaleSample'    = 'Mẫu đã cũ'
+    'Gui.Metrics.FreshSample'    = 'Mẫu trực tiếp'
+    'Gui.Metrics.NoHistory'      = 'Chưa có dữ liệu lịch sử'
+    'Gui.Metrics.GpuNoCounter'   = 'Máy này không báo cáo bộ đếm mức sử dụng'
+
+    # Khung nhật ký ở Chẩn đoán.
+    'Gui.Diagnostics.Log'        = 'Nhật ký'
+    'Gui.Diagnostics.LogEmpty'   = 'Chưa có dòng nhật ký nào.'
 }

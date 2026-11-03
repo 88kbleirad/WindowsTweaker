@@ -38,6 +38,7 @@ public sealed class WinUiXamlWiringTests
         typeof(ReviewedChange),
         typeof(TweakRow),
         typeof(ReviewChangeRow),
+        typeof(DataPoint),
     };
 
     [Fact]

@@ -716,6 +716,20 @@ public sealed partial class MainWindow : Window
         _shell.Diagnostics.MarkTechnicalDetailsCopied();
     }
 
+    /// <summary>Copies the backend activity log to the clipboard and reflects it in the label.</summary>
+    private void DiagnosticsLogCopy_Click(object sender, RoutedEventArgs e)
+    {
+        var text = _shell.Diagnostics.DiagnosticsText;
+        if (!string.IsNullOrEmpty(text))
+        {
+            var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            package.SetText(text);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        }
+
+        _shell.Diagnostics.MarkLogCopied();
+    }
+
     private void HistoryMode_Changed(object sender, RoutedEventArgs e)
     {
         HistoryMode.Visibility = HistoryModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;

@@ -110,7 +110,12 @@ public sealed class BackendLifetimeTests
         var backend = shell.Runner.BackendProcessId;
         Assert.NotNull(backend);
         KillBackend(backend!.Value);
-        await WaitUntilAsync(() => !shell.IsConnected, TimeSpan.FromSeconds(15));
+
+        // Wait for the exit to be observed — the event, the state and the recorded exit
+        // code belong together. Waiting only for IsConnected=false would race the event
+        // and could assert before the code was recorded.
+        await WaitUntilAsync(() => exits.Count > 0, TimeSpan.FromSeconds(15));
+        Assert.True(shell.IsDisconnected);
 
         // The exit is reflected immediately: the badge state is Disconnected, the last exit
         // code is known, and commands that need the backend are disabled.

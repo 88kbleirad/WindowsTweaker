@@ -2550,3 +2550,85 @@ visual evidence.
 Reproduction on the VM: publish with the release command, copy `frontend-build/win-x64` to the
 guest, launch `WindowsTweaker.WinUI.exe`, then walk the six workspaces. Logs:
 `%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log`, engine logs under the data root.
+
+## 31. WinUI rework: gauges, charts, History table, Diagnostics log, bundled font
+
+Follows section 30 (six workspaces). This round targeted the visual issues from the review:
+Overview vertical gap, Diagnostics density, History alignment, typography/icons, and the four
+gauge time-series charts. No engine behavior changed; the only engine-side additions are
+string keys and one classification helper in Gui.Core.
+
+### 31.1 Font — MapleMono NF CN bundled
+
+- Bundled: `Assets/Fonts/MapleMono-NF-CN-{Regular,Bold,SemiBold}.ttf` + `LICENSE.txt`
+  (from the Maple Font v7.9 `MapleMono-NF-CN.zip` release, MIT-licensed).
+- Internal family name verified on Windows (`PrivateFontCollection`): **"Maple Mono NF CN"**;
+  the XAML references it via `ms-appx:///Assets/Fonts/MapleMono-NF-CN-Regular.ttf#Maple Mono NF CN`.
+- Applied through the theme (`WtMonoFont`/`WtMonoFontBold`/`WtMonoFontSemiBold`); the icon
+  face `WtIconFont` now points at the same bundled font, so icons render identically on every
+  machine (the old Segoe chain was removed — including the `WtIconFont` key that the glyph
+  gate test asserted).
+- Verified on the VM: all six workspace icon codepoints plus the metric/action icons render as
+  *distinct* glyphs (31/31 unique bitmaps) and Vietnamese diacritics render. The payload
+  validator now includes the font files (the None/Link publish path ships them).
+- `tests/GuiWinUi.Tests.ps1` updated to the bundled glyph vocabulary.
+
+### 31.2 Overview — continuous layout, gauges, charts
+
+- `GaugeControl` (new) — a semicircular 180° gauge: background arc (surface1 #45475A),
+  foreground arc + endpoint marker + percentage in the status colour, secondary text below,
+  metric icon+label header, adaptive geometry (rebuilt on `SizeChanged`, cached per
+  size/value), stroke thickness shared `WtGaugeStroke` (19 DIP, reference), round stroke caps,
+  square panel corners retained, no animation at all (so "reduced motion" needs no branch).
+  0% and 100% are inset by half the stroke + marker radius so nothing clips. Thresholds:
+  <60 normal green #A6E3A1, 60–80 elevated yellow #F9E2AF, 80–95 high orange #FAB387,
+  95–100 very high red #F38BA8, from `GaugeStatusRules.FromPercent` (in Gui.Core, unit-tested
+  at the boundaries). Unavailable/stale/unsupported render "—" in the muted track colour,
+  never 0%.
+- Overview panel: header row (sampling status dot + labels, last-updated, stale note, Refresh),
+  four gauge cards (CPU/GPU/RAM/disk) reflowing 4-across ≥1200 → 2×2 ≥800 → 1 column, CPU
+  and RAM time-series (`ItemsControl` columns from `CpuHistory`/`RamHistory`, only measured
+  points, gaps never zero-filled), then the existing environment/catalog/staged/interrupted
+  panels. The whole panel scrolls vertically so nothing is compressed into a fixed height.
+- Sampling reuse: the existing `metrics.snapshot` loop (1000 ms, visibility+connection gated,
+  non-overlapping, bounded history, stops on navigation/close) is unchanged; history is only
+  appended with real readings.
+
+### 31.3 Diagnostics — spacing, log viewport
+
+- Shared spacing resources: `WtPanelPadding` 16, `WtPanelGap` 12, `WtInnerGap` 8, `WtLogPadding`
+  12; all Diagnostics sections consume them (buttons no longer touch borders).
+- The log is a bounded (MaxHeight 220), selectable, wrapping read-only TextBox with its own
+  padding and a Copy action in the log header (`DiagnosticsLogCopy_Click`), fed by
+  `DiagnosticsText` (joined, re-raised on each line).
+- Per-section state pills (`{Section}StatusTone`) + localized status labels distinguish Not
+  loaded / Loading / Ready / Unsupported / Error; summaries appear only when the section is
+  actually Ready, so "Unavailable" and "Not loaded" can never coexist.
+
+### 31.4 History — real table
+
+- Shared header/row column definitions + spacing (already true) now also have a subtle outer
+  border, 1 px vertical separators, a reserved scrollbar gutter in the header so alignment
+  holds when scrolling, ellipsis + tooltip on long tweak ids, and a padded selected-record
+  details panel below. Filtering/selection/restore eligibility unchanged.
+
+### 31.5 Verification executed
+
+- Windows VM (Windows 11 IoT LTSC, PowerShell 5.1 + pwsh 7.4.7):
+  - publish with real XAML compile: `PUBLISH_EXITCODE=0`; payload validator `OK: 41 required
+    assets present, architecture consistent (x64)`; fonts present in `frontend-build/win-x64/Assets/Fonts`
+    (Regular/Bold/SemiBold + LICENSE).
+  - font checks: family "Maple Mono NF CN"; 31/31 distinct icon glyph bitmaps; Vietnamese text renders.
+  - `dotnet test` full suite: 62/62 passed (lifetime 8/8 + rest 54/54).
+- Linux: core suite 74/74 (includes 12 new gauge-threshold tests + 2 overview sampling +
+  3 review eligibility + 1 concurrency); full validation gate passed; Loading/BridgeProtocol/
+  GuiWinUi gates passed (the glyph gate updated to the bundled font).
+- WinUI XAML static wiring: 375 bindings checked, all resolve.
+
+### 31.6 Remaining (visual, require an interactive Windows session)
+
+- Rendered look at 100%/150% scaling and both languages; the gauge/chart geometry at narrow
+  widths; actual scrollbar alignment; keyboard focus; Verify that launching the window and
+  tabbing between all six workspaces, refreshing repeatedly, and closing leaves no sampling
+  loop or bridge request running. (The loop lifecycle is unit-tested; the rendered result is
+  not.)

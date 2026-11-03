@@ -13,9 +13,13 @@
             <local:ToneToBrushConverter x:Key="WtToneToBrush"/>
             <local:PercentToStarLengthConverter x:Key="WtUsedStar"/>
             <local:PercentToStarLengthConverter x:Key="WtFreeStar" Invert="True"/>
+            <local:MetricQualityToGaugeConverter x:Key="WtMetricQualityToGauge"/>
+            <local:PercentToGaugeStatusConverter x:Key="WtPercentToGaugeStatus"/>
 
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Themes/CatppuccinMocha.xaml"/>
+                <!-- The reusable semicircular gauge control's template. -->
+                <ResourceDictionary Source="Themes/GaugeStyle.xaml"/>
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

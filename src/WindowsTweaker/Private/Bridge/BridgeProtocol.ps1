@@ -652,6 +652,22 @@ function Get-WtBridgeGuiStringKeys
         'Gui.LoadingTweaksList'
         'Gui.LoadingWorkspace'
         'Gui.Idle'
+        # Gauges and charts: status words, axis labels, freshness, diagnostics log.
+        'Gui.Metrics.StatusNormal'
+        'Gui.Metrics.StatusElevated'
+        'Gui.Metrics.StatusHigh'
+        'Gui.Metrics.StatusVeryHigh'
+        'Gui.Metrics.Utilization'
+        'Gui.Metrics.UsedCapacity'
+        'Gui.Metrics.Last60'
+        'Gui.Metrics.Now'
+        'Gui.Metrics.SecondsAgo'
+        'Gui.Metrics.StaleSample'
+        'Gui.Metrics.FreshSample'
+        'Gui.Metrics.NoHistory'
+        'Gui.Metrics.GpuNoCounter'
+        'Gui.Diagnostics.Log'
+        'Gui.Diagnostics.LogEmpty'
     )
 }
 

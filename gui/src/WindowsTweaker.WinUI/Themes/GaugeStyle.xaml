@@ -1,0 +1,110 @@
+﻿<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WindowsTweaker.WinUI">
+
+    <!--
+        Shared stroke thickness for the metric gauges. It is a design reference (~0.5 cm
+        at 96 DPI), not a physical guarantee on every display.
+    -->
+    <x:Double x:Key="WtGaugeStroke">19</x:Double>
+
+    <Style TargetType="local:GaugeControl">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="local:GaugeControl">
+                    <Border x:Name="LayoutRoot"
+                            Background="#181825"
+                            CornerRadius="0">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Metric icon + name: a compact header row. -->
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" Margin="12,10,12,0">
+                                <FontIcon FontFamily="{StaticResource WtIconFont}"
+                                          FontSize="14"
+                                          Foreground="{StaticResource WtSubtext}"
+                                          Glyph="&#xF07B6;"/>
+                                <TextBlock Text="{TemplateBinding MetricName}"
+                                           Foreground="{StaticResource WtSubtext}"
+                                           FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!--
+                                The semicircular arc. One Path is drawn on the ellipse
+                                inscribed in the control's width, sweeping 180° with a
+                                rounded cap; the foreground arc uses the same geometry and
+                                is clipped to the current value by the ArcSegment.IsLargeArc
+                                logic in the code-behind.
+                            -->
+                            <Grid x:Name="ArcHost" Grid.Row="1" Margin="0,6,0,12">
+                                <!--
+                                    The arc geometry is computed in code-behind when the
+                                    control size changes, so the gauge adapts to its panel
+                                    width. The initial values are placeholders only; the
+                                    arcs and the marker are repositioned in
+                                    GaugeControl.ApplyTemplateState.
+                                -->
+                                <Path x:Name="BackgroundArc"
+                                      Stretch="None"
+                                      HorizontalAlignment="Stretch"
+                                      VerticalAlignment="Stretch"
+                                      Stroke="#45475A"
+                                      StrokeThickness="{StaticResource WtGaugeStroke}"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round">
+                                    <Path.Data>
+                                        <PathGeometry>
+                                            <PathFigure IsClosed="False" StartPoint="0,0">
+                                                <ArcSegment Point="0,0" Size="0,0" SweepDirection="Clockwise"/>
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </Path.Data>
+                                </Path>
+                                <Path x:Name="ForegroundArc"
+                                      Stretch="None"
+                                      HorizontalAlignment="Stretch"
+                                      VerticalAlignment="Stretch"
+                                      Stroke="#A6E3A1"
+                                      StrokeThickness="{StaticResource WtGaugeStroke}"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round">
+                                    <Path.Data>
+                                        <PathGeometry>
+                                            <PathFigure IsClosed="False" StartPoint="0,0">
+                                                <ArcSegment Point="0,0" Size="0,0" SweepDirection="Clockwise" IsLargeArc="False"/>
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </Path.Data>
+                                </Path>
+
+                                <!-- Endpoint marker: sits on the arc's center line. -->
+                                <Ellipse x:Name="Marker" Width="12" Height="12" Fill="#A6E3A1"
+                                         HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,0,0,0"/>
+
+                                <!-- The center holds the current value, secondary text below. -->
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="2">
+                                    <TextBlock x:Name="ValueText"
+                                               FontSize="30"
+                                               FontWeight="SemiBold"
+                                               Foreground="#CDD6F4"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="SecondaryText"
+                                               FontSize="12"
+                                               Foreground="#A6ADC8"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="180"
+                                               HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+</ResourceDictionary>

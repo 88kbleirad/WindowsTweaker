@@ -257,4 +257,22 @@
     'Gui.LoadingTweaksList'      = 'Loading the tweak list...'
     'Gui.Idle'                   = 'Ready'
     'Gui.LoadingWorkspace'       = 'Loading {0}...'
+    # Overview gauges and charts: status words (colour is never the only signal).
+    'Gui.Metrics.StatusNormal'   = 'Normal'
+    'Gui.Metrics.StatusElevated' = 'Elevated'
+    'Gui.Metrics.StatusHigh'     = 'High'
+    'Gui.Metrics.StatusVeryHigh' = 'Very high'
+    'Gui.Metrics.Utilization'    = 'Utilization'
+    'Gui.Metrics.UsedCapacity'   = 'Used capacity'
+    'Gui.Metrics.Last60'         = 'Last 60 seconds'
+    'Gui.Metrics.Now'            = 'now'
+    'Gui.Metrics.SecondsAgo'     = '-{0}s'
+    'Gui.Metrics.StaleSample'    = 'Sample is stale'
+    'Gui.Metrics.FreshSample'    = 'Live sample'
+    'Gui.Metrics.NoHistory'      = 'No history yet'
+    'Gui.Metrics.GpuNoCounter'   = 'This machine reports no utilization counter'
+
+    # Diagnostics log viewport.
+    'Gui.Diagnostics.Log'        = 'Log'
+    'Gui.Diagnostics.LogEmpty'   = 'No log lines yet.'
 }

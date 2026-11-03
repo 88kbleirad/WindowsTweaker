@@ -424,8 +424,12 @@ public sealed class BridgeRunner : IAsyncDisposable
         if (ReferenceEquals(Interlocked.CompareExchange(ref _session, null, session), session))
         {
             Interlocked.Increment(ref _generation);
-            SetState(BackendState.Disconnected, reason, 0, session.StderrTail);
-            Exited?.Invoke(this, -1);
+            // The exit code is best effort: once the session is detached it may already be
+            // gone, so -1 means "unknown". The state and the event must carry the same
+            // number, or the badge and the diagnostics contradict each other.
+            var exitCode = session.LastExitCode;
+            SetState(BackendState.Disconnected, reason, exitCode, session.StderrTail);
+            Exited?.Invoke(this, exitCode);
         }
     }
 

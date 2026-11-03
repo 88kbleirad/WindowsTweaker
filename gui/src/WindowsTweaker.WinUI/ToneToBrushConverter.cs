@@ -28,7 +28,12 @@ public sealed partial class ToneToBrushConverter : IValueConverter
             "subtext" => "WtSubtext",  // Unsupported
             "muted" => "WtText",       // Disabled / Default / anything else neutral
 
-            // Operation outcomes.
+            // Diagnostics section states.
+            "idle" => "WtSubtext",     // not loaded / nothing requested yet
+            "loading" => "WtYellow",   // a read is in flight
+            "unsupported" => "WtOverlay0",
+
+            // Operation outcomes and section success share one colour.
             "success" => "WtGreen",
             "failure" => "WtRed",
             "interrupted" => "WtYellow",

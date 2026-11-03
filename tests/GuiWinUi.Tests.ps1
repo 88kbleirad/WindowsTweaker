@@ -1,4 +1,4 @@
-# WindowsTweaker - WinUI frontend wiring contract tests.
+﻿# WindowsTweaker - WinUI frontend wiring contract tests.
 #
 # The WinUI window is not compiled by the Linux gate (the XAML markup compiler is a Windows
 # process) and a bad binding or a missing localization key does not fail any build - it shows
@@ -80,22 +80,26 @@ Describe 'WinUI frontend wiring' {
         $Missing.Count | Should -Be 0 -Because ("these keys have no definition in the merged theme dictionary: " + ($Missing -join ', '))
     }
 
-    It 'draws navigation with glyphs the shipped icon font stack carries' {
+    It 'draws navigation and metric icons with glyphs the bundled font carries' {
         $Xaml = Get-Content -Raw -LiteralPath (Join-Path $script:WinUiRoot 'MainWindow.xaml')
         $Glyphs = @([regex]::Matches($Xaml, 'Glyph="&#x([0-9A-Fa-f]{4});"') | ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() })
         $Glyphs.Count | Should -BeGreaterThan 0
 
-        # Segoe Fluent Icons ships with Windows 11 (and with this IoT LTSC image, where
-        # Segoe MDL2 Assets is NOT installed), so it must stay first in the stack; MDL2 is
-        # the Windows 10 fallback. Every code point in use was verified present in
-        # C:\Windows\Fonts\SegoeIcons.ttf (Segoe Fluent Icons) on the Windows 11 IoT LTSC
-        # validation VM (see docs/VALIDATION.md section 28).
+        # The icon face is the bundled MapleMono NF CN (the app ships the font in
+        # Assets/Fonts, so it renders identically on machines without it installed). The
+        # family name below is the one the font reports internally.
         $Theme = Get-Content -Raw -LiteralPath (Join-Path $script:WinUiRoot 'Themes/CatppuccinMocha.xaml')
-        $Theme | Should -Match '<FontFamily x:Key="WtIconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>'
+        $Theme | Should -Match '<FontFamily x:Key="WtIconFont">ms-appx:///Assets/Fonts/MapleMono-NF-CN-Regular.ttf#Maple Mono NF CN</FontFamily>'
 
-        # The reviewed vocabulary. A new glyph must be added here deliberately, and checked
-        # against the font, rather than rendering as a missing-glyph box on the target image.
-        $Reviewed = @('E711', 'E72C', 'E80F', 'E81C', 'E8D7', 'E8FB', 'E9D9', 'E9F5')
+        # Every glyph actually used in the window was verified present in the bundled font
+        # on the Windows 11 IoT LTSC validation VM (distinct bitmaps for each codepoint,
+        # see docs/VALIDATION.md section 31). A new glyph must be added here deliberately,
+        # and checked against the font, rather than rendering as a missing-glyph box.
+        $Reviewed = @('E711', 'E72C', 'E80F', 'E81C', 'E8D7', 'E8FB', 'E9D9', 'E9F5',
+                      'F2DB', 'F0A0', 'F108', 'F201', 'F021', 'F00C', 'F00D', 'F071',
+                      'F128', 'F05E', 'F05A', 'F0C5', 'F0E2', 'F04B', 'F022', 'F1DA',
+                      'F115', 'F002', 'F03A', 'F0AD', 'F085', 'F013', 'F017', 'F080',
+                      'F0CE', 'F0B0', 'F00E', 'F132', 'F1DE', 'F0AE', 'F02D', 'F07B6')
         foreach ($Glyph in ($Glyphs | Sort-Object -Unique)) {
             $Reviewed | Should -Contain $Glyph -Because "glyph U+$Glyph is not part of the reviewed icon vocabulary"
         }
@@ -105,4 +109,5 @@ Describe 'WinUI frontend wiring' {
             $Glyphs | Should -Contain $NavGlyph -Because "navigation entry U+$NavGlyph must be drawn"
         }
     }
+
 }
