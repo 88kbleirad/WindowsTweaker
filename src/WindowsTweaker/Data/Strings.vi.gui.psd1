@@ -136,4 +136,22 @@
     'Gui.Error.NoSelection'   = 'Hãy chọn một dòng trước.'
     'Gui.Error.EmptySearch'   = 'Không có tinh chỉnh nào khớp với tìm kiếm này.'
     'Gui.Error.LoadFailed'    = 'Yêu cầu thất bại: {0}'
+
+    # Trạng thái khởi động / tải dữ liệu và thông tin môi trường ở Tổng quan.
+    'Gui.Action.Retry'        = 'Thử lại'
+    'Gui.Overview.Os'         = 'Hệ điều hành'
+    'Gui.Overview.PowerShell' = 'PowerShell'
+    'Gui.Overview.Privilege'  = 'Quyền'
+    'Gui.Overview.Engine'     = 'Bộ máy'
+    'Gui.Overview.Admin'      = 'quản trị'
+    'Gui.Overview.Standard'   = 'người dùng thường'
+    'Gui.Overview.NotLoaded'  = 'chưa tải'
+    'Gui.Overview.Loading'    = 'Đang tải...'
+    'Gui.Overview.Empty'      = 'Danh mục trống.'
+    'Gui.Overview.CatalogCount' = '{0} tinh chỉnh | {1} nhóm'
+    'Gui.Tweaks.Loading'      = 'Đang tải tinh chỉnh...'
+    'Gui.Tweaks.Empty'        = 'Không có tinh chỉnh nào khớp bộ lọc hiện tại.'
+    'Gui.Error.LocalizationFailed' = 'Chuỗi giao diện chưa tải được; gói bộ máy có thể chưa đầy đủ.'
+    'Gui.Error.BackendStopFailed' = 'Không thể dừng tiến trình nền một cách sạch sẽ; chưa nâng quyền.'
+    'Gui.Error.InitFailed'    = 'Khởi động thất bại'
 }

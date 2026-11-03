@@ -137,4 +137,22 @@
     'Gui.Error.NoSelection'   = 'Select a row first.'
     'Gui.Error.EmptySearch'   = 'No tweak matches this search.'
     'Gui.Error.LoadFailed'    = 'The request failed: {0}'
+
+    # Startup / load states and the overview's environment facts.
+    'Gui.Action.Retry'        = 'Retry'
+    'Gui.Overview.Os'         = 'OS'
+    'Gui.Overview.PowerShell' = 'PowerShell'
+    'Gui.Overview.Privilege'  = 'Privilege'
+    'Gui.Overview.Engine'     = 'Engine'
+    'Gui.Overview.Admin'      = 'elevated'
+    'Gui.Overview.Standard'   = 'standard user'
+    'Gui.Overview.NotLoaded'  = 'not loaded'
+    'Gui.Overview.Loading'    = 'Loading...'
+    'Gui.Overview.Empty'      = 'The catalog is empty.'
+    'Gui.Overview.CatalogCount' = '{0} tweaks | {1} categories'
+    'Gui.Tweaks.Loading'      = 'Loading tweaks...'
+    'Gui.Tweaks.Empty'        = 'No tweak matches the current filter.'
+    'Gui.Error.LocalizationFailed' = 'The interface text did not load; the engine payload may be incomplete.'
+    'Gui.Error.BackendStopFailed' = 'The backend could not be stopped cleanly; nothing was elevated.'
+    'Gui.Error.InitFailed'    = 'Startup failed'
 }

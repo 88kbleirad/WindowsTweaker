@@ -25,6 +25,7 @@ public sealed class TweaksViewModel : WorkspaceViewModel
         States.CollectionChanged += (_, _) =>
         {
             Raise(nameof(EmptySearchVisible));
+            Raise(nameof(EmptyMessage));
             Raise(nameof(RowsSummary));
         };
     }
@@ -121,6 +122,14 @@ public sealed class TweaksViewModel : WorkspaceViewModel
     /// <summary>True when the current filter matched nothing.</summary>
     public bool EmptySearchVisible => States.Count == 0;
 
+    /// <summary>
+    /// The message for an empty list, distinguishing "the backend returned no rows" from
+    /// "your filter matched none" - never a bare zero.
+    /// </summary>
+    public string EmptyMessage => _all.Count == 0
+        ? Strings["Gui.Tweaks.Empty"]
+        : Strings["Gui.Error.EmptySearch"];
+
     /// <summary>Detail pane title.</summary>
     public string DetailsTitle => _selected?.Name ?? string.Empty;
 
@@ -172,7 +181,7 @@ public sealed class TweaksViewModel : WorkspaceViewModel
     protected override async Task LoadAsync()
     {
         var first = _all.Count == 0;
-        await RunAsync(
+        var loaded = await RunAsync(
             "state.get",
             Projections.TweakStates,
             rows =>
@@ -194,6 +203,11 @@ public sealed class TweaksViewModel : WorkspaceViewModel
             statusWhileRunning: Strings["Tui.Status.Refreshing"]).ConfigureAwait(true);
 
         ApplyFilter();
+        if (loaded)
+        {
+            MarkLoaded(_all.Count);
+        }
+
         Loaded = true;
     }
 
@@ -235,6 +249,7 @@ public sealed class TweaksViewModel : WorkspaceViewModel
         // Keep the selection if it is still visible, otherwise clear it.
         Selected = previous is null ? null : rows.FirstOrDefault(r => r.Id == previous);
         Raise(nameof(EmptySearchVisible));
+        Raise(nameof(EmptyMessage));
     }
 
     /// <summary>Stages the selection into the review workspace. Applies nothing.</summary>

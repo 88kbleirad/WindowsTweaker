@@ -22,8 +22,12 @@
                        TextWrapping="Wrap" TextAlignment="Center"
                        Text="{Binding StatusText}"/>
             <Button x:Name="RetryBackendButton" Style="{StaticResource WtButton}"
-                    Content="{Binding Strings[Gui.Action.Refresh]}" Click="RetryBackend_Click"
-                    HorizontalAlignment="Center"/>
+                    Click="RetryBackend_Click" HorizontalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
+                    <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
         </StackPanel>
 
         <!-- Header: environment + backend + language + reduced motion. -->
@@ -47,7 +51,8 @@
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <TextBlock Text="{Binding Strings[Gui.Header.Language]}" Style="{StaticResource WtMutedText}" VerticalAlignment="Center"/>
-                <ComboBox x:Name="LanguageCombo" Style="{StaticResource WtComboBox}" MinWidth="90"/>
+                <ComboBox x:Name="LanguageCombo" Style="{StaticResource WtComboBox}" MinWidth="90"
+                          ItemsSource="{Binding Strings.Languages}"/>
                 <CheckBox x:Name="ReduceMotionBox" Style="{StaticResource WtCheckBox}"
                           Content="{Binding Strings[Gui.Header.ReducedMotion]}"/>
                 <Button x:Name="ElevateButton" Style="{StaticResource WtButton}"
@@ -108,10 +113,21 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="WorkspaceTitle" Style="{StaticResource WtPanelTitle}" FontSize="16"/>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="RefreshButton" Style="{StaticResource WtButton}"
-                                Content="{Binding Strings[Gui.Action.Refresh]}" Click="RefreshButton_Click"/>
-                        <Button x:Name="CancelButton" Style="{StaticResource WtButton}"
-                                Content="{Binding Strings[Gui.Action.Cancel]}" Click="CancelButton_Click" Visibility="Collapsed"/>
+                        <Button x:Name="RefreshButton" Style="{StaticResource WtButton}" Click="RefreshButton_Click"
+                                ToolTipService.ToolTip="{Binding Strings[Gui.Action.Refresh]}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
+                                <TextBlock Text="{Binding Strings[Gui.Action.Refresh]}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="CancelButton" Style="{StaticResource WtButton}" Click="CancelButton_Click"
+                                Visibility="Collapsed"
+                                ToolTipService.ToolTip="{Binding Strings[Gui.Action.Cancel]}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE711;" FontSize="13"/>
+                                <TextBlock Text="{Binding Strings[Gui.Action.Cancel]}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </Grid>
 
@@ -125,15 +141,54 @@
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Overview.Environment]}"/>
-                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding HeaderEnvironment}" Margin="10,0,10,4"/>
-                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding BackendSummary}" Margin="10,0,10,10"/>
+                                <Grid Margin="10,0,10,10" ColumnSpacing="10" RowSpacing="3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Overview.Os]}"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Overview.OsText}"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Overview.PowerShell]}"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding Overview.PowerShellText}"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Overview.Privilege]}"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding Overview.PrivilegeText}"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Overview.Engine]}"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding Overview.EngineText}"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Header.Backend]}"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding BackendSummary}"/>
+                                </Grid>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Overview.Catalog]}"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,10"
+                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,4"
                                            Text="{Binding Overview.CatalogSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
+                                           Text="{Binding Strings[Gui.Overview.Loading]}"
+                                           Visibility="{Binding Overview.IsLoading, Converter={StaticResource WtBoolToVisible}}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
+                                           Text="{Binding Strings[Gui.Overview.Empty]}"
+                                           Visibility="{Binding Overview.IsEmpty, Converter={StaticResource WtBoolToVisible}}"/>
+                                <StackPanel Margin="10,0,10,10" Spacing="6"
+                                            Visibility="{Binding Overview.IsFailed, Converter={StaticResource WtBoolToVisible}}">
+                                    <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                               Foreground="{StaticResource WtRed}" Text="{Binding Overview.ErrorText}"/>
+                                    <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                            Click="RetryWorkspace_Click" Tag="overview">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
+                                            <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -174,6 +229,24 @@
                                   IsChecked="{Binding Tweaks.OnlySupported, Mode=TwoWay}"/>
                         <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
                                    Text="{Binding Tweaks.RowsSummary}"/>
+                        <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                   Text="{Binding Strings[Gui.Tweaks.Loading]}"
+                                   Visibility="{Binding Tweaks.IsLoading, Converter={StaticResource WtBoolToVisible}}"/>
+                        <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                   Text="{Binding Tweaks.EmptyMessage}"
+                                   Visibility="{Binding Tweaks.EmptySearchVisible, Converter={StaticResource WtBoolToVisible}}"/>
+                        <StackPanel Spacing="6"
+                                    Visibility="{Binding Tweaks.IsFailed, Converter={StaticResource WtBoolToVisible}}">
+                            <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                       Foreground="{StaticResource WtRed}" Text="{Binding Tweaks.ErrorText}"/>
+                            <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                    Click="RetryWorkspace_Click" Tag="tweaks">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
+                                    <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
 
                     <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>

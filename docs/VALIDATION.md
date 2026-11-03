@@ -1719,3 +1719,252 @@ Windows host in this environment). The missing-app-PRI finding gives it a concre
 evidence-based mechanism (XAML resource resolution against an absent PRI), and the fix
 ensures the PRI is now published; whether that fully resolves the VM startup crash must be
 confirmed by the manual reproduction in section 25.
+
+## 27. WinUI frontend: uninitialized window (raw [Key] labels, empty language list, 0 catalog)
+
+### The report
+
+The window opens, but every label shows its raw key (`[Gui.Nav.Overview]`,
+`[Gui.Starting]`, `[Gui.Action.Refresh]`, `[Gui.Footer.Hint]`), the language selector is
+empty, the catalog shows 0 tweaks and 0 categories, and only the handshake-derived backend
+summary is visible ("Desktop 5.1 | protocol 1 | Windows/X64"). Navigation used the default
+saturated Windows blue and the caption bar was white and titled "WinUI Desktop".
+
+### Root cause (evidenced)
+
+`MainWindow.UpdateBackendBadge()` resolved the badge styles from the **grid's** resource
+dictionary:
+
+```csharp
+BackendBadge.Style = _shell.IsConnected
+    ? (Style)RootGrid.Resources["WtBadgeOk"]
+    : (Style)RootGrid.Resources["WtBadgeError"];
+```
+
+`WtBadgeOk` / `WtBadgeError` are defined in `Themes/CatppuccinMocha.xaml`, which `App.xaml`
+merges into **`Application.Resources`**. `MainWindow.xaml` declares no `<Grid.Resources>`,
+so `RootGrid.Resources` is empty and the lookup misses.
+
+What a miss does is documented at API level, not ambiguous:
+`Microsoft.UI.Xaml.ResourceDictionary` is a projected `IMap<IInspectable,IInspectable>`
+(`IDictionary<object,object>` in C#), and `IMap.Lookup` **fails** for an absent key -
+"Returns: The value of the item with the specified key if such item exists, **otherwise
+E_BOUNDS**. Use the HasKey method to determine whether the key exists"
+([IMap&lt;K,V&gt;.Lookup](https://learn.microsoft.com/en-us/uwp/api/windows.foundation.collections.imap-2.lookup?view=winrt-28000)).
+The C# indexer is that lookup, so `RootGrid.Resources["WtBadgeOk"]` raises (mapped from
+E_BOUNDS to `KeyNotFoundException`/`COMException`), it does not return `null`. The
+code-lookup scope does extend into a dictionary's own merged dictionaries - which is exactly
+why the corrected path works and is not itself a hazard ("that scope does extend into
+MergedDictionaries",
+[XAML resource references](https://learn.microsoft.com/en-us/windows/apps/develop/platform/xaml/xaml-resource-dictionary)) -
+and it does *not* extend from an element's dictionary to `Application.Resources`.
+
+That lookup runs inside the `PropertyChanged` handler for `BackendSummary`, on the line
+immediately **after** `BackendText.Text = _shell.BackendSummary`. A failure there propagates
+`UpdateBackendBadge` → `OnShellPropertyChanged` → `PropertyChanged` → the `BackendSummary`
+setter → `ShellViewModel.ConnectAsync` → the fire-and-forget `_ = InitializeAsync()` in the
+window constructor, where it is swallowed as an unobserved task exception. Startup was
+therefore **aborted immediately after the handshake**, which accounts for every observation:
+
+| Observed | Cause |
+|---|---|
+| Raw `[Key]` labels | `LocalizationService.Load` never ran, so the tables stayed empty and the documented `[key]` fallback rendered |
+| Empty language selector | `ItemsSource` was bound once in the constructor to the then-empty `List<string>`; `Load` replaced that instance |
+| 0 tweaks / 0 categories | `InitializeAsync` never reached `NavigateAsync(Overview)`, so `Overview.CatalogSummary` was never recomputed |
+| Backend summary visible | `BackendText.Text` is assigned on the line *before* the failing lookup |
+| Window still opens | the abort happens after construction and activation |
+| No error shown anywhere | the fault became an unobserved task exception; `ConnectAsync` treated a failed `strings.get` as a silent diagnostic |
+
+The failure itself cannot be executed on Linux (the indexer needs the WinUI runtime), but the
+defect is structural and provable statically: the key is not in the dictionary being searched,
+and that dictionary's scope provably stops at the element while the resources live in
+`Application.Resources`. The abort point it produces is the only code between the last
+handshake-derived value the screenshot showed and the stages that never ran, so it accounts
+for the entire symptom set. The fix removes the hazard and, more importantly, makes any future
+startup exception **visible and retryable** instead of silent.
+
+### Fix
+
+* `MainWindow.UpdateBackendBadge` resolves styles from `Application.Current.Resources`
+  through a non-throwing `TryFindStyle` helper.
+* `MainWindow.StartupAsync` wraps the whole sequence; any exception is written to the startup
+  diagnostics and shown as a visible failure panel with a Retry that reconnects
+  (`ShellViewModel.RetryConnectAsync` → `BridgeRunner.Reset`).
+* `ShellViewModel.ConnectAsync` never throws: each stage (handshake, `strings.get`,
+  `env.status`) is logged to the diagnostics workspace, and a failure sets the new
+  `InitializationState` (`Loading` / `Ready` / `Failed`) plus `InitializationError`.
+* `LocalizationService` now raises the indexer notification (`Item`, `Item[]`, all-properties)
+  on `Load`, `LoadFailed` and a language switch, and exposes `Languages` as an
+  `ObservableCollection<string>` mutated in place, so a selector bound to it fills in when
+  the tables arrive (the XAML binds `ItemsSource="{Binding Strings.Languages}"`).
+* `WorkspaceViewModel` gained a `LoadState` machine (`Idle` / `Loading` / `Ready` / `Empty` /
+  `Failed`) with `IsLoading` / `IsEmpty` / `IsFailed` and a `RetryAsync`; the Overview and
+  Tweaks panels render one element per state, so a failed request shows its message and a
+  Retry instead of a silent zero.
+* `BridgeRunner.RunAsync` converts a projection fault into a typed failure instead of letting
+  it escape into the caller's startup sequence.
+
+### Second pass: three further defects found while re-verifying
+
+Re-checking the fix end to end (rather than trusting the first pass) turned up three more
+defects. Two were fixed; the third is the coverage that was missing.
+
+1. **The handshake reported the PowerShell version as the engine version.**
+   `src/WindowsTweaker/Bridge/wt-bridge.ps1` built the hello frame as
+   `moduleVersion = [string](Get-WtRuntimeInfo).Profile.Version.ToString()` - the *runtime*
+   profile version, not the module's. The field name, the frontend mapping
+   (`BridgeHello.ModalVersion` ← `engine.moduleVersion`) and the Overview row all mean "the
+   engine (module) version", so the window printed the PowerShell version twice (once as
+   PowerShell, once as Engine) and never showed the real `1.2.1`. Evidence, before the fix
+   (probe of the real bridge): `moduleVersion: "7.6.9"`, `powerShell: "7.6.9"`. After
+   (`$Module.Version` of the imported module, manifest `ModuleVersion` as fallback):
+   `moduleVersion: "1.2.1"`, `powerShell: "7.6.9"`. `Private/Diagnostics.ps1` already read
+   the module version the same way for its own header, so there is now one meaning per
+   version. No Pester test pinned the old value; a live regression test does now.
+
+2. **The Overview re-subscribed to the review list on every load.**
+   `OverviewViewModel.LoadAsync` added another `Shell.Review.Changes.CollectionChanged`
+   handler on each load, so every refresh/retry accumulated handlers for the life of the
+   session. It is now added once, guarded by a flag. (Moving it to the constructor was the
+   first attempt and the tests caught it immediately: the shell builds `Overview` *before*
+   `Review`, so the constructor ran on a null reference. The flag keeps the fix independent of
+   construction order.)
+
+3. **No live test proved the startup sequence completes.** The 13 new localization/startup
+   tests covered the service and the failing-startup path, but none ran
+   `ShellViewModel.ConnectAsync` against a real backend, which is precisely the sequence the
+   report was about. Three live tests were added (see "Regression coverage added").
+
+```text
+before:  engine: {"moduleVersion": "7.6.9", "powerShell": "7.6.9", "edition": "Core", ...}
+after:   engine: {"moduleVersion": "1.2.1", "powerShell": "7.6.9", "edition": "Core", ...}
+```
+
+### Design: the window now matches the terminal interface
+
+* `Themes/CatppuccinMocha.xaml` overrides **119** framework theme keys, each verified to
+  exist with a compatible declaration in the pinned Windows App SDK 1.8 `generic.xaml`
+  (automated key/type check): `ControlCornerRadius` and `OverlayCornerRadius` to 0 (square
+  app-owned controls), `ListViewItem*` selection/hover/pressed/disabled plus the
+  `SelectionIndicator` brush (a thin blue bar instead of the saturated Windows fill),
+  `ComboBox`/`ComboBoxItem` (including the popup), all five `Button` states, `TextControl*`,
+  `CheckBox` fill/stroke per state, `RadioButton`, `ScrollBar` thumb/track, `ContentDialog`
+  and `ToolTip`.
+* An implicit `TextBlock` style applies one monospace face and the Mocha text colour
+  everywhere; `ListViewItemMinHeight` is compacted to 28.
+* `App.xaml` requests the Dark theme; `MainWindow.ApplyWindowChrome` sets the title to
+  "WindowsTweaker" and paints the caption bar in Mocha with readable buttons, guarded by
+  `AppWindowTitleBar.IsCustomizationSupported()` so dragging, resizing and the system
+  controls keep working on builds without title-bar customisation.
+* Overview now shows real OS/build, PowerShell, privilege, engine version, backend summary,
+  catalog counts, pending changes and interrupted operations — no invented values.
+
+### Executed checks (Linux only)
+
+All of the following were re-run against the final tree (after the second-pass fixes):
+
+* `dotnet build gui/src/WindowsTweaker.Gui.Core -c Release`: 0 warnings, 0 errors.
+* `dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests -c Release`: **46 passed / 0 failed /
+  0 skipped** (16 new localization/startup tests including 3 live end-to-end startup tests,
+  plus the pre-existing 30 protocol/live/locator tests; the live ones ran - `pwsh` is present,
+  so `CanRunLive` was true and nothing skipped silently).
+* `tools/Invoke-Validation.ps1`: `ALL EXECUTED CHECKS PASSED` - 734 passed / 0 failed /
+  9 skipped. Separately re-run after the last source edit: `tools/Parse-All.ps1` 180 files /
+  0 parse errors, PSScriptAnalyzer 0 findings, `tools/Test-Compatibility.ps1`
+  `COMPATIBILITY GATE PASSED` (5.1 syntax and command gate clean, 64 of 64 non-ASCII files
+  carry a UTF-8 BOM, every `Strings.*.psd1` is under the 500-entry `Import-PowerShellDataFile`
+  limit: 464 + 127 + 226 + 169 + 168 + 127 + 90 per language).
+* `tests/BridgeProtocol.Tests.ps1`: 3/3 - the frontend key list, both merged language tables
+  and the new keys agree (re-run after the bridge edit).
+* Real bridge probe (pwsh 7, JSON-Lines over stdin/stdout) from the source tree **and** from a
+  copied packaged layout (`engine/` as the payload ships it): hello `protocol 1`,
+  `engine.moduleVersion = 1.2.1` (after the fix), `strings.get` -> `languages = [en, vi]`,
+  1371 keys in each table (464 + 127 + 226 + 169 + 168 + 127 + 90), `env.status` complete,
+  `catalog.list` -> 113 tweaks / 10 categories, `state.get` -> 113 rows with 10 categories,
+  `language.set` accepted for both languages, clean `quit`.
+* C# compile check of every WinUI + Gui.Core source file against the restored Windows App SDK
+  references (`csc` from SDK 10.0.403, `Microsoft.WinUI.dll` 1.8.260803003,
+  `Microsoft.InteractiveExperiences.Projection.dll` 1.8.260708001, `Microsoft.Windows.SDK.NET`):
+  **69 `CS0103` only** - every one of them a `x:Name`/`InitializeComponent` identifier the XAML
+  markup compiler generates on Windows - plus the expected `CS1701` reference-version noise.
+  No other error code.
+* Localization key audit against the *live* payload: all 97 keys the frontend references
+  (`Strings[...]`, `Strings.Get(...)`, `Gui.*` literals across XAML and C#) resolve in both
+  merged tables; only the literal placeholder text `[Key]` in comments/docstrings matched the
+  pattern. Nothing is hardcoded: the frontend ships no translation of its own, and the only
+  non-localized user-visible string is `"Backend unavailable"`, shown in the failure panel
+  exactly when the tables themselves failed to load (there is no engine text to render yet).
+* Theme validation: all **119** overridden framework keys exist in the pinned
+  `Microsoft.WinUI/Themes/generic.xaml` (1.8.260803003) with a compatible effective type after
+  resolving each `<StaticResource x:Key=... ResourceKey=.../>` alias chain - automated check,
+  0 missing, 0 type conflicts.
+* `tools/Test-WtFrontendPayload.ps1` against a synthetic complete payload (real WinAppSDK
+  `runtimes-framework/win-x64/native` files + the engine tree): `OK: 41 required assets
+  present, architecture consistent (x64)`. Negative proofs: deleting
+  `engine/Data/Strings.vi.gui.psd1` fails with `FAIL: required publish assets are missing:
+  engine/Data/Strings.vi.gui.psd1` (exit 1), and deleting `engine/Data/Catalog/builtin.json`
+  fails naming that file (exit 1) - the two regressions that produce raw `[Key]` labels and a
+  0/0 catalog in a published build without breaking compilation.
+
+### Windows checks still required
+
+The XAML markup compile, the real WinUI launch, the rendered appearance and the title-bar
+behaviour were **not** executed here (no Windows host; the markup compiler is a Windows
+process). They are covered by the manual `.github/workflows/build-winui.yml` run plus a VM
+launch, as described in section 25.
+
+### Localization key audit
+
+Every string key the frontend references - `Strings[...]`, `Strings.Get(...)` and `Gui.*`
+literals across `MainWindow.xaml`, the WinUI C# and `Gui.Core` - was extracted and checked
+against the tables served by the running engine: **97 keys, 94 of them `Gui.*`, none missing**
+in either language (the only false positive was the literal `[Key]` placeholder text inside
+comments). One genuine pre-existing defect of the same class as the report was found and
+fixed: `ShellViewModel.RelaunchElevatedAsync` returned
+`Strings["Gui.Error.BackendDown"]`, a key that exists in **no** table, so a failed elevation
+handoff rendered `[Gui.Error.BackendDown]`. It now uses the new
+`Gui.Error.BackendStopFailed` ('The backend could not be stopped cleanly; nothing was
+elevated.'), added to both tables and to the key list. Keys the frontend reuses from the
+terminal vocabulary (`Tui.*`, `Error.*`, `Msg.*`, `Disk.*`, `Worker.*`) live in the base
+tables, as the key list's own sections document.
+
+### Regression coverage added
+
+`gui/tests/WindowsTweaker.Gui.Core.Tests/LocalizationAndStartupTests.cs` (16 tests - 13
+service/startup-state tests plus 3 live end-to-end tests):
+
+* `Load` fills `Languages` **in place** (instance identity asserted, then the pre-captured
+  instance's contents) - the regression for the permanently empty language selector;
+* `Load` sets `IsLoaded`/clears an earlier error; derives the list from the tables when the
+  payload ships none;
+* `Load`/`SetActive` raise the indexer notifications (`Item`, `Item[]`, all-properties);
+* lookup: `[key]` before the tables, active-table hit, English fallback, `[key]` when absent
+  everywhere; placeholder substitution and a malformed placeholder that must not throw;
+* `LoadFailed` records the error and leaves `IsLoaded` false;
+* `LanguageChanged` fires with the resolved code on `Load`, and on an explicit `SetActive`
+  switch (a documented-contract mismatch found by the test author and fixed in the service);
+* `Projections.Strings` / `Projections.Catalog` read the real payload shapes and tolerate
+  empty/odd input without throwing;
+* `ShellViewModel.ConnectAsync` and `RetryConnectAsync` against a root with no engine return
+  a non-null reason, set `Initialization == Failed`, and never throw;
+* **live** `StartupLoadsLocalizationAndTheCatalogFromTheRealEngine` (reported failure shape,
+  end to end): `ConnectAsync` returns null and reaches `Initialization == Ready`, `IsLoaded`
+  with the `Languages` collection populated in place, `en` active, the `Item[]`
+  notification raised on load, no `[Key]` anywhere in the labels, and the Overview's
+  `TweakCount`/`CategoryCount` equal to the engine's own `catalog.list` (>= 100 tweaks,
+  10 categories) with no `[Key]` in the summary or the OS/PowerShell/engine rows;
+* **live** `SwitchingLanguageReLocalizesAndNotifiesThroughTheRealEngine`: the switch raises
+  the indexer notification, the label changes, and the engine's own `strings.get` then
+  reports the same active language (a real round trip, not just a local flip);
+* **live** `HandshakeReportsTheEngineVersionNotThePowerShellVersion`: the handshake's engine
+  version equals the module manifest's `ModuleVersion` and differs from the runtime version -
+  the second-pass defect above.
+
+Run: `dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests/WindowsTweaker.Gui.Core.Tests.csproj
+-c Release --nologo` → 46 passed / 0 failed here; see the counts recorded with this section.
+
+### What this section does NOT prove
+
+Nothing here was executed on Windows: the XAML markup compile, the real window, the rendered
+palette/hover/selection states, the caption bar, and the actual language switch all still
+need the manual `.github/workflows/build-winui.yml` run and a VM launch (section 25).

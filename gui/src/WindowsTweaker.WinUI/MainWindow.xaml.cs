@@ -68,7 +68,9 @@ public sealed partial class MainWindow : Window
         _shell.PropertyChanged += OnShellPropertyChanged;
         _shell.Strings.LanguageChanged += (_, _) => UpdateLanguageBinding();
 
-        LanguageCombo.ItemsSource = _shell.Strings.Languages;
+        // The language list is an observable collection mutated in place by the shell's
+        // LocalizationService, so the selector fills in when the tables arrive (the XAML
+        // binds ItemsSource to Strings.Languages).
         LanguageCombo.SelectionChanged += (_, _) =>
         {
             if (LanguageCombo.SelectedItem is string language && language != _shell.Strings.Active)
@@ -84,6 +86,7 @@ public sealed partial class MainWindow : Window
         // small screens instead of letting the panels collapse into unusable slivers.
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1200, 800));
         AppWindow.SetPresenter(AppWindowPresenterKind.Default);
+        ApplyWindowChrome();
 
         RootGrid.KeyDown += RootGrid_KeyDown;
         SearchBox.KeyDown += SearchBox_KeyDown;
@@ -98,8 +101,57 @@ public sealed partial class MainWindow : Window
         Closed += OnClosed;
         _shell.Runner.Exited += (_, _) => _shell.Dispatch(() => UpdateBackendBadge());
 
-        // Connect then load the overview; the banner reports whatever is wrong.
-        _ = InitializeAsync();
+        // Connect then load the overview; the window stays responsive and a failure at any
+        // stage becomes a visible state with a retry.
+        _ = StartupAsync();
+    }
+
+    /// <summary>
+    /// Sets the window title and the dark title bar. The title-bar colours are applied
+    /// only when the OS supports customisation (LTSC/older builds may not), so dragging,
+    /// resizing and the system caption buttons keep working either way.
+    /// </summary>
+    private void ApplyWindowChrome()
+    {
+        Title = "WindowsTweaker";
+
+        try
+        {
+            AppWindow.Title = "WindowsTweaker";
+
+            if (!AppWindowTitleBar.IsCustomizationSupported())
+            {
+                StartupDiagnostics.Info("title bar customisation is not supported on this build");
+                return;
+            }
+
+            var titleBar = AppWindow.TitleBar;
+            var mantle = Windows.UI.Color.FromArgb(255, 0x18, 0x18, 0x25);   // Catppuccin Mocha mantle
+            var crust = Windows.UI.Color.FromArgb(255, 0x11, 0x11, 0x1b);    // crust
+            var surface0 = Windows.UI.Color.FromArgb(255, 0x31, 0x32, 0x44); // surface0
+            var surface1 = Windows.UI.Color.FromArgb(255, 0x45, 0x47, 0x5a); // surface1
+            var text = Windows.UI.Color.FromArgb(255, 0xcd, 0xd6, 0xf4);     // text
+            var subtext = Windows.UI.Color.FromArgb(255, 0xa6, 0xad, 0xc8);  // subtext0
+
+            titleBar.BackgroundColor = mantle;
+            titleBar.ForegroundColor = text;
+            titleBar.InactiveBackgroundColor = mantle;
+            titleBar.InactiveForegroundColor = subtext;
+            titleBar.ButtonBackgroundColor = mantle;
+            titleBar.ButtonForegroundColor = text;
+            titleBar.ButtonHoverBackgroundColor = surface0;
+            titleBar.ButtonHoverForegroundColor = text;
+            titleBar.ButtonPressedBackgroundColor = surface1;
+            titleBar.ButtonPressedForegroundColor = text;
+            titleBar.ButtonInactiveBackgroundColor = mantle;
+            titleBar.ButtonInactiveForegroundColor = subtext;
+            StartupDiagnostics.Stage("window chrome applied");
+        }
+        catch (Exception exception)
+        {
+            // Chrome is cosmetic; it must never take the window down.
+            StartupDiagnostics.Error("title bar configuration failed", exception);
+        }
     }
 
     /// <summary>
@@ -214,17 +266,37 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task InitializeAsync()
+    /// <summary>
+    /// Runs the startup sequence. Nothing here is allowed to escape: a failure at any
+    /// stage (including a fault raised by a notification handler) is logged to the startup
+    /// diagnostics and shown as a visible failure state with a retry - never a silently
+    /// half-initialized window.
+    /// </summary>
+    private async Task StartupAsync()
     {
-        var failure = await _shell.ConnectAsync();
-        if (failure is not null)
+        try
         {
-            StartupDiagnostics.Error($"backend connect failed: {failure}",
-                new InvalidOperationException(failure));
-            ShowStartupFailure(failure, showRetry: true);
-            return;
-        }
+            var failure = await _shell.ConnectAsync();
+            if (failure is not null)
+            {
+                StartupDiagnostics.Error($"startup failed: {failure}", new InvalidOperationException(failure));
+                ShowStartupFailure(failure, showRetry: true);
+                return;
+            }
 
+            await AfterConnectAsync();
+            HideStartupFailure();
+            StartupDiagnostics.Stage("backend connected, handshake + localization done");
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Error("startup threw", exception);
+            ShowStartupFailure(exception.Message, showRetry: true);
+        }
+    }
+
+    private async Task AfterConnectAsync()
+    {
         // The elevated relaunch carries the language across the handoff; the engine
         // answers in its own default until told otherwise.
         if (!string.IsNullOrWhiteSpace(App.ArgumentLanguage) && App.ArgumentLanguage != _shell.Strings.Active)
@@ -232,10 +304,12 @@ public sealed partial class MainWindow : Window
             await _shell.SetLanguageAsync(App.ArgumentLanguage);
         }
 
+        // The item source is the observable language list, so it fills in when the tables
+        // arrive; the selection is set once the list is populated.
         LanguageCombo.SelectedItem = _shell.Strings.Active;
         await _shell.NavigateAsync(Workspace.Overview);
+        NavList.SelectedIndex = (int)Workspace.Overview;
         UpdateBackendBadge();
-        StartupDiagnostics.Stage("backend connected, handshake done");
     }
 
     private void ShowStartupFailure(string detail, bool showRetry)
@@ -249,11 +323,61 @@ public sealed partial class MainWindow : Window
             : "Backend unavailable";
     }
 
+    private void HideStartupFailure()
+    {
+        StartupFailurePanel.Visibility = Visibility.Collapsed;
+        WorkspaceHost.Visibility = Visibility.Visible;
+        RetryBackendButton.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Retries one workspace's load after a visible failure.</summary>
+    private async void RetryWorkspace_Click(object sender, RoutedEventArgs e)
+    {
+        var tag = (sender as FrameworkElement)?.Tag as string;
+        StartupDiagnostics.Stage($"workspace retry requested: {tag}");
+
+        try
+        {
+            switch (tag)
+            {
+                case "tweaks":
+                    await _shell.Tweaks.RetryAsync();
+                    break;
+                case "overview":
+                default:
+                    await _shell.Overview.RetryAsync();
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Error($"workspace retry failed: {tag}", exception);
+        }
+    }
+
     private async void RetryBackend_Click(object sender, RoutedEventArgs e)
     {
         StartupFailurePanel.Visibility = Visibility.Collapsed;
         WorkspaceHost.Visibility = Visibility.Visible;
-        await InitializeAsync();
+        StartupDiagnostics.Stage("startup retry requested");
+        var failure = await _shell.RetryConnectAsync();
+        if (failure is not null)
+        {
+            StartupDiagnostics.Error($"retry failed: {failure}", new InvalidOperationException(failure));
+            ShowStartupFailure(failure, showRetry: true);
+            return;
+        }
+
+        try
+        {
+            await AfterConnectAsync();
+            HideStartupFailure();
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Error("retry post-connect threw", exception);
+            ShowStartupFailure(exception.Message, showRetry: true);
+        }
     }
 
     private void OnShellPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -298,9 +422,35 @@ public sealed partial class MainWindow : Window
     private void UpdateBackendBadge()
     {
         BackendText.Text = _shell.IsConnected ? _shell.BackendSummary : _shell.Strings["Gui.BackendDown"];
-        BackendBadge.Style = _shell.IsConnected
-            ? (Style)RootGrid.Resources["WtBadgeOk"]
-            : (Style)RootGrid.Resources["WtBadgeError"];
+
+        // The badge styles live in the application resource dictionary (App.xaml merges
+        // Themes/CatppuccinMocha.xaml). Looking them up in a grid's own, empty dictionary
+        // threw during the handshake notification and aborted the whole startup sequence;
+        // the lookup is now against the real dictionary and never throws.
+        var style = TryFindStyle(_shell.IsConnected ? "WtBadgeOk" : "WtBadgeError");
+        if (style is not null)
+        {
+            BackendBadge.Style = style;
+        }
+    }
+
+    /// <summary>Looks a style up in the application resources; returns null when absent.</summary>
+    private static Style? TryFindStyle(string key)
+    {
+        try
+        {
+            var resources = Application.Current?.Resources;
+            if (resources is not null && resources.TryGetValue(key, out var value))
+            {
+                return value as Style;
+            }
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Error($"resource lookup failed for '{key}'", exception);
+        }
+
+        return null;
     }
 
     private async void NavList_SelectionChanged(object sender, SelectionChangedEventArgs e)

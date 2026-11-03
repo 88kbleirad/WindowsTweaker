@@ -1,3 +1,6 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
+
 namespace WindowsTweaker.Gui.Core.ViewModels;
 
 /// <summary>
@@ -12,15 +15,23 @@ namespace WindowsTweaker.Gui.Core.ViewModels;
 /// The lookup order matches the engine's own: requested language, then English, then the
 /// key in brackets (visible rather than silent, so a missing key is reported by the
 /// interface that needs it instead of rendering an empty label).
+///
+/// <para><b>Notification contract.</b> Bindings such as
+/// <c>{Binding Strings[Gui.Nav.Overview]}</c> are indexer bindings: they re-evaluate only
+/// when the source raises a change for the indexer (<c>Item[]</c>) or for all properties.
+/// <see cref="Load"/>, <see cref="LoadFailed"/> and a language switch therefore raise the
+/// indexer notification, and <see cref="Languages"/> is an observable collection mutated
+/// in place so a selector bound to it never keeps a stale, empty instance.</para>
 /// </remarks>
 public sealed class LocalizationService : ObservableObject
 {
     private readonly Dictionary<string, Dictionary<string, string>> _tables = new(StringComparer.OrdinalIgnoreCase);
-    private List<string> _languages = new();
     private string _active = "en";
+    private string _loadError = string.Empty;
+    private bool _isLoaded;
 
-    /// <summary>The languages the engine ships.</summary>
-    public IReadOnlyList<string> Languages => _languages;
+    /// <summary>The languages the engine ships (observable; mutated in place by <see cref="Load"/>).</summary>
+    public ObservableCollection<string> Languages { get; } = new();
 
     /// <summary>The active language code.</summary>
     public string Active
@@ -30,20 +41,28 @@ public sealed class LocalizationService : ObservableObject
         {
             if (Set(ref _active, value))
             {
-                Raise("Item");
-                LanguageChanged?.Invoke(this, value);
+                RaiseIndexer();
             }
         }
     }
 
-    /// <summary>Raised when the active language changes, so views can re-read their text.</summary>
+    /// <summary>Raised when the active language changes (on load or on an explicit switch).</summary>
     public event EventHandler<string>? LanguageChanged;
 
     /// <summary>True once real tables have been loaded.</summary>
-    public bool IsLoaded => _tables.Count > 0;
+    public bool IsLoaded => _isLoaded;
+
+    /// <summary>The reason the last load failed, or empty.</summary>
+    public string LoadError => _loadError;
+
+    /// <summary>True when the tables could not be loaded.</summary>
+    public bool HasError => !string.IsNullOrEmpty(_loadError);
 
     /// <summary>Installs the tables served by the engine.</summary>
-    public void Load(IReadOnlyList<string> languages, string active, IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> tables)
+    public void Load(
+        IReadOnlyList<string> languages,
+        string active,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> tables)
     {
         _tables.Clear();
         foreach (var pair in tables)
@@ -51,10 +70,23 @@ public sealed class LocalizationService : ObservableObject
             _tables[pair.Key] = new Dictionary<string, string>(pair.Value, StringComparer.Ordinal);
         }
 
-        _languages = languages.ToList();
-        if (_languages.Count == 0)
+        // The language list is mutated in place: a selector bound to this instance must
+        // never keep the (empty) list that existed before the load.
+        Languages.Clear();
+        foreach (var language in languages)
         {
-            _languages.AddRange(_tables.Keys);
+            if (!string.IsNullOrWhiteSpace(language))
+            {
+                Languages.Add(language);
+            }
+        }
+
+        if (Languages.Count == 0)
+        {
+            foreach (var language in _tables.Keys)
+            {
+                Languages.Add(language);
+            }
         }
 
         if (!_tables.ContainsKey(active))
@@ -62,9 +94,24 @@ public sealed class LocalizationService : ObservableObject
             active = _tables.ContainsKey("en") ? "en" : _tables.Keys.FirstOrDefault() ?? "en";
         }
 
+        _loadError = string.Empty;
+        _isLoaded = _tables.Count > 0;
         Active = active;
-        Raise("Item");
+        Raise(nameof(IsLoaded));
+        Raise(nameof(HasError));
+        Raise(nameof(LoadError));
+        RaiseIndexer();
         LanguageChanged?.Invoke(this, active);
+    }
+
+    /// <summary>Records that the tables could not be loaded (without inventing text).</summary>
+    public void LoadFailed(string message)
+    {
+        _loadError = message;
+        _isLoaded = false;
+        Raise(nameof(HasError));
+        Raise(nameof(LoadError));
+        RaiseIndexer();
     }
 
     /// <summary>Switches the rendered language (the engine switches its own separately).</summary>
@@ -73,6 +120,10 @@ public sealed class LocalizationService : ObservableObject
         if (_tables.ContainsKey(language))
         {
             Active = language;
+
+            // A switch is a language change like any other: the event the window listens
+            // to must fire here too, not only when the tables are first loaded.
+            LanguageChanged?.Invoke(this, language);
         }
     }
 
@@ -93,7 +144,7 @@ public sealed class LocalizationService : ObservableObject
 
         try
         {
-            return string.Format(System.Globalization.CultureInfo.InvariantCulture, text, arguments);
+            return string.Format(CultureInfo.InvariantCulture, text, arguments);
         }
         catch (FormatException)
         {
@@ -121,5 +172,17 @@ public sealed class LocalizationService : ObservableObject
         }
 
         return $"[{key}]";
+    }
+
+    /// <summary>
+    /// Raises every notification an indexer/text binding can depend on. WinUI indexer
+    /// bindings (<c>Strings[Key]</c>) listen for the indexer name; raising an empty name
+    /// means "every property changed", which also refreshes any other bound member.
+    /// </summary>
+    private void RaiseIndexer()
+    {
+        Raise("Item");
+        Raise("Item[]");
+        Raise(string.Empty);
     }
 }

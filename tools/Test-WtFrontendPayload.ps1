@@ -88,6 +88,17 @@ $Expected = @(
     'engine/WindowsTweaker.psd1',
     'engine/Bridge/wt-bridge.ps1',
 
+    # Localization + catalog data. The engine serves the interface text through
+    # `strings.get` from Data\Strings.<lang>.psd1 plus its part files, and registers the
+    # catalog from Data\Catalog. Missing these makes every label render as [Key] and the
+    # catalog empty while the handshake still succeeds - a published-payload regression
+    # that compilation cannot catch.
+    'engine/Data/Strings.en.psd1',
+    'engine/Data/Strings.vi.psd1',
+    'engine/Data/Strings.en.gui.psd1',
+    'engine/Data/Strings.vi.gui.psd1',
+    'engine/Data/Catalog/builtin.json',
+
     # Windows App SDK native runtime. The XAML runtime loads these from the app directory
     # (self-contained deployment); any gap here is a startup crash with a stowed exception.
     # This exact set is what AddMicrosoftWindowsAppSDKPayloadFilesFromComponents copies

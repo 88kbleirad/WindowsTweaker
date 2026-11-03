@@ -96,11 +96,32 @@ non-fatal: if the packaged engine folder is missing (or the resolved root has no
 the window still opens and reports the missing-engine state; the only exception is a
 PowerShell host that cannot be found or a handshake that fails, which shows a visible
 "backend down" panel with the reason and a retry button. The backend is never waited on
-synchronously during startup, and a backend failure never takes the window down (the
-window renders a visible error state instead).
+synchronously during startup, and a backend failure never takes the window down.
+
+Startup has three explicit states (`Loading`, `Ready`, `Failed`) and each workspace has its
+own four (`Idle`, `Loading`, `Ready`/`Empty`, `Failed`):
+
+* a failure at any startup stage — including a fault raised inside a notification handler —
+  is written to the startup diagnostics and rendered as a failure panel with a Retry that
+  reconnects, never as a silently half-initialized window;
+* a workspace whose request fails shows the reason and its own Retry; a request that
+  succeeds with nothing in it says so, and is never presented as "0 things" from a failure;
+* the interface text, the language list and every localized label refresh when the tables
+  are loaded and when the language changes (the localization service raises the indexer
+  notification and keeps its language list observable).
 
 Startup stages and any unhandled exception chain are recorded under
 `%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log` (see BUILD-WINUI.md).
+
+## Appearance
+
+The window uses the same Catppuccin Mocha palette as the terminal interface, applied through
+the merged `Themes/CatppuccinMocha.xaml` dictionary: square app-owned controls
+(`ControlCornerRadius`/`OverlayCornerRadius` = 0), thin borders, compact rows, one monospace
+face, and per-state overrides for lists, combos, buttons, inputs, check boxes, scrollbars,
+dialogs and tooltips. The navigation selection is a Mocha surface with a thin blue accent
+indicator, never the default saturated fill. The caption bar is Mocha with readable buttons
+when the OS supports title-bar customisation. See section 27 of VALIDATION.md.
 
 ## Elevation
 
@@ -120,6 +141,8 @@ The frontend keeps no translation of its own — it renders whatever the engine'
 string tables say (`strings.get`). The handshake serves the key list so a missing table
 entry is detectable instead of rendering empty. `Strings.{en,vi}.gui.psd1` add the
 frontend vocabulary; tests enforce that every frontend key exists in every merged table.
+The handshake's `engine.moduleVersion` is the module's own version (used for the Overview's
+Engine row); the PowerShell runtime version is reported separately as `engine.powerShell`.
 
 ## Integration status (honest)
 

@@ -52,6 +52,19 @@ public sealed class BridgeRunner : IAsyncDisposable
         _dataRootOverride = dataRoot;
     }
 
+    /// <summary>
+    /// Stops the current session without shutting it down gracefully. Used by the retry
+    /// path before a fresh connection; the previous process is disposed of best-effort.
+    /// </summary>
+    public void Reset()
+    {
+        var session = Interlocked.Exchange(ref _session, null);
+        if (session is not null)
+        {
+            _ = session.DisposeAsync();
+        }
+    }
+
     /// <summary>Starts a session if none is running. Returns null on success, else the reason.</summary>
     public async Task<string?> ConnectAsync(string repositoryRoot, CancellationToken cancellationToken = default)
     {
@@ -100,7 +113,18 @@ public sealed class BridgeRunner : IAsyncDisposable
             var task = _session.SendAsync(op, args, timeout, cancellationToken);
             Volatile.Write(ref _activeRequestId, _session.LastRequestId);
             var payload = await task.ConfigureAwait(false);
-            return BridgeOutcome<T>.Success(project(payload));
+            try
+            {
+                return BridgeOutcome<T>.Success(project(payload));
+            }
+            catch (Exception exception)
+            {
+                // A payload this projection cannot read is a failure with a reason, never
+                // an exception that would abort the caller's startup sequence.
+                return BridgeOutcome<T>.Failure(
+                    $"The '{op}' answer could not be read: {exception.Message}",
+                    "ProjectionFailed");
+            }
         }
         catch (BridgeOperationException exception)
         {

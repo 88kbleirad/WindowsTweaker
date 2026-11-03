@@ -62,8 +62,11 @@ executes the exact `dotnet publish` command above for `win-x64`, runs
 `tools/Test-WtFrontendPayload.ps1` against the publish output (the full required-asset
 contract: exe, deps/runtimeconfig, the Windows App SDK native payload, the generated app
 PRI (`WindowsTweaker.WinUI.pri` in the unpackaged self-contained layout), engine module +
-bridge host, and architecture consistency), runs the live-backend bridge test suite on
-Windows, and uploads the folder as an artifact. The separate `release` job
+bridge host, the engine's localization and catalog data (`engine/Data/Strings.*.psd1`,
+`engine/Data/Catalog/builtin.json` — without them every label renders as `[Key]` and the
+catalog is empty while the handshake still succeeds), and architecture consistency), runs
+the live-backend bridge test suite on Windows, and uploads the folder as an artifact. The
+separate `release` job
 downloads that artifact, stages it as `frontend/win-x64/`, re-validates the staged payload
 (the exact bytes that enter the archive), then runs `tools/New-ReleasePackage.ps1` for all
 four platforms, so the Windows archive contains the real compiled frontend while the Linux

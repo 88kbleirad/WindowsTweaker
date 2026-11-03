@@ -122,4 +122,189 @@
     <Style x:Key="WtBadgeError" TargetType="Border" BasedOn="{StaticResource WtBadge}">
         <Setter Property="BorderBrush" Value="{StaticResource WtRed}"/>
     </Style>
+
+    <!--
+    ==================================================================================
+    Control theming
+    ==================================================================================
+    Two layers, both required for a consistent Catppuccin Mocha look that matches the
+    terminal interface:
+
+      1. Global shape and typography. WinUI derives most control geometry from theme
+         resources, so overriding ControlCornerRadius / OverlayCornerRadius squares every
+         app-owned control at once (the TUI has no rounded edges), and an implicit
+         TextBlock style gives every label the same monospace face.
+
+      2. Per-state brushes. The default templates read their hover / pressed / selected /
+         disabled colours from theme-dictionary brushes, which would otherwise paint
+         Windows blue over a Mocha surface. Overriding those keys by name is the supported
+         way to restyle them without replacing a single ControlTemplate, so focus visuals,
+         keyboard interaction and accessibility behaviour stay exactly as WinUI ships them.
+
+    Every key below was verified to exist (with a compatible type) in the pinned Windows
+    App SDK 1.8 generic.xaml; square corners and thin borders are intentional.
+    -->
+
+    <!-- Global shape: square app-owned controls. -->
+    <CornerRadius x:Key="ControlCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="OverlayCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="ListViewItemCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="ListViewItemSelectionIndicatorCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="ScrollBarCornerRadius">0</CornerRadius>
+
+    <!-- Compact rows (the TUI packs rows tightly). -->
+    <x:Double x:Key="ListViewItemMinHeight">28</x:Double>
+
+    <FontFamily x:Key="WtMonoFont">Cascadia Mono, Consolas, monospace</FontFamily>
+
+    <!--
+    Icon face for the few action buttons that carry a glyph. The chain falls back from the
+    Windows 11 icon font to the Windows 10 one, and only codepoints present in both fonts are
+    used, so a target without Segoe Fluent Icons still draws a real glyph instead of a box.
+    -->
+    <FontFamily x:Key="WtIconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+    <!-- Typography: every label uses the same monospace face unless a keyed style says otherwise. -->
+    <Style TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource WtMonoFont}"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Foreground" Value="{StaticResource WtText}"/>
+    </Style>
+
+    <!-- Lists and navigation: Mocha selection instead of the saturated default accent fill. -->
+    <SolidColorBrush x:Key="ListViewItemBackground" Color="#1e1e2e"/>
+    <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#181825"/>
+    <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#313244"/>
+    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#313244"/>
+    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#45475a"/>
+    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#45475a"/>
+    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedDisabled" Color="#181825"/>
+    <SolidColorBrush x:Key="ListViewItemForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ListViewItemForegroundPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ListViewItemForegroundPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ListViewItemForegroundSelectedPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ListViewItemForegroundSelectedPressed" Color="#cdd6f4"/>
+
+    <!-- The accent indicator: a thin blue bar, never a filled blue row. -->
+    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPointerOverBrush" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorPressedBrush" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ListViewItemSelectionIndicatorDisabledBrush" Color="#45475a"/>
+
+    <!-- Keyboard focus stays clearly visible against every surface. -->
+    <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="#11111b"/>
+    <SolidColorBrush x:Key="ListViewItemFocusBorderBrush" Color="#89b4fa"/>
+
+    <!-- ComboBox (closed state) and its popup. -->
+    <SolidColorBrush x:Key="ComboBoxBackground" Color="#181825"/>
+    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#313244"/>
+    <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#313244"/>
+    <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="#11111b"/>
+    <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#181825"/>
+    <SolidColorBrush x:Key="ComboBoxForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="#6c7086"/>
+    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#45475a"/>
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ComboBoxBorderBrushDisabled" Color="#313244"/>
+    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#181825"/>
+    <SolidColorBrush x:Key="ComboBoxDropDownForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#45475a"/>
+    <SolidColorBrush x:Key="ComboBoxDropDownGlyphForeground" Color="#a6adc8"/>
+
+    <!-- ComboBox popup rows. -->
+    <SolidColorBrush x:Key="ComboBoxItemBackground" Color="#181825"/>
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#313244"/>
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundPressed" Color="#313244"/>
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#313244"/>
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#45475a"/>
+    <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#45475a"/>
+    <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxItemForegroundPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxItemForegroundPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPressed" Color="#cdd6f4"/>
+
+    <!-- Buttons: all five visual states, so a styled button never flashes default grey. -->
+    <SolidColorBrush x:Key="ButtonBackground" Color="#313244"/>
+    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#45475a"/>
+    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#585b70"/>
+    <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#181825"/>
+    <SolidColorBrush x:Key="ButtonForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#6c7086"/>
+    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#585b70"/>
+    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#313244"/>
+
+    <!-- Text inputs. -->
+    <SolidColorBrush x:Key="TextControlBackground" Color="#11111b"/>
+    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#11111b"/>
+    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#11111b"/>
+    <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#181825"/>
+    <SolidColorBrush x:Key="TextControlForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="TextControlForegroundPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="TextControlForegroundFocused" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="TextControlForegroundDisabled" Color="#6c7086"/>
+    <SolidColorBrush x:Key="TextControlBorderBrush" Color="#45475a"/>
+    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="#313244"/>
+    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#6c7086"/>
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#6c7086"/>
+    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#a6adc8"/>
+
+    <!-- Check boxes: blue fill when checked, readable label in every state. -->
+    <SolidColorBrush x:Key="CheckBoxForegroundUnchecked" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundUncheckedPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundUncheckedPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundUncheckedDisabled" Color="#6c7086"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundChecked" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundCheckedPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundCheckedPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="CheckBoxForegroundCheckedDisabled" Color="#6c7086"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillUnchecked" Color="#11111b"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillUncheckedPointerOver" Color="#181825"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillUncheckedPressed" Color="#181825"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillChecked" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPressed" Color="#74c7ec"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUnchecked" Color="#585b70"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPointerOver" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeUncheckedPressed" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeChecked" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" Color="#89b4fa"/>
+    <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed" Color="#74c7ec"/>
+
+    <!-- Radio buttons (the history mode selector). -->
+    <SolidColorBrush x:Key="RadioButtonForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="RadioButtonForegroundPointerOver" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="RadioButtonForegroundPressed" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="RadioButtonForegroundDisabled" Color="#6c7086"/>
+
+    <!-- Scrollbars: thin, Mocha, never the default OS chrome. -->
+    <SolidColorBrush x:Key="ScrollBarThumbFill" Color="#585b70"/>
+    <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#6c7086"/>
+    <SolidColorBrush x:Key="ScrollBarThumbFillPressed" Color="#a6adc8"/>
+    <SolidColorBrush x:Key="ScrollBarThumbFillDisabled" Color="#313244"/>
+    <SolidColorBrush x:Key="ScrollBarTrackFill" Color="Transparent"/>
+    <SolidColorBrush x:Key="ScrollBarTrackFillPointerOver" Color="#181825"/>
+    <SolidColorBrush x:Key="ScrollBarTrackStroke" Color="#313244"/>
+
+    <!-- Dialogs: square, Mocha, readable. -->
+    <SolidColorBrush x:Key="ContentDialogBackground" Color="#1e1e2e"/>
+    <SolidColorBrush x:Key="ContentDialogForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="#45475a"/>
+
+    <!-- Tooltips: square, Mocha. -->
+    <SolidColorBrush x:Key="ToolTipBackground" Color="#181825"/>
+    <SolidColorBrush x:Key="ToolTipForeground" Color="#cdd6f4"/>
+    <SolidColorBrush x:Key="ToolTipBorderBrush" Color="#45475a"/>
 </ResourceDictionary>

@@ -196,12 +196,29 @@ function New-WtBridgeHelloFrame
     param ()
 
     $Ops = Get-WtBridgeOperations
+
+    # moduleVersion is the WindowsTweaker module's own version - the code the session is
+    # running - not the PowerShell runtime's. The runtime has its own field (`powerShell`),
+    # and reporting the runtime version as the engine version made the frontend's Overview
+    # print the PowerShell version twice. The loaded module is authoritative (it is what is
+    # actually loaded, even when the manifest resolved from elsewhere); the manifest is the
+    # fallback when the module object is not available.
+    $ModuleVersion = ''
+    if ($null -ne $Module -and $Module.Version)
+    {
+        $ModuleVersion = [string]$Module.Version
+    }
+    if (-not $ModuleVersion -and (Test-Path -LiteralPath $BridgeManifest -PathType Leaf))
+    {
+        $ModuleVersion = [string](Import-PowerShellDataFile -LiteralPath $BridgeManifest).ModuleVersion
+    }
+
     return [ordered]@{
         type = 'hello'
         protocol = $Script:WtBridgeProtocolVersion
         bridge = 'wt-bridge'
         engine = [ordered]@{
-            moduleVersion = [string](Get-WtRuntimeInfo).Profile.Version.ToString()
+            moduleVersion = $ModuleVersion
             powerShell = $PSVersionTable.PSVersion.ToString()
             edition = $PSVersionTable.PSEdition
             platform = [string](Get-WtRuntimeInfo).Profile.Platform

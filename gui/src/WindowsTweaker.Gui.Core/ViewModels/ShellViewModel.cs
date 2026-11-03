@@ -29,6 +29,9 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private string _statusText = string.Empty;
     private string _progressText = string.Empty;
     private string _backendSummary = string.Empty;
+    private string _initializationError = string.Empty;
+    private string _engineVersion = string.Empty;
+    private InitializationState _initialization = InitializationState.Loading;
     private bool _busy;
     private bool _connected;
     private bool _reduceMotion;
@@ -194,7 +197,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         var outcome = await Runner.ShutdownAsync(allowKill: false).ConfigureAwait(true);
         if (outcome != ShutdownOutcome.Clean && outcome != ShutdownOutcome.AlreadyStopped)
         {
-            return Strings["Gui.Error.BackendDown"];
+            return Strings["Gui.Error.BackendStopFailed"];
         }
 
         try
@@ -221,6 +224,40 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     {
         get => _statusText;
         set => Set(ref _statusText, value);
+    }
+
+    /// <summary>Where the startup sequence is (drives the window's visible states).</summary>
+    public InitializationState Initialization
+    {
+        get => _initialization;
+        private set
+        {
+            if (Set(ref _initialization, value))
+            {
+                Raise(nameof(InitializationFailed));
+                Raise(nameof(InitializationBusy));
+            }
+        }
+    }
+
+    /// <summary>The reason startup failed, or empty.</summary>
+    public string InitializationError
+    {
+        get => _initializationError;
+        private set => Set(ref _initializationError, value);
+    }
+
+    /// <summary>True when startup failed and the user must be offered a retry.</summary>
+    public bool InitializationFailed => Initialization == InitializationState.Failed;
+
+    /// <summary>True while the startup sequence is still running.</summary>
+    public bool InitializationBusy => Initialization == InitializationState.Loading;
+
+    /// <summary>Engine module version reported by the handshake (never invented).</summary>
+    public string EngineVersion
+    {
+        get => _engineVersion;
+        private set => Set(ref _engineVersion, value);
     }
 
     /// <summary>Progress line text (bounded updates: it is written, not appended to).</summary>
@@ -281,42 +318,95 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// Connects the backend: starts the session, reads the handshake, then loads the
     /// string tables and the environment. Returns null on success, else the reason.
     /// </summary>
+    /// <remarks>
+    /// Never throws: a failure at any stage (including a fault inside a notification
+    /// handler) is recorded, reflected in <see cref="Initialization"/>, and returned so
+    /// the window can show a visible error state with a retry instead of silently keeping
+    /// the pre-load placeholders.
+    /// </remarks>
     public async Task<string?> ConnectAsync()
     {
+        Initialization = InitializationState.Loading;
+        InitializationError = string.Empty;
         StatusText = Strings["Gui.Starting"];
-        var failure = await Runner.ConnectAsync(_repositoryRoot).ConfigureAwait(true);
-        if (failure is not null)
-        {
-            IsConnected = false;
-            StatusText = failure;
-            return failure;
-        }
+        Diagnostics.AddDiagnostic("startup: connecting");
 
-        var hello = Runner.Hello!;
-        IsConnected = true;
-        BackendSummary = $"{hello.Edition} {hello.PowerShellVersion} | protocol {hello.Protocol} | {hello.Platform}/{hello.Architecture}";
-
-        // Text first: every other view renders through it.
-        var strings = await Runner.RunAsync("strings.get", Projections.Strings, timeout: TimeSpan.FromSeconds(60)).ConfigureAwait(true);
-        if (strings.Ok)
+        try
         {
-            var (languages, active, tables) = strings.Value;
-            Strings.Load(languages, active, tables);
-        }
-        else
-        {
-            Diagnostics.AddDiagnostic($"strings.get failed: {strings.Message}");
-        }
+            var failure = await Runner.ConnectAsync(_repositoryRoot).ConfigureAwait(true);
+            if (failure is not null)
+            {
+                return Fail(failure);
+            }
 
-        var environment = await Runner.RunAsync("env.status", Projections.Environment, timeout: TimeSpan.FromSeconds(60)).ConfigureAwait(true);
-        if (environment.Ok)
-        {
-            Environment = environment.Value.Environment;
-            Runtime = environment.Value.Runtime;
-        }
+            var hello = Runner.Hello!;
+            IsConnected = true;
+            BackendSummary = $"{hello.Edition} {hello.PowerShellVersion} | protocol {hello.Protocol} | {hello.Platform}/{hello.Architecture}";
+            EngineVersion = hello.ModalVersion;
+            Diagnostics.AddDiagnostic($"startup: handshake ok (protocol {hello.Protocol}, {hello.Edition} {hello.PowerShellVersion})");
 
-        StatusText = Environment is null ? Strings["Gui.Ready"] : HeaderEnvironment;
-        return null;
+            // Text first: every other view renders through it.
+            var strings = await Runner.RunAsync("strings.get", Projections.Strings, timeout: TimeSpan.FromSeconds(60)).ConfigureAwait(true);
+            if (strings.Ok)
+            {
+                var (languages, active, tables) = strings.Value;
+                Strings.Load(languages, active, tables);
+                Diagnostics.AddDiagnostic($"startup: strings loaded ({languages.Count} language(s), {tables.Count} table(s))");
+                if (!Strings.IsLoaded)
+                {
+                    Strings.LoadFailed(Strings["Gui.Error.LocalizationFailed"]);
+                }
+            }
+            else
+            {
+                Strings.LoadFailed($"{strings.Code}: {strings.Message}");
+                Diagnostics.AddDiagnostic($"startup: strings.get failed ({strings.Code}) {strings.Message}");
+            }
+
+            var environment = await Runner.RunAsync("env.status", Projections.Environment, timeout: TimeSpan.FromSeconds(60)).ConfigureAwait(true);
+            if (environment.Ok)
+            {
+                Environment = environment.Value.Environment;
+                Runtime = environment.Value.Runtime;
+                Diagnostics.AddDiagnostic("startup: environment loaded");
+            }
+            else
+            {
+                Diagnostics.AddDiagnostic($"startup: env.status failed ({environment.Code}) {environment.Message}");
+            }
+
+            if (!Strings.IsLoaded)
+            {
+                return Fail(Strings["Gui.Error.LocalizationFailed"]);
+            }
+
+            StatusText = Environment is null ? Strings["Gui.Ready"] : HeaderEnvironment;
+            Initialization = InitializationState.Ready;
+            Diagnostics.AddDiagnostic("startup: ready");
+            return null;
+        }
+        catch (Exception exception)
+        {
+            Diagnostics.AddDiagnostic($"startup: unhandled {exception.GetType().Name}: {exception.Message}");
+            return Fail($"{Strings["Gui.Error.InitFailed"]}: {exception.Message}");
+        }
+    }
+
+    /// <summary>Reconnects after a failure (the visible Retry action).</summary>
+    public Task<string?> RetryConnectAsync()
+    {
+        Runner.Reset();
+        IsConnected = false;
+        return ConnectAsync();
+    }
+
+    private string Fail(string message)
+    {
+        IsConnected = false;
+        InitializationError = message;
+        Initialization = InitializationState.Failed;
+        StatusText = message;
+        return message;
     }
 
     /// <summary>Navigates to a workspace, loading it on first visit.</summary>

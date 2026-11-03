@@ -1,9 +1,15 @@
 <Application
     x:Class="WindowsTweaker.WinUI.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WindowsTweaker.WinUI"
+    RequestedTheme="Dark">
     <Application.Resources>
         <ResourceDictionary>
+            <!-- State visibility (loading / empty / failed / ready) without code behind. -->
+            <local:BoolToVisibilityConverter x:Key="WtBoolToVisible"/>
+            <local:BoolToVisibilityConverter x:Key="WtBoolToCollapsed" Invert="True"/>
+
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Themes/CatppuccinMocha.xaml"/>
             </ResourceDictionary.MergedDictionaries>

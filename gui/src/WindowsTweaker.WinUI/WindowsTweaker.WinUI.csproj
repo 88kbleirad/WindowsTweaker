@@ -32,6 +32,9 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>WindowsTweaker.WinUI</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The window/taskbar/exe icon. A real .ico shipped with the app, so the shell never
+         falls back to a generic or missing icon on the target system. -->
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifier Condition="'$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
     <RuntimeIdentifier Condition="'$(Platform)' != 'ARM64'">win-x64</RuntimeIdentifier>
