@@ -85,7 +85,54 @@ $InformationPreference = 'SilentlyContinue'
 # Flush the banner to stderr before any protocol frame (it is diagnostics, not data).
 [Console]::Error.WriteLine("bridge: starting protocol $($Script:WtBridgeProtocolVersion) for $BridgeManifest")
 
-$Module = Import-Module -Name $BridgeManifest -Force -PassThru
+# Host facts, on stderr only, before the engine is imported. This is what makes a startup
+# failure self-diagnosing: when the module cannot be imported, the reason is usually that
+# this host cannot see its own core modules (a Windows PowerShell 5.1 process that
+# inherited a PowerShell 7 PSModulePath resolves Microsoft.PowerShell.Utility from the 7.x
+# copy and loses Import-PowerShellDataFile), and these lines say exactly which executable
+# and which module path were in effect. stderr is diagnostics by contract; stdout carries
+# protocol frames only and is never written here.
+try
+{
+    $DiagImport = Get-Command -Name 'Import-PowerShellDataFile' -ErrorAction SilentlyContinue
+    $DiagUtility = @()
+    try
+    {
+        $DiagUtility = @(Get-Module -Name 'Microsoft.PowerShell.Utility' -ListAvailable -ErrorAction SilentlyContinue |
+            ForEach-Object { "$($_.Version):$($_.Path)" })
+    }
+    catch { $null = $_ }
+
+    [Console]::Error.WriteLine("bridge: host exe=$([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)")
+    [Console]::Error.WriteLine("bridge: host version=$($PSVersionTable.PSVersion) edition=$($PSVersionTable.PSEdition) bitness=$([IntPtr]::Size * 8)")
+    [Console]::Error.WriteLine("bridge: host pshome=$PSHOME")
+    [Console]::Error.WriteLine("bridge: host psmodulepath=$env:PSModulePath")
+    [Console]::Error.WriteLine("bridge: host psmoduleautoloadingpreference=$($PSModuleAutoLoadingPreference)")
+    [Console]::Error.WriteLine("bridge: host import-powershelldatafile=$(if ($DiagImport) { $DiagImport.Source } else { '<not found>' })")
+    [Console]::Error.WriteLine("bridge: host utility-modules=$($DiagUtility -join '; ')")
+}
+catch
+{
+    # Diagnostics must never stop the host.
+    [Console]::Error.WriteLine("bridge: host diagnostics failed: $($_.Exception.Message)")
+}
+
+$Module = $null
+try
+{
+    $Module = Import-Module -Name $BridgeManifest -Force -PassThru -ErrorAction Stop
+}
+catch
+{
+    # The full import failure, on stderr, before the process exits: the client shows the
+    # stderr tail with its "exited before its handshake" report, so a startup failure names
+    # the command, the file and the position instead of only reporting the exit.
+    [Console]::Error.WriteLine("bridge: module import failed: $($_.Exception.ToString())")
+    if ($_.ScriptStackTrace) { [Console]::Error.WriteLine("bridge: module import stack: $($_.ScriptStackTrace)") }
+    [Console]::Error.WriteLine("bridge: module import command ($($_.InvocationInfo.MyCommand)): $($_.InvocationInfo.PositionMessage)")
+    exit 71
+}
+
 & $Module {
     Initialize-WtLogging -Console $false | Out-Null
     Initialize-WtLocalization | Out-Null

@@ -308,38 +308,70 @@ public sealed class BackendLifetimeTests
         // On Windows this covers Windows PowerShell 5.1 (powershell.exe) as well as
         // PowerShell 7; on Linux only pwsh exists. Running the whole sequence per host is
         // what proves the 5.1 claim instead of asserting it.
+        //
+        // WT_TEST_HOST_PATH restricts the loop to one executable, so each host can be
+        // exercised on its own while triaging a failure (the assertion and the sequence are
+        // identical either way). Unset - the CI case - every discovered host runs.
         var hosts = PowerShellLocator.Discover();
+        var only = Environment.GetEnvironmentVariable("WT_TEST_HOST_PATH");
+        if (!string.IsNullOrWhiteSpace(only))
+        {
+            var full = Path.GetFullPath(only);
+            hosts = hosts.Where(host => string.Equals(host.Path, full, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+
         Assert.NotEmpty(hosts);
 
         var verified = new List<string>();
         foreach (var host in hosts)
         {
-            await using var session = await BridgeSession.StartAsync(
-                TestPaths.RepositoryRoot,
-                hostPath: host.Path,
-                handshakeTimeout: TimeSpan.FromSeconds(90));
+            // Every stage is labelled with the exact executable, version, edition, bitness
+            // and the stage name, so a failure names the host that failed instead of
+            // leaving the reader to guess which of the discovered hosts it was.
+            var identity = $"{host.Path} | {host.Version} ({host.Edition})";
+            string? stage = null;
+            try
+            {
+                stage = "start";
+                await using var session = await BridgeSession.StartAsync(
+                    TestPaths.RepositoryRoot,
+                    hostPath: host.Path,
+                    handshakeTimeout: TimeSpan.FromSeconds(90));
 
-            Assert.Equal(ProtocolConstants.Version, session.Hello.Protocol);
+                stage = "handshake";
+                Assert.Equal(ProtocolConstants.Version, session.Hello.Protocol);
 
-            var strings = await session.SendAsync("strings.get", timeout: TimeSpan.FromSeconds(120));
-            var (languages, active, tables) = Projections.Strings(strings);
-            Assert.Contains("en", languages);
-            Assert.Contains("vi", languages);
-            Assert.Contains(active, languages);
-            Assert.True(tables["en"].Count > 1000, $"{host.Label}: the English table looks truncated");
+                stage = "strings.get";
+                var strings = await session.SendAsync("strings.get", timeout: TimeSpan.FromSeconds(120));
+                var (languages, active, tables) = Projections.Strings(strings);
+                Assert.Contains("en", languages);
+                Assert.Contains("vi", languages);
+                Assert.Contains(active, languages);
+                Assert.True(tables["en"].Count > 1000, $"{host.Label}: the English table looks truncated");
 
-            var catalog = await session.SendAsync("catalog.list", timeout: TimeSpan.FromSeconds(120));
-            var (categories, tweaks) = Projections.Catalog(catalog);
-            Assert.Equal(10, categories.Count);
-            Assert.True(tweaks.Count >= 100, $"{host.Label}: expected the whole catalog, got {tweaks.Count}");
+                stage = "catalog.list";
+                var catalog = await session.SendAsync("catalog.list", timeout: TimeSpan.FromSeconds(120));
+                var (categories, tweaks) = Projections.Catalog(catalog);
+                Assert.Equal(10, categories.Count);
+                Assert.True(tweaks.Count >= 100, $"{host.Label}: expected the whole catalog, got {tweaks.Count}");
 
-            var environment = await session.SendAsync("env.status", timeout: TimeSpan.FromSeconds(120));
-            var (status, runtime) = Projections.Environment(environment);
-            Assert.False(string.IsNullOrEmpty(status.PowerShellVersion));
-            Assert.NotNull(runtime);
+                stage = "env.status";
+                var environment = await session.SendAsync("env.status", timeout: TimeSpan.FromSeconds(120));
+                var (status, runtime) = Projections.Environment(environment);
+                Assert.False(string.IsNullOrEmpty(status.PowerShellVersion));
+                Assert.NotNull(runtime);
 
-            Assert.Equal(ShutdownOutcome.Clean, await session.ShutdownAsync(allowKill: false));
-            verified.Add(host.Label);
+                stage = "shutdown";
+                Assert.Equal(ShutdownOutcome.Clean, await session.ShutdownAsync(allowKill: false));
+                verified.Add($"{host.Label} [{host.Path}]");
+            }
+            catch (Exception exception)
+            {
+                // The host and the stage are part of the failure, together with the stderr
+                // tail the host itself wrote (PSHOME, module path, command availability).
+                throw new Xunit.Sdk.XunitException(
+                    $"host {identity} failed at stage '{stage}': {exception.GetType().Name}: {exception.Message}");
+            }
         }
 
         Assert.NotEmpty(verified);

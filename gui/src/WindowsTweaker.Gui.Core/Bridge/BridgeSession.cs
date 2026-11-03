@@ -233,18 +233,13 @@ public sealed class BridgeSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// Rebuilds the child process's <c>PSModulePath</c> so a Windows PowerShell 5.1 child
-    /// can see its own module set even when the parent is PowerShell 7. See
-    /// <see cref="StartAsync"/> for why this matters. Entries that do not exist are kept
-    /// (PowerShell decides), only the order and duplicates are normalized.
+    /// Rebuilds the child process's <c>PSModulePath</c> so the host it is about to start
+    /// resolves its own core modules. See <see cref="StartAsync"/> for the measured failure.
+    /// Entries that do not exist are kept (PowerShell decides), only the order and
+    /// duplicates are normalized.
     /// </summary>
     private static void ApplyPowerShellModulePath(ProcessStartInfo startInfo, PowerShellHost host)
     {
-        if (!host.IsCore)
-        {
-            return;
-        }
-
         var current = Environment.GetEnvironmentVariable("PSModulePath");
         if (string.IsNullOrWhiteSpace(current))
         {
@@ -257,13 +252,23 @@ public sealed class BridgeSession : IAsyncDisposable
             return;
         }
 
-        // The system Windows PowerShell module directory moves to the front, so a 5.1
-        // child resolves Microsoft.PowerShell.Utility from the copy it can load. It is
-        // derived from the host executable's own home (its PSHOME), so it is correct for
-        // that host's bitness and location; the rest of the parent's path follows in
-        // order, without duplicates.
+        // The host's own module roots move to the front. Measured on a Windows host with
+        // PowerShell 7 installed: a Windows PowerShell 5.1 child that inherits PowerShell
+        // 7's module path resolves Microsoft.PowerShell.Utility to the 7.x copy first
+        // (Get-Module -ListAvailable listed 7.0.0.0 before the 5.1 copy, and the child
+        // reported "Import-PowerShellDataFile <not found>"), because command discovery
+        // takes the first match in path order. Prepending the host's own PSHOME module
+        // directory and its shared module directory - both belonging to that host's
+        // lineage - fixes the shadowing for either lineage: a Desktop child keeps
+        // $PSHOME\Modules and Program Files\WindowsPowerShell\Modules, a Core child keeps
+        // its own PSHOME\Modules and Program Files\PowerShell\Modules, and the rest of the
+        // parent's path follows unchanged.
         var hostHome = Path.GetDirectoryName(host.Path) ?? string.Empty;
-        var systemModuleDir = Path.Combine(hostHome, "Modules");
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var sharedModules = host.IsCore
+            ? Path.Combine(programFiles, "PowerShell", "Modules")
+            : Path.Combine(programFiles, "WindowsPowerShell", "Modules");
+
         var ordered = new List<string>(entries.Length + 2);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -277,11 +282,8 @@ public sealed class BridgeSession : IAsyncDisposable
             ordered.Add(entry);
         }
 
-        Add(systemModuleDir);
-        var programFilesModules = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            "WindowsPowerShell", "Modules");
-        Add(programFilesModules);
+        Add(Path.Combine(hostHome, "Modules"));
+        Add(sharedModules);
         foreach (var entry in entries)
         {
             Add(entry);
