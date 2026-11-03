@@ -75,8 +75,36 @@ jobs:
       - name: Frontend/core/bridge tests (live backend)
         shell: pwsh
         run: |
-          dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests/WindowsTweaker.Gui.Core.Tests.csproj -c Release --nologo
+          # Host facts first: these are the environment diagnostics that made the 5.1
+          # "backend exited before handshake" failure reproducible (PSModulePath order, the
+          # module copy each host resolves, bitness, autoload preference).
+          $HostDiag = @()
+          $HostDiag += "runner: $($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition) bits=$([IntPtr]::Size*8)"
+          $HostDiag += "runner PSHOME: $PSHOME"
+          $HostDiag += "runner PSModulePath: $env:PSModulePath"
+          $HostDiag += "runner PSModuleAutoLoadingPreference: $PSModuleAutoLoadingPreference"
+          foreach ($HostExe in @("powershell.exe", "pwsh")) {
+            $Probe = Get-Command $HostExe -ErrorAction SilentlyContinue
+            if (-not $Probe) { continue }
+            $Facts = & $HostExe -NoProfile -Command "`$PSVersionTable.PSVersion.ToString() + '|' + `$PSVersionTable.PSEdition + '|' + [IntPtr]::Size*8 + '|' + `$PSHOME + '|' + `$env:PSModulePath + '|' + `$PSModuleAutoLoadingPreference + '|' + (Get-Command Import-PowerShellDataFile -ErrorAction SilentlyContinue).Source"
+            $HostDiag += "$($Probe.Source) -> $Facts"
+          }
+          $HostDiag | Set-Content -LiteralPath host-diagnostics.txt -Encoding utf8
+          Get-Content host-diagnostics.txt
+
+          dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests/WindowsTweaker.Gui.Core.Tests.csproj -c Release --nologo `
+            --logger "trx;LogFileName=winui-core.trx"
           if ($LASTEXITCODE -ne 0) { throw "dotnet test failed with $LASTEXITCODE" }
+
+      - name: Upload the host diagnostics and test results (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winui-core-diagnostics
+          path: |
+            host-diagnostics.txt
+            gui/tests/WindowsTweaker.Gui.Core.Tests/TestResults/*.trx
+          if-no-files-found: ignore
 
       - name: Install Pester
         shell: pwsh

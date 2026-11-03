@@ -211,12 +211,17 @@ public sealed class BackendLifetimeTests
         var firstBackend = runner.BackendProcessId;
         Assert.NotNull(firstBackend);
 
-        // Start a slow read on the current connection, then replace it straight away.
+        // Start a slow read on the current connection.
         var slow = runner.RunAsync("state.get", Projections.TweakStates, timeout: TimeSpan.FromMinutes(5));
         var generation = runner.Generation;
-        await Task.Delay(200);
+
+        // Barrier instead of a timing sleep: the request must be registered and written to
+        // the pipe before the session is replaced. ActiveRequestId is set synchronously by
+        // RunAsync once SendAsync has handed the request to the session.
+        await WaitUntilAsync(() => runner.ActiveRequestId.Length > 0, TimeSpan.FromSeconds(10));
         Assert.Equal(generation, runner.Generation);
 
+        // Replace the session. The old request belongs to the past from here on.
         await runner.StopAsync(allowKill: false, reason: "test replace");
         Assert.True(runner.Generation > generation);
         Assert.Null(await runner.ConnectAsync(TestPaths.RepositoryRoot));
@@ -224,7 +229,11 @@ public sealed class BackendLifetimeTests
         Assert.NotNull(secondBackend);
         Assert.NotEqual(firstBackend!.Value, secondBackend!.Value);
 
-        // The slow answer belongs to the old connection: it must not be applied.
+        // Whatever happened to the old request - a late answer, or the old process exiting
+        // while it was still pending - it belongs to a replaced connection. The outcome
+        // must be StaleConnection, never a current-session error. The error precedence is:
+        // an old-generation result never affects the new session, and a current-session
+        // exit is still reported as such (covered by BackendExitAfterAHandshake...).
         var outcome = await slow;
         Assert.False(outcome.Ok);
         Assert.Equal(ProtocolConstants.ErrorCode.StaleConnection, outcome.Code);

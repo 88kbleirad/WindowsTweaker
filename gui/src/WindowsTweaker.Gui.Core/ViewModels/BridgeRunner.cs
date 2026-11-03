@@ -249,7 +249,7 @@ public sealed class BridgeRunner : IAsyncDisposable
 
         var generation = Volatile.Read(ref _generation);
         var watch = Stopwatch.StartNew();
-        string requestId;
+        var requestId = string.Empty;
 
         try
         {
@@ -261,15 +261,9 @@ public sealed class BridgeRunner : IAsyncDisposable
 
             // The answer belongs to a connection that is no longer current: it must not be
             // applied, even though it arrived intact.
-            if (generation != Volatile.Read(ref _generation))
+            if (IsStale(generation))
             {
-                return Trace(
-                    op,
-                    requestId,
-                    watch,
-                    BridgeOutcome<T>.Failure(
-                        "The answer arrived after the backend session was replaced and was discarded.",
-                        ProtocolConstants.ErrorCode.StaleConnection));
+                return Stale<T>(op, requestId, watch);
             }
 
             try
@@ -291,10 +285,25 @@ public sealed class BridgeRunner : IAsyncDisposable
         }
         catch (BridgeOperationException exception)
         {
+            if (IsStale(generation))
+            {
+                return Stale<T>(op, requestId, watch);
+            }
+
             return Trace(op, string.Empty, watch, BridgeOutcome<T>.Failure(exception.Message, exception.Code ?? "BackendError"));
         }
         catch (BridgeException exception)
         {
+            if (IsStale(generation))
+            {
+                // The request belonged to a session that has been replaced. Whatever
+                // happened to the old session (a clean stop, an exit, a transport
+                // failure) is a fact about the past connection, not about the one the
+                // window is using now, so the answer is reported as stale and never as a
+                // current-session failure.
+                return Stale<T>(op, requestId, watch);
+            }
+
             var code = exception.Code ?? ProtocolConstants.ErrorCode.BackendDown;
             if (code == ProtocolConstants.ErrorCode.BackendDown)
             {
@@ -306,6 +315,11 @@ public sealed class BridgeRunner : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            if (IsStale(generation))
+            {
+                return Stale<T>(op, requestId, watch);
+            }
+
             return Trace(op, string.Empty, watch, BridgeOutcome<T>.Failure("The request was cancelled.", "Cancelled"));
         }
         finally
@@ -313,6 +327,19 @@ public sealed class BridgeRunner : IAsyncDisposable
             Volatile.Write(ref _activeRequestId, string.Empty);
         }
     }
+
+    /// <summary>True when the generation that issued the request is no longer current.</summary>
+    private bool IsStale(long generation) => generation != Volatile.Read(ref _generation);
+
+    /// <summary>The typed stale-answer failure shared by every outcome path.</summary>
+    private BridgeOutcome<T> Stale<T>(string op, string requestId, Stopwatch watch) =>
+        Trace(
+            op,
+            requestId,
+            watch,
+            BridgeOutcome<T>.Failure(
+                "The answer arrived after the backend session was replaced and was discarded.",
+                ProtocolConstants.ErrorCode.StaleConnection));
 
     private BridgeOutcome<T> Trace<T>(string op, string requestId, Stopwatch watch, BridgeOutcome<T> outcome)
     {

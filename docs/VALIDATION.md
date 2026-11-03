@@ -2227,6 +2227,71 @@ Windows (Windows 11 IoT LTSC VM, `192.168.122.123`, Windows PowerShell 5.1):
   occur on an unrelated schedule; the suite now runs in chunks so a restart cannot invalidate
   a run.
 
+## 29. Windows CI failures on commit 3b330f7 (fixed)
+
+The real Windows CI run (`build-winui.yml`) passed publish + payload validation (41 assets,
+x64) and 54/56 core tests. The two failures were both reproduced on the VM and fixed:
+
+### Failure 1: `EveryAvailablePowerShellHostRunsTheWholeStartupContract` - "backend exited before handshake"
+
+Reproduced from pwsh 7 on the VM with the exact `BridgeSession.StartAsync` launch path
+(`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File wt-bridge.ps1
+-ModuleManifest ...`):
+
+```text
+CHILD STDERR:
+bridge: starting protocol 1 for C:\wt\repo\src\WindowsTweaker\WindowsTweaker.psd1
+Read-WtStringTable : The term 'Import-PowerShellDataFile' is not recognized as the name of a cmdlet, function, script
+file, or operable program. ...
+At C:\wt\repo\src\WindowsTweaker\Private\Localization.ps1:227 char:17
+```
+
+Host facts captured (`host-diagnostics.txt`): the runner was windows-latest pwsh 7; the 5.1
+child inherited the pwsh parent's `PSModulePath` and `Get-Module Microsoft.PowerShell.Utility
+-ListAvailable` resolved to the pwsh 7 copy (portable, `c:\wt\pwsh7\Modules`). Windows
+PowerShell 5.1 resolves commands from the first module copy it finds; the 7.x copy cannot load
+on .NET Framework, so `Microsoft.PowerShell.Utility` - and with it the core cmdlet
+`Import-PowerShellDataFile` - is missing in the child. `Initialize-WtLocalization` runs in
+the bridge before the session loop, so the failure happened before the hello frame: "backend
+exited before handshake".
+
+Fix: `BridgeSession.ApplyPowerShellModulePath` (launch boundary). The child's
+`PSModulePath` is rebuilt before spawn: the host's own module directory (`<PSHOME>\Modules`,
+derived from the host executable's location) and `Program Files\WindowsPowerShell\Modules`
+lead; the parent's entries follow in order, deduplicated. The engine code, the PSD1 files and
+`Import-PowerShellDataFile` are untouched. Verified: under the same pwsh parent, the child now
+sends the hello frame and answers `strings.get` (tables for en/vi).
+
+### Failure 2: `LateAnswerFromAReplacedConnectionIsRejected` - expected StaleConnection, got BackendExited
+
+The old request (`state.get`) was pending while the old session was cleanly stopped; the old
+process exited before answering, `OnBackendGone` completed the pending request with
+`BackendExited`, and `BridgeRunner.RunAsync` only mapped the *successful* completion to
+`StaleConnection`. The generation check did not cover failure completions.
+
+Fix: deterministic error precedence in `BridgeRunner.RunAsync` - every completion path
+(success, engine error, backend failure, cancellation) that belongs to an old generation is
+reported as `StaleConnection`; a current-session exit still reports `BackendExited`
+(covered by `BackendExitAfterAHandshakeIsDetectedAndDisablesCommands`). The test's timing
+sleep was replaced by a barrier on `Runner.ActiveRequestId` (the request is registered and on
+the pipe before the session is replaced). No mutation replay is touched.
+
+Regression evidence (Windows VM, both hosts discoverable - `C:\wt\pwsh7\pwsh.exe` 7.4.7 and
+`powershell.exe` 5.1.26100.9444):
+
+* `EveryAvailablePowerShellHostRunsTheWholeStartupContract`: passed (both hosts; per-host.trx).
+* `LateAnswerFromAReplacedConnectionIsRejected`: passed (lifetime.trx).
+* Full Windows `dotnet test`: **56/56 passed** (lifetime.trx 8/8, rest.trx 48/48).
+* Full Linux suite: 56/56; full validation gate: ALL EXECUTED CHECKS PASSED.
+* Artifacts preserved: `artifacts/ci-fix/` (host-diagnostics.txt, per-host.trx, lifetime.trx,
+  rest.trx). The workflow now always uploads `host-diagnostics.txt` and `TestResults/*.trx`
+  even on failure.
+
+### Remaining (still unexecuted)
+
+* Launching the published UI and the rendered window; the real UAC prompt; the rendered
+  language switch (all unchanged from section 28).
+
 ### Windows checks still required (not executed)
 
 * Launching the published executable and exercising the rendered window (palette,

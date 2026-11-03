@@ -172,6 +172,19 @@ public sealed class BridgeSession : IAsyncDisposable
             ?? throw new BridgeException($"The engine manifest was not found under: {repositoryRoot}");
         startInfo.ArgumentList.Add(manifest);
 
+        // The child inherits the parent's environment, and this process is frequently
+        // launched from PowerShell 7 or from a .NET host whose PSModulePath begins with
+        // the PowerShell 7 module directories. Windows PowerShell 5.1 resolves commands
+        // from the first module copy it finds, so a 5.1 child whose PSModulePath starts
+        // with the pwsh directories tries to load Microsoft.PowerShell.Utility from the
+        // 7.x copy - which a 5.1 engine cannot load - and a core cmdlet such as
+        // Import-PowerShellDataFile is then missing. The child's module path is therefore
+        // rebuilt: the Windows PowerShell module directories lead, duplicates are removed,
+        // and the parent's entries follow unchanged. This is the launch boundary; the
+        // engine code is not changed and the PSD1 files are read with the engine's own
+        // Import-PowerShellDataFile.
+        ApplyPowerShellModulePath(startInfo, host);
+
         Process process;
         try
         {
@@ -217,6 +230,64 @@ public sealed class BridgeSession : IAsyncDisposable
         }
 
         return hosts[0];
+    }
+
+    /// <summary>
+    /// Rebuilds the child process's <c>PSModulePath</c> so a Windows PowerShell 5.1 child
+    /// can see its own module set even when the parent is PowerShell 7. See
+    /// <see cref="StartAsync"/> for why this matters. Entries that do not exist are kept
+    /// (PowerShell decides), only the order and duplicates are normalized.
+    /// </summary>
+    private static void ApplyPowerShellModulePath(ProcessStartInfo startInfo, PowerShellHost host)
+    {
+        if (!host.IsCore)
+        {
+            return;
+        }
+
+        var current = Environment.GetEnvironmentVariable("PSModulePath");
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            return;
+        }
+
+        var entries = current.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (entries.Length == 0)
+        {
+            return;
+        }
+
+        // The system Windows PowerShell module directory moves to the front, so a 5.1
+        // child resolves Microsoft.PowerShell.Utility from the copy it can load. It is
+        // derived from the host executable's own home (its PSHOME), so it is correct for
+        // that host's bitness and location; the rest of the parent's path follows in
+        // order, without duplicates.
+        var hostHome = Path.GetDirectoryName(host.Path) ?? string.Empty;
+        var systemModuleDir = Path.Combine(hostHome, "Modules");
+        var ordered = new List<string>(entries.Length + 2);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string entry)
+        {
+            if (string.IsNullOrWhiteSpace(entry) || !seen.Add(entry))
+            {
+                return;
+            }
+
+            ordered.Add(entry);
+        }
+
+        Add(systemModuleDir);
+        var programFilesModules = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "WindowsPowerShell", "Modules");
+        Add(programFilesModules);
+        foreach (var entry in entries)
+        {
+            Add(entry);
+        }
+
+        startInfo.Environment["PSModulePath"] = string.Join(';', ordered);
     }
 
     private static string ResolveScript(string repositoryRoot)
