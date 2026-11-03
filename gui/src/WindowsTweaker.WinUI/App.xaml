@@ -1,4 +1,4 @@
-<Application
+﻿<Application
     x:Class="WindowsTweaker.WinUI.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -9,6 +9,10 @@
             <!-- State visibility (loading / empty / failed / ready) without code behind. -->
             <local:BoolToVisibilityConverter x:Key="WtBoolToVisible"/>
             <local:BoolToVisibilityConverter x:Key="WtBoolToCollapsed" Invert="True"/>
+            <local:PercentToHeightConverter x:Key="WtPercentToHeight"/>
+            <local:ToneToBrushConverter x:Key="WtToneToBrush"/>
+            <local:PercentToStarLengthConverter x:Key="WtUsedStar"/>
+            <local:PercentToStarLengthConverter x:Key="WtFreeStar" Invert="True"/>
 
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="Themes/CatppuccinMocha.xaml"/>

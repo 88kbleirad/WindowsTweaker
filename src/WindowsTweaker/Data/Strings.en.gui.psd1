@@ -183,4 +183,78 @@
 
     # Review workspace: staged for review, not approved and not applied.
     'Gui.Review.Staged'       = 'Staged for review. Nothing has been applied yet.'
+
+    # Overview: local hardware measurements (CPU, GPU, RAM, system drive).
+    'Gui.Metrics.Cpu'            = 'CPU'
+    'Gui.Metrics.Gpu'            = 'GPU'
+    'Gui.Metrics.Ram'            = 'RAM'
+    'Gui.Metrics.SystemDrive'    = 'System drive'
+    'Gui.Metrics.Trend'          = 'last 60 s'
+    'Gui.Metrics.Unavailable'    = 'Utilization unavailable'
+    'Gui.Metrics.Loading'        = 'Measuring...'
+    'Gui.Metrics.AdapterUnknown' = 'Adapter not reported'
+    'Gui.Metrics.Free'           = 'Free {0}'
+    'Gui.Metrics.Percent'        = '{0}%'
+    'Gui.Metrics.Failed'         = 'Could not be measured'
+    'Gui.Metrics.LastUpdated'    = 'Updated {0}'
+    'Gui.Metrics.Sampling'       = 'Live samples while this workspace is open'
+    'Gui.Metrics.Paused'         = 'Sampling paused'
+    'Gui.Overview.OpenHistory'   = 'Open in History'
+    'Gui.Overview.InterruptedAction' = 'Open the interrupted operations in History.'
+
+    # Tweak values and the detail pane.
+    'Gui.State.Enabled'          = 'On'
+    'Gui.State.Disabled'         = 'Off'
+    'Gui.State.Default'          = 'Default'
+    'Gui.State.Unsupported'      = 'Unsupported'
+    'Gui.State.Unknown'          = 'Unknown'
+    'Gui.Tweaks.ColumnName'      = 'Tweak'
+    'Gui.Tweaks.ColumnValue'     = 'Current value'
+    'Gui.Tweaks.DetailDescription' = 'Description'
+    'Gui.Tweaks.DetailImpact'    = 'Impact'
+    'Gui.Tweaks.DetailCompatibility' = 'Compatibility'
+    'Gui.Tweaks.DetailPrivileges' = 'Privileges'
+    'Gui.Tweaks.DetailTarget'    = 'Target value'
+    'Gui.Tweaks.RequiresAdmin'   = 'Needs an elevated backend session.'
+    'Gui.Tweaks.IncompatibleOs'  = 'Not available on this Windows version.'
+    'Gui.Tweaks.StageAction'     = 'Stage for review'
+
+    # Review: one next action when nothing is staged, otherwise the staged list.
+    'Gui.Review.EmptyMessage'    = 'No changes to review yet.'
+    'Gui.Review.EmptyAction'     = 'Choose a tweak'
+    'Gui.Review.ColumnCurrent'   = 'Current'
+    'Gui.Review.ColumnRequested' = 'Requested'
+    'Gui.Review.PreviewAction'   = 'Preview'
+    'Gui.Review.RemoveSelected'  = 'Remove selected'
+    'Gui.Review.ApplyAction'     = 'Apply'
+
+    # History: the outcome of an operation, kept apart from the configuration value.
+    'Gui.Outcome.Success'        = 'Success'
+    'Gui.Outcome.Failure'        = 'Failure'
+    'Gui.Outcome.Interrupted'    = 'Interrupted'
+    'Gui.Outcome.Unchanged'      = 'Unchanged'
+
+    # Diagnostics: compact summary, expandable technical details, named actions.
+    'Gui.Diagnostics.Summary'    = 'Summary'
+    'Gui.Diagnostics.TechnicalDetails' = 'Technical details'
+    'Gui.Diagnostics.Copy'       = 'Copy'
+    'Gui.Diagnostics.Copied'     = 'Copied'
+    'Gui.Diagnostics.ScanDirectory' = 'Scan directory'
+    'Gui.Action.RefreshReport'   = 'Refresh report'
+
+    # Licensing: the Windows state is the prominent fact.
+    'Gui.Licensing.State'        = 'Windows licensing state'
+    'Gui.Licensing.Activated'    = 'Activated (verified)'
+    'Gui.Licensing.NotActivated' = 'Not activated'
+    'Gui.Licensing.Awaiting'     = 'Awaiting verification'
+    'Gui.Licensing.OperationError' = 'Activation error'
+    'Gui.Licensing.Checking'     = 'Checking...'
+    'Gui.Licensing.MethodDuration' = 'Advertised duration'
+    'Gui.Licensing.ToolSection'  = 'External tool'
+
+    # Connection and loading labels (distinct facts, never the same word for both).
+    'Gui.Connected'              = 'Connected'
+    'Gui.LoadingTweaksList'      = 'Loading the tweak list...'
+    'Gui.Idle'                   = 'Ready'
+    'Gui.LoadingWorkspace'       = 'Loading {0}...'
 }

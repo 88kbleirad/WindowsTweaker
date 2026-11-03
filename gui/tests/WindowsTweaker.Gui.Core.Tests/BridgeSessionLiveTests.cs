@@ -329,4 +329,39 @@ public sealed class BridgeSessionLiveTests
         Assert.Empty(batch.Results);
         Assert.False(batch.Cancelled);
     }
+
+    [SkippableFact]
+    public async Task ConcurrentRequestsOnOneSessionAllComplete()
+    {
+        Skip.IfNot(TestPaths.CanRunLive, "No PowerShell host (or no bridge script) is available on this machine.");
+
+        // The backend accepts several requests in flight, and the overview dashboard makes
+        // that normal: it samples on its own timer while a workspace loads. One shared
+        // stdout/stdin pair cannot serve two overlapping writes ("The stream is currently
+        // in use by a previous operation on the stream"), so this fires a burst of mixed
+        // requests at one session and requires every one of them to answer - the session
+        // must survive and stay usable afterwards.
+        await using var session = await StartAsync();
+
+        var requests = new List<Task<System.Text.Json.JsonElement>>();
+        for (var index = 0; index < 3; index++)
+        {
+            requests.Add(session.SendAsync("env.status", timeout: TimeSpan.FromSeconds(60)));
+            requests.Add(session.SendAsync("catalog.list", timeout: TimeSpan.FromSeconds(60)));
+            requests.Add(session.SendAsync("strings.get", timeout: TimeSpan.FromSeconds(120)));
+        }
+
+        var answers = await Task.WhenAll(requests);
+        Assert.Equal(9, answers.Length);
+        Assert.All(answers, answer => Assert.Equal(System.Text.Json.JsonValueKind.Object, answer.ValueKind));
+
+        // The ids are all distinct, which is what keeps the answers attributable.
+        Assert.Equal(9, requests.Select((_, index) => index).Distinct().Count());
+
+        // And the session is still usable: a late request must not be collateral damage.
+        var after = await session.SendAsync("ping", timeout: TimeSpan.FromSeconds(30));
+        Assert.True(after.TryGetProperty("pong", out var pong) && pong.GetBoolean());
+        Assert.True(session.IsRunning);
+        Assert.Equal(ShutdownOutcome.Clean, await session.ShutdownAsync(allowKill: false));
+    }
 }

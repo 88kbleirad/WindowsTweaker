@@ -182,4 +182,78 @@
 
     # Không gian Xem lại: đã xếp để xem lại, chưa được duyệt và chưa áp dụng.
     'Gui.Review.Staged'       = 'Đã xếp để xem lại. Chưa áp dụng thay đổi nào.'
+
+    # Tổng quan: số đo phần cứng cục bộ (CPU, GPU, RAM, ổ hệ thống).
+    'Gui.Metrics.Cpu'            = 'CPU'
+    'Gui.Metrics.Gpu'            = 'GPU'
+    'Gui.Metrics.Ram'            = 'RAM'
+    'Gui.Metrics.SystemDrive'    = 'Ổ hệ thống'
+    'Gui.Metrics.Trend'          = '60 giây gần nhất'
+    'Gui.Metrics.Unavailable'    = 'Không có số liệu sử dụng'
+    'Gui.Metrics.Loading'        = 'Đang đo...'
+    'Gui.Metrics.AdapterUnknown' = 'Không xác định được bộ điều hợp'
+    'Gui.Metrics.Free'           = 'Còn trống {0}'
+    'Gui.Metrics.Percent'        = '{0}%'
+    'Gui.Metrics.Failed'         = 'Không đo được'
+    'Gui.Metrics.LastUpdated'    = 'Cập nhật lúc {0}'
+    'Gui.Metrics.Sampling'       = 'Lấy mẫu trực tiếp khi không gian này đang mở'
+    'Gui.Metrics.Paused'         = 'Đã tạm dừng lấy mẫu'
+    'Gui.Overview.OpenHistory'   = 'Mở trong Lịch sử'
+    'Gui.Overview.InterruptedAction' = 'Mở các thao tác bị gián đoạn trong Lịch sử.'
+
+    # Giá trị tinh chỉnh và khung chi tiết.
+    'Gui.State.Enabled'          = 'Bật'
+    'Gui.State.Disabled'         = 'Tắt'
+    'Gui.State.Default'          = 'Mặc định'
+    'Gui.State.Unsupported'      = 'Không hỗ trợ'
+    'Gui.State.Unknown'          = 'Chưa rõ'
+    'Gui.Tweaks.ColumnName'      = 'Tinh chỉnh'
+    'Gui.Tweaks.ColumnValue'     = 'Giá trị hiện tại'
+    'Gui.Tweaks.DetailDescription' = 'Mô tả'
+    'Gui.Tweaks.DetailImpact'    = 'Ảnh hưởng'
+    'Gui.Tweaks.DetailCompatibility' = 'Tương thích'
+    'Gui.Tweaks.DetailPrivileges' = 'Quyền'
+    'Gui.Tweaks.DetailTarget'    = 'Giá trị đích'
+    'Gui.Tweaks.RequiresAdmin'   = 'Cần phiên nền có quyền quản trị.'
+    'Gui.Tweaks.IncompatibleOs'  = 'Không dùng được trên phiên bản Windows này.'
+    'Gui.Tweaks.StageAction'     = 'Xếp để xem lại'
+
+    # Xem lại: một hành động rõ ràng khi chưa xếp gì, ngược lại là danh sách đã xếp.
+    'Gui.Review.EmptyMessage'    = 'Chưa có thay đổi nào để xem lại.'
+    'Gui.Review.EmptyAction'     = 'Chọn tinh chỉnh'
+    'Gui.Review.ColumnCurrent'   = 'Hiện tại'
+    'Gui.Review.ColumnRequested' = 'Yêu cầu'
+    'Gui.Review.PreviewAction'   = 'Xem trước'
+    'Gui.Review.RemoveSelected'  = 'Bỏ mục đã chọn'
+    'Gui.Review.ApplyAction'     = 'Áp dụng'
+
+    # Lịch sử: kết cục của thao tác, tách khỏi giá trị cấu hình.
+    'Gui.Outcome.Success'        = 'Thành công'
+    'Gui.Outcome.Failure'        = 'Thất bại'
+    'Gui.Outcome.Interrupted'    = 'Gián đoạn'
+    'Gui.Outcome.Unchanged'      = 'Không đổi'
+
+    # Chẩn đoán: tóm tắt gọn, chi tiết kỹ thuật mở rộng, hành động có tên riêng.
+    'Gui.Diagnostics.Summary'    = 'Tóm tắt'
+    'Gui.Diagnostics.TechnicalDetails' = 'Chi tiết kỹ thuật'
+    'Gui.Diagnostics.Copy'       = 'Sao chép'
+    'Gui.Diagnostics.Copied'     = 'Đã sao chép'
+    'Gui.Diagnostics.ScanDirectory' = 'Quét thư mục'
+    'Gui.Action.RefreshReport'   = 'Làm mới báo cáo'
+
+    # Bản quyền: trạng thái Windows là thông tin nổi bật nhất.
+    'Gui.Licensing.State'        = 'Trạng thái bản quyền Windows'
+    'Gui.Licensing.Activated'    = 'Đã kích hoạt (đã xác minh)'
+    'Gui.Licensing.NotActivated' = 'Chưa kích hoạt'
+    'Gui.Licensing.Awaiting'     = 'Chưa xác minh'
+    'Gui.Licensing.OperationError' = 'Lỗi kích hoạt'
+    'Gui.Licensing.Checking'     = 'Đang kiểm tra...'
+    'Gui.Licensing.MethodDuration' = 'Thời hạn công bố'
+    'Gui.Licensing.ToolSection'  = 'Công cụ ngoài'
+
+    # Nhãn kết nối và nhãn đang tải (hai sự việc khác nhau, không dùng chung một từ).
+    'Gui.Connected'              = 'Đã kết nối'
+    'Gui.LoadingTweaksList'      = 'Đang tải danh sách tinh chỉnh...'
+    'Gui.Idle'                   = 'Sẵn sàng'
+    'Gui.LoadingWorkspace'       = 'Đang tải {0}...'
 }

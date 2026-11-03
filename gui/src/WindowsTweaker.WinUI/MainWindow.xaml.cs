@@ -671,10 +671,49 @@ public sealed partial class MainWindow : Window
 
     private async void RemovePending_Click(object sender, RoutedEventArgs e)
     {
-        if (ReviewList.SelectedItem is ReviewedChange change)
+        if (ReviewList.SelectedItem is ReviewChangeRow change)
         {
             _shell.Review.Remove(change);
         }
+    }
+
+    /// <summary>Opens the tweak list from the review workspace's empty state.</summary>
+    private async void ReviewGoToTweaks_Click(object sender, RoutedEventArgs e)
+    {
+        await _shell.NavigateAsync(Workspace.Tweaks);
+        NavList.SelectedIndex = 1;
+    }
+
+    /// <summary>Opens History with the interrupted operations in view.</summary>
+    private async void OpenInterruptedHistory_Click(object sender, RoutedEventArgs e)
+    {
+        await _shell.NavigateAsync(Workspace.History);
+        NavList.SelectedIndex = 3;
+        InterruptedModeRadio.IsChecked = true;
+        HistoryMode_Changed(InterruptedModeRadio, new RoutedEventArgs());
+    }
+
+    /// <summary>Shows or hides the diagnostics technical-details section.</summary>
+    private void DiagnosticsTechnicalDetails_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleDetailBox(TechnicalDetailsBox, (Button)sender);
+        TechnicalDetailsPanel.Visibility = TechnicalDetailsPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    /// <summary>Copies the technical details to the clipboard and reflects it in the label.</summary>
+    private void DiagnosticsCopyTechnical_Click(object sender, RoutedEventArgs e)
+    {
+        var text = _shell.Diagnostics.TechnicalDetailsText;
+        if (!string.IsNullOrEmpty(text))
+        {
+            var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            package.SetText(text);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+        }
+
+        _shell.Diagnostics.MarkTechnicalDetailsCopied();
     }
 
     private void HistoryMode_Changed(object sender, RoutedEventArgs e)

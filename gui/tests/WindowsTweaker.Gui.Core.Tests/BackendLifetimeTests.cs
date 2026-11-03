@@ -100,7 +100,7 @@ public sealed class BackendLifetimeTests
             }
         };
 
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
         await shell.NavigateAsync(Workspace.Overview);
         Assert.Equal(ConnectionState.Ready, shell.Connection);
         Assert.True(shell.IsConnected);
@@ -145,21 +145,39 @@ public sealed class BackendLifetimeTests
         var operations = new List<string>();
         shell.Runner.Activity += (_, activity) => operations.Add(activity.Operation);
 
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
         await shell.NavigateAsync(Workspace.Overview);
         var firstBackend = shell.Runner.BackendProcessId;
         Assert.NotNull(firstBackend);
         Assert.True(IsAlive(firstBackend!.Value));
 
-        // Seed a staged review selection: a reconnect must keep it.
+        // Seed a staged review selection: a reconnect must keep it. The tweak is chosen by
+        // the engine's own eligibility rule (not "the first row"), because staging a tweak
+        // the engine refuses is exactly what the eligibility check now prevents. A host
+        // where the engine offers nothing applicable (this suite also runs on Linux, where
+        // the Windows tweaks are unsupported) asserts the refusal instead, so the check is
+        // covered either way.
         await shell.NavigateAsync(Workspace.Tweaks);
         Assert.True(shell.Tweaks.States.Count > 0);
-        var tweak = shell.Tweaks.States.First();
-        shell.Tweaks.Selected = tweak;
-        shell.Tweaks.TargetState = tweak.StateNames.First();
-        Assert.Null(shell.Tweaks.StageSelection());
+        var tweak = shell.Tweaks.States.FirstOrDefault(row => row.CanRun && row.StateNames.Count > 0);
+        if (tweak is not null)
+        {
+            shell.Tweaks.Selected = tweak;
+            shell.Tweaks.TargetState = tweak.StateNames.First();
+            Assert.Null(shell.Tweaks.StageSelection());
+        }
+        else
+        {
+            var refused = shell.Tweaks.States.First();
+            shell.Tweaks.Selected = refused;
+            shell.Tweaks.TargetState = refused.StateNames.FirstOrDefault() ?? string.Empty;
+            var refusal = shell.Tweaks.StageSelection();
+            Assert.False(string.IsNullOrWhiteSpace(refusal), "an ineligible tweak must be refused with a reason");
+            Assert.False(shell.Tweaks.CanStage);
+        }
+
         var staged = shell.Review.Changes.ToList();
-        Assert.Single(staged);
+        Assert.Equal(shell.Tweaks.States.Any(row => row.CanRun && row.StateNames.Count > 0) ? 1 : 0, staged.Count);
 
         var generationBefore = shell.Runner.Generation;
         operations.Clear();
@@ -187,8 +205,8 @@ public sealed class BackendLifetimeTests
         // is marked stale until the user goes back to it.
         Assert.False(shell.Tweaks.IsStale);
         Assert.True(shell.Overview.IsStale);
-        Assert.Equal(staged.Select(c => c.Id), shell.Review.Changes.Select(c => c.Id)); // selection kept
-        Assert.DoesNotContain(shell.Review.Changes, change => change.Id == "never-staged");
+        Assert.Equal(staged.Select(c => c.Change.Id), shell.Review.Changes.Select(c => c.Change.Id)); // selection kept
+        Assert.DoesNotContain(shell.Review.Changes, change => change.Change.Id == "never-staged");
 
         // Revisiting it reloads the data and clears the marker.
         await shell.NavigateAsync(Workspace.Overview);
@@ -252,13 +270,13 @@ public sealed class BackendLifetimeTests
         Skip.IfNot(TestPaths.CanRunLive, "No PowerShell host (or no bridge script) is available on this machine.");
 
         await using var shell = new ShellViewModel(TestPaths.RepositoryRoot);
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
         var hello = shell.Runner.Hello;
         var backend = shell.Runner.BackendProcessId;
         Assert.NotNull(backend);
 
         // Connecting again while connected is a no-op, not a second session.
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
         Assert.Equal(backend, shell.Runner.BackendProcessId);
         Assert.Same(hello, shell.Runner.Hello);
 
@@ -273,7 +291,7 @@ public sealed class BackendLifetimeTests
         Skip.IfNot(TestPaths.CanRunLive, "No PowerShell host (or no bridge script) is available on this machine.");
 
         await using var shell = new ShellViewModel(TestPaths.RepositoryRoot);
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
         await shell.NavigateAsync(Workspace.Overview);
         var beforeHandoff = shell.Runner.BackendProcessId;
         Assert.NotNull(beforeHandoff);
@@ -383,7 +401,7 @@ public sealed class BackendLifetimeTests
         Skip.IfNot(TestPaths.CanRunLive, "No PowerShell host (or no bridge script) is available on this machine.");
 
         await using var shell = new ShellViewModel(TestPaths.RepositoryRoot);
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
 
         // The selector's items are the engine's languages with display names - never the raw
         // codes as the only text - and the active one is selected, so it can never be blank.
@@ -408,7 +426,7 @@ public sealed class BackendLifetimeTests
         Skip.IfNot(TestPaths.CanRunLive, "No PowerShell host (or no bridge script) is available on this machine.");
 
         await using var shell = new ShellViewModel(TestPaths.RepositoryRoot);
-        Assert.Null(await shell.ConnectAsync());
+        await LiveShell.ConnectAsync(shell);
 
         // A healthy load: rows are there and no empty message is shown.
         await shell.NavigateAsync(Workspace.Tweaks);

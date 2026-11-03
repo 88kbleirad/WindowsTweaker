@@ -57,6 +57,7 @@ public sealed record BackendActivity(string Operation, string RequestId, long El
 public sealed class BridgeRunner : IAsyncDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _inFlight = new(StringComparer.Ordinal);
     private BridgeSession? _session;
     private string? _dataRootOverride;
     private string _activeRequestId = string.Empty;
@@ -92,11 +93,20 @@ public sealed class BridgeRunner : IAsyncDisposable
     /// <summary>The last stderr lines of the current (or most recent) session, for the error panel.</summary>
     public string StderrTail => _session?.StderrTail ?? _lastChange.Detail;
 
-    /// <summary>
-    /// The id of the request that is currently in flight, so a cancel reaches the work it
-    /// is meant for instead of guessing. Empty when nothing is running.
-    /// </summary>
+    /// <summary>The id of the request that is currently in flight, so a cancel reaches the work it
+    /// is meant for instead of guessing. Empty when nothing is running.</summary>
     public string ActiveRequestId => Volatile.Read(ref _activeRequestId);
+
+    /// <summary>
+    /// Every request that is currently in flight, by id. Progress frames name the request
+    /// they belong to, so the UI can attribute a progress line to a live request instead of
+    /// guessing - and it can tell that a line belongs to nobody once the whole set is empty.
+    /// </summary>
+    public bool AnyRequestInFlight => !_inFlight.IsEmpty;
+
+    /// <summary>True when the given request id is in flight right now.</summary>
+    public bool IsRequestInFlight(string requestId) =>
+        !string.IsNullOrEmpty(requestId) && _inFlight.ContainsKey(requestId);
 
     /// <summary>Raised when the session state changes (may be raised from a reader thread).</summary>
     public event EventHandler<BackendStateChange>? StateChanged;
@@ -256,6 +266,7 @@ public sealed class BridgeRunner : IAsyncDisposable
             var task = session.SendAsync(op, args, timeout, cancellationToken);
             requestId = session.LastRequestId;
             Volatile.Write(ref _activeRequestId, requestId);
+            _inFlight[requestId] = 1;
             var payload = await task.ConfigureAwait(false);
             watch.Stop();
 
@@ -324,6 +335,11 @@ public sealed class BridgeRunner : IAsyncDisposable
         }
         finally
         {
+            if (!string.IsNullOrEmpty(requestId))
+            {
+                _inFlight.TryRemove(requestId, out _);
+            }
+
             Volatile.Write(ref _activeRequestId, string.Empty);
         }
     }

@@ -368,6 +368,12 @@ function Invoke-WtBridgeInline
             $Decision = Test-WtRestartRequest -Requested:$Requested -Preview:$Preview -ReadOnly:$ReadOnly
             return (New-WtBridgeResultFrame -Id $Id -Data $Decision)
         }
+        'metrics.snapshot'
+        {
+            $Drive = Get-WtBridgeStringParam -Map $OpArgs -Name 'drive'
+            $Snapshot = & $Module { param ($Disk) Get-WtMetricOverviewSnapshot -Drive $Disk } $Drive
+            return (New-WtBridgeResultFrame -Id $Id -Data $Snapshot)
+        }
         'language.set'
         {
             $Language = Get-WtBridgeStringParam -Map $OpArgs -Name 'language'

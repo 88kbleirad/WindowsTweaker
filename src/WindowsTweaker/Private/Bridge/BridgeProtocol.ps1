@@ -1,4 +1,4 @@
-# WindowsTweaker - structured bridge protocol (backend half).
+﻿# WindowsTweaker - structured bridge protocol (backend half).
 #
 # This file is the protocol layer of the WinUI 3 frontend bridge. It is dot-sourced by
 # BridgeHost.ps1 (and by the tests); it never imports the module itself and never touches
@@ -585,6 +585,73 @@ function Get-WtBridgeGuiStringKeys
         'Gui.Licensing.Grace'
         'Gui.Licensing.Unavailable'
         'Gui.Review.Staged'
+        # Overview dashboard: local hardware measurements and the interrupted-work action.
+        'Gui.Metrics.Cpu'
+        'Gui.Metrics.Gpu'
+        'Gui.Metrics.Ram'
+        'Gui.Metrics.SystemDrive'
+        'Gui.Metrics.Trend'
+        'Gui.Metrics.Unavailable'
+        'Gui.Metrics.Loading'
+        'Gui.Metrics.AdapterUnknown'
+        'Gui.Metrics.Free'
+        'Gui.Metrics.Percent'
+        'Gui.Metrics.Failed'
+        'Gui.Metrics.LastUpdated'
+        'Gui.Metrics.Sampling'
+        'Gui.Metrics.Paused'
+        'Gui.Overview.OpenHistory'
+        'Gui.Overview.InterruptedAction'
+        # Tweak values, the detail pane and the staging action.
+        'Gui.State.Enabled'
+        'Gui.State.Disabled'
+        'Gui.State.Default'
+        'Gui.State.Unsupported'
+        'Gui.State.Unknown'
+        'Gui.Tweaks.ColumnName'
+        'Gui.Tweaks.ColumnValue'
+        'Gui.Tweaks.DetailDescription'
+        'Gui.Tweaks.DetailImpact'
+        'Gui.Tweaks.DetailCompatibility'
+        'Gui.Tweaks.DetailPrivileges'
+        'Gui.Tweaks.DetailTarget'
+        'Gui.Tweaks.RequiresAdmin'
+        'Gui.Tweaks.IncompatibleOs'
+        'Gui.Tweaks.StageAction'
+        # Review: the one next action when nothing is staged.
+        'Gui.Review.EmptyMessage'
+        'Gui.Review.EmptyAction'
+        'Gui.Review.ColumnCurrent'
+        'Gui.Review.ColumnRequested'
+        'Gui.Review.PreviewAction'
+        'Gui.Review.RemoveSelected'
+        'Gui.Review.ApplyAction'
+        # History: operation outcomes, kept apart from configuration values.
+        'Gui.Outcome.Success'
+        'Gui.Outcome.Failure'
+        'Gui.Outcome.Interrupted'
+        'Gui.Outcome.Unchanged'
+        # Diagnostics: summary, technical details and named actions.
+        'Gui.Diagnostics.Summary'
+        'Gui.Diagnostics.TechnicalDetails'
+        'Gui.Diagnostics.Copy'
+        'Gui.Diagnostics.Copied'
+        'Gui.Diagnostics.ScanDirectory'
+        'Gui.Action.RefreshReport'
+        # Licensing: the Windows state is the prominent fact.
+        'Gui.Licensing.State'
+        'Gui.Licensing.Activated'
+        'Gui.Licensing.NotActivated'
+        'Gui.Licensing.Awaiting'
+        'Gui.Licensing.OperationError'
+        'Gui.Licensing.Checking'
+        'Gui.Licensing.MethodDuration'
+        'Gui.Licensing.ToolSection'
+        # Connection, loading and idle labels (three distinct facts).
+        'Gui.Connected'
+        'Gui.LoadingTweaksList'
+        'Gui.LoadingWorkspace'
+        'Gui.Idle'
     )
 }
 
@@ -633,6 +700,10 @@ function Get-WtBridgeOperations
         @{ Name = 'dashboard.list'; Mutating = $false; Privileged = $false; Worker = $false; TimeoutMs = 30000 },
         @{ Name = 'dashboard.get';  Mutating = $false; Privileged = $false; Worker = $false; TimeoutMs = 30000 },
         @{ Name = 'metrics.range';  Mutating = $false; Privileged = $false; Worker = $true;  TimeoutMs = 60000 },
+        # One bounded local hardware reading for the overview dashboard: CPU, memory, the
+        # system volume and the GPU adapter. Inline because it is a short local read, so the
+        # window can sample it without starting a worker runspace or a process per sample.
+        @{ Name = 'metrics.snapshot'; Mutating = $false; Privileged = $false; Worker = $false; TimeoutMs = 20000 },
         @{ Name = 'inventory.devices'; Mutating = $false; Privileged = $false; Worker = $true; TimeoutMs = 120000 },
         @{ Name = 'power.settings'; Mutating = $false; Privileged = $false; Worker = $true;  TimeoutMs = 120000 },
         @{ Name = 'privacy.activity'; Mutating = $false; Privileged = $false; Worker = $true;  TimeoutMs = 120000 },

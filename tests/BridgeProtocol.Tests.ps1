@@ -1,4 +1,4 @@
-# WindowsTweaker - bridge protocol contract tests (engine half).
+﻿# WindowsTweaker - bridge protocol contract tests (engine half).
 #
 # The WinUI frontend's C# live tests already verify the served string tables against the
 # handshake's key list over the real host. These tests check the same contract from the
@@ -57,5 +57,14 @@ Describe 'Bridge frontend string contract' {
                 $Key | Should -Not -Match '^Gui\.' -Because "gui table key '$Key' has no declared frontend consumer"
             }
         }
+    }
+
+    It 'declares the overview metrics snapshot as a short read-only inline operation' {
+        $Ops = Get-WtBridgeOperations
+        $Ops.ContainsKey('metrics.snapshot') | Should -BeTrue -Because 'the overview dashboard samples through this op'
+        $Ops['metrics.snapshot'].Mutating | Should -BeFalse
+        $Ops['metrics.snapshot'].Worker | Should -BeFalse -Because 'a sample must not start a worker runspace'
+        $Ops['metrics.snapshot'].Privileged | Should -BeFalse
+        $Ops['metrics.snapshot'].TimeoutMs | Should -BeLessOrEqual 30000
     }
 }

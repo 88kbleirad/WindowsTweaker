@@ -237,3 +237,86 @@ public sealed record DashboardInfo(string Id);
 
 /// <summary>A restart decision (Test-WtRestartRequest).</summary>
 public sealed record RestartDecision(bool Allowed, string Reason, bool Available, string Mechanism);
+
+/// <summary>
+/// How far one measurement can be trusted. The engine sends the same words for every card,
+/// so the window never has to guess why a number is missing.
+/// </summary>
+public enum MetricQuality
+{
+    /// <summary>
+    /// Nothing was measured. It is the first member on purpose: a quality the engine does
+    /// not send - or sends with a word this build does not know - reads as "not measured"
+    /// rather than as a measurement.
+    /// </summary>
+    Unavailable,
+
+    /// <summary>The number was measured now.</summary>
+    Valid,
+
+    /// <summary>The host cannot measure this at all (for example GPU counters on a VM).</summary>
+    Unsupported,
+
+    /// <summary>The number was measured earlier and is not current.</summary>
+    Stale,
+
+    /// <summary>The measurement was attempted and failed; <see cref="CpuMetrics.Note"/> says why.</summary>
+    Error,
+}
+
+/// <summary>Reads the engine's quality words into <see cref="MetricQuality"/>.</summary>
+public static class MetricQualityParser
+{
+    /// <summary>
+    /// Maps one quality string. Anything unknown (including null and empty) is
+    /// <see cref="MetricQuality.Unavailable"/>, so a newer engine that adds a quality word
+    /// still renders as "not measured" instead of being reported as a value.
+    /// </summary>
+    public static MetricQuality Parse(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "valid" => MetricQuality.Valid,
+        "unavailable" => MetricQuality.Unavailable,
+        "unsupported" => MetricQuality.Unsupported,
+        "stale" => MetricQuality.Stale,
+        "error" => MetricQuality.Error,
+        _ => MetricQuality.Unavailable,
+    };
+}
+
+/// <summary>
+/// The local measurements of one sample (<c>metrics.snapshot</c>): CPU, memory, the system
+/// drive, and the GPU. Every number is nullable on purpose - a card the engine could not
+/// measure carries a quality and a null, and a null is never a zero.
+/// </summary>
+public sealed record MetricsSnapshot(
+    long TimestampMs,
+    CpuMetrics Cpu,
+    MemoryMetrics Memory,
+    DiskMetrics Disk,
+    GpuMetrics Gpu);
+
+/// <summary>CPU load of one sample. <see cref="Percent"/> is null when nothing was measured.</summary>
+public sealed record CpuMetrics(MetricQuality Quality, double? Percent, string Note);
+
+/// <summary>Physical memory of one sample; byte counts are null when nothing was measured.</summary>
+public sealed record MemoryMetrics(
+    MetricQuality Quality,
+    double? TotalBytes,
+    double? UsedBytes,
+    double? AvailableBytes,
+    string Note);
+
+/// <summary>The system drive of one sample; byte counts are null when nothing was measured.</summary>
+public sealed record DiskMetrics(
+    MetricQuality Quality,
+    string Drive,
+    double? TotalBytes,
+    double? FreeBytes,
+    string Note);
+
+/// <summary>The GPU of one sample: the adapter name, and its utilization when it has one.</summary>
+public sealed record GpuMetrics(
+    MetricQuality Quality,
+    string Name,
+    double? UtilizationPercent,
+    string Note);

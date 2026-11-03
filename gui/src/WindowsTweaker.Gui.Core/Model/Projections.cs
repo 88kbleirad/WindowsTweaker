@@ -457,6 +457,49 @@ public static class Projections
         Available: Bool(data, "Available"),
         Mechanism: String(data, "Mechanism"));
 
+    /// <summary>Projects <c>metrics.snapshot</c>.</summary>
+    /// <remarks>
+    /// Every number is optional and every read is tolerant: a card the engine could not
+    /// measure arrives with a quality and a null, and a field this build does not know (or
+    /// one that was renamed) yields null or an empty string rather than an exception. A
+    /// "not measured" answer therefore stays "not measured" all the way to the view - it is
+    /// never turned into a zero here.
+    /// </remarks>
+    public static MetricsSnapshot MetricsSnapshot(JsonElement data)
+    {
+        var cpu = Field(data, "cpu");
+        var memory = Field(data, "memory");
+        var disk = Field(data, "disk");
+        var gpu = Field(data, "gpu");
+
+        return new MetricsSnapshot(
+            TimestampMs: Long(data, "tsMs"),
+            Cpu: new CpuMetrics(
+                Quality(cpu),
+                NullableDouble(cpu, "percent"),
+                String(cpu, "note")),
+            Memory: new MemoryMetrics(
+                Quality(memory),
+                NullableDouble(memory, "totalBytes"),
+                NullableDouble(memory, "usedBytes"),
+                NullableDouble(memory, "availableBytes"),
+                String(memory, "note")),
+            Disk: new DiskMetrics(
+                Quality(disk),
+                String(disk, "drive"),
+                NullableDouble(disk, "totalBytes"),
+                NullableDouble(disk, "freeBytes"),
+                String(disk, "note")),
+            Gpu: new GpuMetrics(
+                Quality(gpu),
+                String(gpu, "name"),
+                NullableDouble(gpu, "utilizationPercent"),
+                String(gpu, "note")));
+    }
+
+    /// <summary>Reads one card's quality word; a card that is absent reads as not measured.</summary>
+    private static MetricQuality Quality(JsonElement card) => MetricQualityParser.Parse(NullableText(card, "quality"));
+
     /// <summary>Projects <c>strings.get</c> into per-language tables.</summary>
     public static (IReadOnlyList<string> Languages, string Active, IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Tables) Strings(JsonElement data)
     {
@@ -536,6 +579,22 @@ public static class Projections
 
     private static string? Text(JsonElement element, string name) =>
         Field(element, name) is { ValueKind: JsonValueKind.Number } value ? value.ToString() : null;
+
+    private static long Long(JsonElement element, string name)
+    {
+        var value = Field(element, name);
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : 0;
+    }
+
+    /// <summary>
+    /// A measurement, or null when the field is missing, renamed, or explicitly null. A null
+    /// is the "not measured" answer and is kept as null: it must never become 0.
+    /// </summary>
+    private static double? NullableDouble(JsonElement element, string name)
+    {
+        var value = Field(element, name);
+        return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number : null;
+    }
 
     private static IReadOnlyList<string> StringArray(JsonElement element, string name)
     {

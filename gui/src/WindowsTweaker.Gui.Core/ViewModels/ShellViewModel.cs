@@ -50,7 +50,6 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private LanguageOption? _selectedLanguage;
     private bool _busy;
     private bool _reduceMotion;
-    private string _activeRequestId = string.Empty;
     private int _activeMutating;
 
     public ShellViewModel(string repositoryRoot, Action<Action>? dispatch = null)
@@ -134,6 +133,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             {
                 Raise(nameof(CurrentTitle));
                 Raise(nameof(CurrentIsStale));
+                Raise(nameof(FooterStatusText));
             }
         }
     }
@@ -201,11 +201,15 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>True when the last connection attempt failed.</summary>
     public bool IsConnectionFailed => Connection == ConnectionState.Failed;
 
-    /// <summary>Short localized label for the connection state (the header pill).</summary>
+    /// <summary>
+    /// Short localized label for the connection state (the header pill). "Connected" is a
+    /// statement about the session; it is deliberately not the same word the footer uses
+    /// when nothing is running, so a loading workspace cannot look like a ready one.
+    /// </summary>
     public string ConnectionLabel => Connection switch
     {
         ConnectionState.Connecting => Strings["Gui.Starting"],
-        ConnectionState.Ready => Strings["Gui.Ready"],
+        ConnectionState.Ready => Strings["Gui.Connected"],
         ConnectionState.Failed => Strings["Gui.Connection.Failed"],
         _ => Strings["Gui.Connection.Disconnected"],
     };
@@ -353,6 +357,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             if (Set(ref _busy, value))
             {
                 Raise(nameof(CanReconnect));
+                Raise(nameof(FooterStatusText));
             }
         }
     }
@@ -361,7 +366,34 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     public string StatusText
     {
         get => _statusText;
-        set => Set(ref _statusText, value);
+        set
+        {
+            if (Set(ref _statusText, value))
+            {
+                Raise(nameof(FooterStatusText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The footer's single status line. While anything is in flight it names the activity
+    /// ("loading ...", "working ...") instead of reusing the connectivity word, so a loading
+    /// workspace and a ready one never read the same; when nothing is happening it shows the
+    /// last message or the idle label.
+    /// </summary>
+    public string FooterStatusText
+    {
+        get
+        {
+            if (Busy)
+            {
+                return HasMutatingOperation
+                    ? Strings["Gui.Status.Running"]
+                    : Strings.Get("Gui.LoadingWorkspace", CurrentTitle);
+            }
+
+            return string.IsNullOrEmpty(StatusText) ? Strings["Gui.Idle"] : StatusText;
+        }
     }
 
     /// <summary>Where the startup sequence is (drives the window's visible states).</summary>
@@ -418,7 +450,9 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public bool HasMutatingOperation => Volatile.Read(ref _activeMutating) > 0;
 
-    /// <summary>Runs a mutating operation under the shell's in-flight accounting.</summary>
+    /// <summary>
+    /// Runs a mutating operation under the shell's in-flight accounting.
+    /// </summary>
     public async Task<T> RunMutatingAsync<T>(Func<Task<T>> operation)
     {
         Interlocked.Increment(ref _activeMutating);
@@ -432,7 +466,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         {
             Interlocked.Decrement(ref _activeMutating);
             Busy = HasMutatingOperation || AnyWorkspaceBusy();
-            ProgressText = string.Empty;
+            ClearProgressIfIdle();
             Raise(nameof(CanReconnect));
         }
     }
@@ -448,6 +482,25 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         finally
         {
             Busy = HasMutatingOperation || AnyWorkspaceBusy();
+
+            // A read-only operation can emit progress frames too (state.get reports
+            // "refreshing", scan.directory reports the path it is walking). Clearing here,
+            // and only when nothing else is in flight, is what keeps a finished request's
+            // progress line from outliving it while the footer says the app is ready.
+            ClearProgressIfIdle();
+        }
+    }
+
+    /// <summary>
+    /// Clears the transient progress line when no request is in flight. An older request's
+    /// completion must never clear a newer request's progress, so this checks the runner's
+    /// live request id rather than assuming this operation was the last one.
+    /// </summary>
+    private void ClearProgressIfIdle()
+    {
+        if (!Runner.AnyRequestInFlight)
+        {
+            ProgressText = string.Empty;
         }
     }
 
@@ -701,6 +754,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
     private void RaiseConnectionFacts()
     {
+        Raise(nameof(FooterStatusText));
         Raise(nameof(IsConnected));
         Raise(nameof(IsConnecting));
         Raise(nameof(IsDisconnected));
@@ -766,8 +820,19 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Navigates to a workspace, loading it on first visit (or after a reconnect).</summary>
     public async Task NavigateAsync(Workspace workspace)
     {
+        // Navigation is a boundary: the previous workspace's transient progress line and
+        // its status message belong to work the user has left behind and must not follow
+        // them into the next panel (the footer falls back to the idle label).
+        ProgressText = string.Empty;
+        StatusText = string.Empty;
+
         Current = workspace;
         Raise(nameof(CurrentTitle));
+
+        // The overview's hardware sampling runs only while the overview is the visible
+        // workspace, so navigating away stops it instead of leaving a background loop
+        // polling the backend behind another panel.
+        Overview.SetMetricsVisible(workspace == Workspace.Overview);
 
         var target = workspace switch
         {
@@ -891,11 +956,9 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     public async Task<bool> CancelAndCloseAsync()
     {
-        var requestId = Volatile.Read(ref _activeRequestId);
-        if (!string.IsNullOrEmpty(requestId))
-        {
-            await Runner.CancelAsync(requestId).ConfigureAwait(true);
-        }
+        // The runner owns the live request ids; asking it keeps this correct even when
+        // several requests are in flight, which the shell's own single slot never could.
+        await Runner.CancelActiveAsync().ConfigureAwait(true);
 
         // The backend refuses to exit while a task is running, so a short grace is given
         // and the outcome is reported rather than assumed.
@@ -915,11 +978,18 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         await Runner.StopAsync(allowKill: !HasMutatingOperation, reason: "wait and close").ConfigureAwait(true);
     }
 
-    /// <summary>Records the request id of the newest operation (used by cancel).</summary>
-    public void TrackRequest(string requestId) => Volatile.Write(ref _activeRequestId, requestId);
-
     private void OnProgress(object? sender, WindowsTweaker.Gui.Core.Protocol.BridgeProgress progress)
     {
+        // The frame names the request it belongs to. A frame from any other request is
+        // ignored: a request that has already finished, or one the user navigated away
+        // from, must never own the progress line (and an older completion must never clear
+        // a newer request's line either).
+        var active = Runner.ActiveRequestId;
+        if (!Runner.IsRequestInFlight(progress.Id))
+        {
+            return;
+        }
+
         Dispatch(() =>
         {
             var text = progress.Total is > 0 && progress.Done is not null
@@ -962,6 +1032,9 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
+        // Stop the hardware sampling loop first: it polls the backend, so it must not be
+        // running while the session it talks to is being torn down.
+        Overview.SetMetricsVisible(false);
         await Runner.DisposeAsync().ConfigureAwait(false);
     }
 }

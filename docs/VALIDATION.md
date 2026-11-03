@@ -2227,65 +2227,97 @@ Windows (Windows 11 IoT LTSC VM, `192.168.122.123`, Windows PowerShell 5.1):
   occur on an unrelated schedule; the suite now runs in chunks so a restart cannot invalidate
   a run.
 
-## 29. Windows CI failures on commit 3b330f7 (fixed)
+## 29. Windows CI failures on commit 3b330f7 / 556f474 (fixed)
 
-The real Windows CI run (`build-winui.yml`) passed publish + payload validation (41 assets,
-x64) and 54/56 core tests. The two failures were both reproduced on the VM and fixed:
+The real Windows CI run passed publish + payload validation and 54/56 core tests on 3b330f7.
+The stale-connection failure was fixed there (see below). On 556f474 one test still failed;
+its corrected diagnosis is in section 29b.
 
-### Failure 1: `EveryAvailablePowerShellHostRunsTheWholeStartupContract` - "backend exited before handshake"
+### Failure 1 (3b330f7): `EveryAvailablePowerShellHostRunsTheWholeStartupContract` - "backend exited before handshake"
 
-Reproduced from pwsh 7 on the VM with the exact `BridgeSession.StartAsync` launch path
-(`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File wt-bridge.ps1
--ModuleManifest ...`):
+First-round cause: the 5.1 child inherited a `PSModulePath` whose leading entries were the
+PowerShell 7 module directories, so `Import-PowerShellDataFile` was unavailable and
+`Initialize-WtLocalization` failed before the hello frame. The first fix (
+`BridgeSession.ApplyPowerShellModulePath`) normalized that path **only for Core hosts**
+(`if (!host.IsCore) return;`), which is why the very same error came back on 556f474.
+
+### 29b. Failure on 556f474: same test, Desktop host still unnormalized
+
+Reproduced on the VM with the exact CI launch condition (`shell: pwsh` - the test host's
+parent is pwsh 7, so the inherited `PSModulePath` starts with the PowerShell 7 entries):
 
 ```text
-CHILD STDERR:
-bridge: starting protocol 1 for C:\wt\repo\src\WindowsTweaker\WindowsTweaker.psd1
-Read-WtStringTable : The term 'Import-PowerShellDataFile' is not recognized as the name of a cmdlet, function, script
-file, or operable program. ...
-At C:\wt\repo\src\WindowsTweaker\Private\Localization.ps1:227 char:17
+host C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe | 5.1.26100.9444 (Desktop)
+  failed at stage 'start': BridgeException: The backend exited before its handshake.
+bridge: host exe=C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe
+bridge: host version=5.1.26100.9444 edition=Desktop bitness=64
+bridge: host pshome=C:\Windows\System32\WindowsPowerShell\v1.0
+bridge: host psmodulepath=...\Documents\PowerShell\Modules;C:\Program Files\PowerShell\Modules;c:\wt\pwsh7\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+bridge: host psmoduleautoloadingpreference=
+bridge: host import-powershelldatafile=<not found>
+bridge: host utility-modules=7.0.0.0:<pwsh7>\Modules\Microsoft.PowerShell.Utility\...; 3.1.0.0:C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Utility\...
 ```
 
-Host facts captured (`host-diagnostics.txt`): the runner was windows-latest pwsh 7; the 5.1
-child inherited the pwsh parent's `PSModulePath` and `Get-Module Microsoft.PowerShell.Utility
--ListAvailable` resolved to the pwsh 7 copy (portable, `c:\wt\pwsh7\Modules`). Windows
-PowerShell 5.1 resolves commands from the first module copy it finds; the 7.x copy cannot load
-on .NET Framework, so `Microsoft.PowerShell.Utility` - and with it the core cmdlet
-`Import-PowerShellDataFile` - is missing in the child. `Initialize-WtLocalization` runs in
-the bridge before the session loop, so the failure happened before the hello frame: "backend
-exited before handshake".
+The diagnostics above are written by the child itself (`wt-bridge.ps1`, stderr only, before
+the module import). They correct the first-round explanation in one decisive way: the 5.1
+child's own module directory **was** on its path (`...\WindowsPowerShell\v1.0\Modules`, last
+entry) and its own `Microsoft.PowerShell.Utility` (3.1.0.0) **was** discoverable. The
+PowerShell 7 copy (7.0.0.0) simply came **first**, and command discovery takes the first
+match: the child tried the 7.x module, could not load it on .NET Framework, and
+`Import-PowerShellDataFile` was missing. It was shadowing, not absence - and the previous
+gate skipped exactly the host that failed.
 
-Fix: `BridgeSession.ApplyPowerShellModulePath` (launch boundary). The child's
-`PSModulePath` is rebuilt before spawn: the host's own module directory (`<PSHOME>\Modules`,
-derived from the host executable's location) and `Program Files\WindowsPowerShell\Modules`
-lead; the parent's entries follow in order, deduplicated. The engine code, the PSD1 files and
-`Import-PowerShellDataFile` are untouched. Verified: under the same pwsh parent, the child now
-sends the hello frame and answers `strings.get` (tables for en/vi).
+Fix (`BridgeSession.ApplyPowerShellModulePath`, launch boundary, both lineages): the child's
+`PSModulePath` is rebuilt so the child host's own `$PSHOME\Modules` and its lineage's shared
+module directory (`Program Files\WindowsPowerShell\Modules` for Desktop,
+`Program Files\PowerShell\Modules` for Core) lead, followed by the parent's entries
+deduplicated. Nothing in the parent process's environment is modified (only
+`ProcessStartInfo.Environment`), no engine file is changed, and the PSD1 files are still read
+with `Import-PowerShellDataFile` - no `Invoke-Expression`/dot-sourcing fallback.
 
-### Failure 2: `LateAnswerFromAReplacedConnectionIsRejected` - expected StaleConnection, got BackendExited
+Measured effect, same harness, same parent, child diagnostics read from stderr:
 
-The old request (`state.get`) was pending while the old session was cleanly stopped; the old
-process exited before answering, `OnBackendGone` completed the pending request with
-`BackendExited`, and `BridgeRunner.RunAsync` only mapped the *successful* completion to
-`StaleConnection`. The generation check did not cover failure completions.
+| Child | Effective PSModulePath order | `import-powershelldatafile` | Hello + `strings.get` |
+|---|---|---|---|
+| 5.1 without normalization | pwsh dirs first | `<not found>` | fails before handshake |
+| 5.1 with normalization | 5.1 `$PSHOME\Modules` first | `Microsoft.PowerShell.Utility` | OK |
+| pwsh with normalization | pwsh `$PSHOME\Modules` first | resolved | OK |
 
-Fix: deterministic error precedence in `BridgeRunner.RunAsync` - every completion path
-(success, engine error, backend failure, cancellation) that belongs to an old generation is
-reported as `StaleConnection`; a current-session exit still reports `BackendExited`
-(covered by `BackendExitAfterAHandshakeIsDetectedAndDisablesCommands`). The test's timing
-sleep was replaced by a barrier on `Runner.ActiveRequestId` (the request is registered and on
-the pipe before the session is replaced). No mutation replay is touched.
+Test-side changes: the per-host test now labels every stage with the exact executable,
+version, edition and stage name, and `WT_TEST_HOST_PATH` restricts the loop to one host so
+each host can be exercised on its own while triaging (the assertion and sequence are
+identical; unset - the CI case - every discovered host runs). The bridge host writes its
+startup diagnostics and any module-import failure to **stderr only** (the protocol channel is
+untouched) and exits 71 on an import failure, so the client's "exited before its handshake"
+report carries the cause.
 
-Regression evidence (Windows VM, both hosts discoverable - `C:\wt\pwsh7\pwsh.exe` 7.4.7 and
-`powershell.exe` 5.1.26100.9444):
+### Failure 2 (3b330f7): `LateAnswerFromAReplacedConnectionIsRejected` - expected StaleConnection, got BackendExited
 
-* `EveryAvailablePowerShellHostRunsTheWholeStartupContract`: passed (both hosts; per-host.trx).
-* `LateAnswerFromAReplacedConnectionIsRejected`: passed (lifetime.trx).
-* Full Windows `dotnet test`: **56/56 passed** (lifetime.trx 8/8, rest.trx 48/48).
-* Full Linux suite: 56/56; full validation gate: ALL EXECUTED CHECKS PASSED.
-* Artifacts preserved: `artifacts/ci-fix/` (host-diagnostics.txt, per-host.trx, lifetime.trx,
-  rest.trx). The workflow now always uploads `host-diagnostics.txt` and `TestResults/*.trx`
-  even on failure.
+The pending `state.get` was failed by `OnBackendGone` (old process exit) and only the
+*successful* completion path mapped old generations to `StaleConnection`. Fixed by defining
+the precedence for every completion path (success, engine error, backend failure,
+cancellation): an old generation always reports `StaleConnection`, while a current-session
+exit still reports `BackendExited` (asserted by
+`BackendExitAfterAHandshakeIsDetectedAndDisablesCommands`). The test's timing sleep was
+replaced by a barrier on `Runner.ActiveRequestId`. No mutation replay is touched.
+
+Regression evidence (Windows VM, the CI launch condition: parent is pwsh, and both hosts are
+discoverable - `C:\wt\pwsh7\pwsh.exe` 7.4.7 and `powershell.exe` 5.1.26100.9444):
+
+* `EveryAvailablePowerShellHostRunsTheWholeStartupContract`, run independently per host and
+  then with both hosts: passed three times (`per-host-5.1.trx`, `per-host-pwsh.trx`,
+  `per-host-both.trx`).
+* `LateAnswerFromAReplacedConnectionIsRejected`: passed (`lifetime.trx`).
+* Full Windows `dotnet test`: **56/56 passed** (lifetime.trx 8/8, rest.trx 48/48), 0 skipped.
+* Full Linux suite: 56/56. Full validation gate: ALL EXECUTED CHECKS PASSED.
+* Publish + payload validation preserved and re-run on the changed tree:
+  `PUBLISH_EXITCODE=0`, `OK: 41 required assets present, architecture consistent (x64)`,
+  `PAYLOAD_EXITCODE=0`.
+* Analyzer: clean (the bridge's startup diagnostics add no findings).
+* Artifacts preserved: `artifacts/ci-fix/` (host-diagnostics.txt, per-host-5.1.trx,
+  per-host-pwsh.trx, per-host-both.trx, lifetime.trx, rest.trx). The workflow always uploads
+  `host-diagnostics.txt` and `TestResults/*.trx` even on failure; the focused runs were not
+  skipped or weakened to get here.
 
 ### Remaining (still unexecuted)
 
@@ -2325,3 +2357,196 @@ Log/artifact paths: engine logs `<data root>\logs\`, the WinUI startup log
 `frontend-win-x64-build` from `.github/workflows/build-winui.yml`. VM-side logs for this run:
 `C:\wt\logs\bridge-trace-windows-powershell-5.1-20261103-153533.{log,json}` and
 `C:\wt\repo\frontend-build\win-x64\` (published layout).
+
+## 30. The six workspaces reworked against the screenshot baseline
+
+Scope: the WinUI 3 window only (native controls, square corners, Catppuccin Mocha, keyboard
+navigation, English/Vietnamese from the engine tables, the existing PowerShell bridge). The
+engine gained exactly one read-only operation and one Windows provider file; no mutating
+path, no elevation change, no version bump.
+
+### 30.1 Overview - local hardware dashboard
+
+`metrics.snapshot` (new, inline, read-only, 20 s deadline) returns one bounded reading per
+card:
+
+```json
+{"tsMs":0,
+ "cpu":{"quality":"valid|unavailable|unsupported|stale|error","percent":null,"note":""},
+ "memory":{"quality":"...","totalBytes":null,"usedBytes":null,"availableBytes":null,"note":""},
+ "disk":{"quality":"...","drive":"C:\\","totalBytes":null,"freeBytes":null,"note":""},
+ "gpu":{"quality":"...","name":"","utilizationPercent":null,"note":""}}
+```
+
+Providers (`Private/Observability/WindowsMetrics.ps1`) are all local reads: the formatted
+`\Processor Information(_Total)\% Processor Time` counter with `Win32_Processor.LoadPercentage`
+as a fallback, `Win32_OperatingSystem` for physical memory, the system volume through
+`Get-WtSystemVolumeDriveLetter` (the drive Windows is installed on, not a hardcoded `C:`), and
+`Win32_VideoController` for the adapter plus the `GPU Engine(*)\Utilization Percentage`
+counter set. A reading that could not be taken is `null` with a quality and a note - never 0 -
+so "idle" and "unknown" can never be confused. On this QEMU guest Windows exposes the basic
+display adapter and a GPU Engine counter, so the adapter name is shown with a real 0%; on a
+guest without the counter the same code path reports `unavailable` with `E_NO_COUNTER` and the
+interface prints the localized "utilization unavailable" instead of a percentage.
+
+View model (`OverviewViewModel` in `ViewModels/Workspace.cs`): one sampling loop, 1000 ms,
+started only while the Overview workspace is visible *and* the connection is Ready
+(`SetMetricsVisible`, driven by `NavigateAsync`), one request at a time (a semaphore held
+across the sample), bounded to 60 points of CPU trend (one minute at 1 Hz), calling only
+`metrics.snapshot` - never a workspace reload and never a process launch - and stopped on
+navigation, on connection loss and on window close. Values are published through the shell
+dispatcher; the trend and the bars carry no animation at all, which is what reduced motion
+requires (the usage bars are two grid columns split by `PercentToStarLengthConverter`, not a
+`ProgressBar`, whose fill animates by default).
+
+Four responsive cards (CPU with trend, GPU adapter + utilization, RAM used/total GiB with a
+bar, system drive - "Ổ hệ thống" - with used/total and free space), four across at
+`MinWindowWidth=1200` and two by two below it. The catalog and recovery panels stay visible,
+and a positive interrupted count gets a yellow note plus an action that opens History with the
+interrupted filter selected.
+
+### 30.2 Tweaks - aligned values, readable status
+
+The list now has a header grid and a row template with identical columns (name `*`, technical
+id 150, value 150), so a value cannot drift from its header; the id is trimmed with the full
+value in a tooltip and the details pane, and the row keeps the list's own selection/focus
+visuals regardless of status colour.
+
+Value labels come from the engine's stable state tokens, never from display text:
+`Enabled`→"Bật"/teal, `Disabled`→"Tắt"/neutral, `Default`→"Mặc định"/neutral,
+`Unsupported`→"Không hỗ trợ"/subtext `#a6adc8`, `Unknown`→"Chưa rõ"/yellow `#f9e2af`; any other
+token (product names such as `WindowsTerminal`→"Windows Terminal") is looked up in the
+existing `Tui.State.<token>` table and falls back to the token verbatim. The raw state used by
+operations is untouched.
+
+The detail pane separates description, impact, compatibility, privileges and target value. The
+malformed reason is fixed at its source: the engine joins prerequisite failures with `;` and a
+privilege failure carries an empty argument, so a segment that ends at its colon is replaced by
+the plain `Gui.Tweaks.RequiresAdmin` sentence. A recoverable privilege requirement
+(`RequiresElevation`) and an incompatible OS (`OsIncompatible`) are separate facts with
+separate labels. Staging eligibility follows the engine's own rule
+(`ApplyAllowed = Lifecycle -eq 'Available' -and Supported`, re-derived from the projected
+`Lifecycle`/`Supported`) and is re-checked inside the staging command, not only in the button.
+
+### 30.3 Review - one clear next action
+
+The summary and the layout are derived from the real staged count. With nothing staged the
+panel shows one message ("Chưa có thay đổi nào để xem lại.") and one keyboard-reachable action
+("Chọn tinh chỉnh") that opens Tweaks, and the preview area is collapsed instead of empty. With
+items staged, the list and the preview sit side by side and each row shows current → requested.
+Action labels are concise ("Xem trước", "Bỏ mục đã chọn", "Áp dụng"); dry-run, preview, apply
+and cancel semantics are unchanged, and eligibility is asserted for the empty list, no
+selection, an in-flight operation and a disconnected backend.
+
+### 30.4 History - alignment first, colour second
+
+The four columns are "Thời gian | Tinh chỉnh | Trạng thái | Kết quả" with the tweak column
+taking the flexible space. The misalignment in the screenshot was the header grid having no
+`ColumnSpacing` while the rows used 12 px: header and rows now share the same definitions,
+spacing and minimum row height, ids are trimmed with a tooltip, and the full technical id stays
+in the selected-row details. Only the outcome label is coloured (success `#a6e3a1`, failure
+`#f38ba8`, interrupted `#f9e2af`, unchanged neutral), from the engine's stable outcome code; the
+configuration state and the operation outcome remain two independent facts, so a successful
+change to Disabled reads "Tắt" and "Thành công".
+
+### 30.5 Diagnostics - scannable summary and actions
+
+The environment panel is now a compact summary (OS, PowerShell, privilege, engine version,
+backend connection) with the long property dump one click away in "Chi tiết kỹ thuật": a
+collapsed section holding the environment facts and a selectable text box with the exact
+document plus a copy action that reports "Đã sao chép". Actions carry specific names ("Quét thư
+mục", "Làm mới báo cáo"), the primary action of a section is blue (`WtAccentButton` =
+`#89b4fa`), secondary actions are `WtButton` = Surface0 `#313244`, all buttons share a 32 px
+minimum height, and each section keeps its own idle/loading/ready/failed line next to its
+action.
+
+### 30.6 Licensing - the verified Windows state first
+
+The Windows licensing state is the most prominent element: a badge whose text and tone come
+only from the read-only licensing query (activated → green, awaiting verification/unknown →
+yellow, an actual operation error → red), with its own explicit label for a confirmed
+unactivated state. Three facts stay separate: the Windows state, the external tool's readiness,
+and the selected method's advertised duration - choosing a "Permanent" method changes only the
+duration text and never turns the badge green. After the existing activation action completes
+the status becomes "Đang kiểm tra..." and the read-only query re-reads the state; only that
+result can move the badge, so a tool exit code alone never establishes activation. Activation
+and elevation logic is untouched and no real activation was performed.
+
+### 30.7 Cross-workspace: progress ownership
+
+Every progress frame names the request it belongs to, and the runner now keeps the *set* of
+in-flight request ids (`BridgeRunner.IsRequestInFlight` / `AnyRequestInFlight`). The shell
+accepts a progress frame only for a live request, clears the line when the set empties (after
+reads as well as mutations - `RunReadAsync` used to leave the last `state.get` line
+"Đang đọc lại trạng thái..." on screen while the footer said the app was ready), and clears it
+on navigation and on connection change. A frame from a superseded request can no longer win the
+line. The footer now describes the activity, not the connectivity: it shows
+"Đang tải <workspace>..." while work is in flight, the last message when there is one, and
+"Sẵn sàng" when idle, while the header pill says "Đã kết nối" for the session. The shell's dead
+`TrackRequest` field is gone and cancel-and-close asks the runner for the live request.
+
+### 30.8 Checks executed
+
+Linux (`XDG_CACHE_HOME` pinned to spare the host's PowerShell analysis cache, which this
+machine corrupts; see section 31):
+
+* `tools/Invoke-Validation.ps1`: ALL EXECUTED CHECKS PASSED.
+* `dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests`: 62/62 (56 previous + 2 overview
+  sampling + 3 review eligibility + 1 concurrent-requests transport test).
+* `tests/Monitor.Tests.ps1`: 25 tests, including the new overview-snapshot block
+  (shape, quality vocabulary, null-never-zero, platform-correct system volume).
+* `tests/BridgeProtocol.Tests.ps1`: 4/4 (the snapshot op is inline, read-only, ≤20 s).
+* `tests/Loading.Tests.ps1` 17/17 and `tests/GuiWinUi.Tests.ps1` 3/3: every key referenced
+  exists in both merged tables, every defined key is referenced, no typographic quotes, BOM
+  intact, every theme resource resolves.
+
+Windows (Windows 11 IoT LTSC VM; Windows PowerShell 5.1 5.1.26100.9444 and pwsh 7.4.7):
+
+* `dotnet publish` (the release command) with the new XAML: `PUBLISH_EXITCODE=0` - the XAML
+  markup compiler compiled the window - and `tools/Test-WtFrontendPayload.ps1`:
+  `OK: 41 required assets present, architecture consistent (x64)`.
+* The XAML compile caught a real defect locally: `TextBox.IsTextSelectionEnabled` is a WPF
+  property (WMC0011); removed.
+* `metrics.snapshot` under both hosts: CPU `valid` via the formatted counter, memory `valid`,
+  disk `valid` on the real system volume, GPU adapter `Microsoft Basic Display Adapter` with a
+  `valid` utilization on this guest.
+* `dotnet test` on Windows (both hosts): 62/62 once the transport defect below was fixed
+  (lifetime 8/8, the rest 54/54, warm runs on the settled tree).
+
+### 30.8b A transport defect the dashboard exposed
+
+The dashboard's one-second sampling made the client issue two requests at once for the first
+time (a sample while a workspace loads). That exposed a latent defect in
+`BridgeSession.SendAsync`: two overlapping `WriteLineAsync` calls on the one shared stdin
+`StreamWriter` throw on Windows -
+
+```text
+startup: strings.get failed (BackendDown) The request could not be sent to the backend:
+The stream is currently in use by a previous operation on the stream.
+backend: exited (exit code 0)
+```
+
+- and the failure took the whole session down with it, which is why a workspace reload, a
+reconnect and the sampling loop all failed in the same run. The protocol allows several
+requests in flight (that is what the frame bound and the pending limit are for), so writes to
+the child are now serialized behind a semaphore while the requests themselves stay
+concurrent; a failed write still surfaces as a `TransportFailure`/`BackendDown` outcome rather
+than an exception. `ConcurrentRequestsOnOneSessionAllComplete` fires nine mixed requests at one
+session and requires all of them to answer and the session to stay usable. (On Linux the same
+overlap does not throw, so the negative check does not reproduce there; the Windows diagnostic
+above is the evidence.)
+
+### 30.9 Visual checks that still need your VM
+
+Nothing below was observed on screen; the publish, the payload validator and the tests are not
+visual evidence.
+
+* The rendered dashboard: card layout at 4-across and 2-by-2, the CPU trend shape, the bars.
+* History alignment with a long id and the scrollbar visible.
+* The Review empty state and a multi-item staged list.
+* Licensing with a real read-only refresh (activation itself must stay untouched).
+* Keyboard focus visuals, reduced motion, and both languages as rendered.
+
+Reproduction on the VM: publish with the release command, copy `frontend-build/win-x64` to the
+guest, launch `WindowsTweaker.WinUI.exe`, then walk the six workspaces. Logs:
+`%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log`, engine logs under the data root.

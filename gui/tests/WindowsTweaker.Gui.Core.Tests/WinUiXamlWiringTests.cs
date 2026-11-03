@@ -36,6 +36,8 @@ public sealed class WinUiXamlWiringTests
         typeof(InterruptedDisplayRow),
         typeof(ApplyResult),
         typeof(ReviewedChange),
+        typeof(TweakRow),
+        typeof(ReviewChangeRow),
     };
 
     [Fact]
@@ -49,8 +51,9 @@ public sealed class WinUiXamlWiringTests
         foreach (Match match in Regex.Matches(xaml, @"\{Binding\s+([^},]*)"))
         {
             var path = match.Groups[1].Value.Trim();
-            if (path.Length == 0)
+            if (path.Length == 0 || path.StartsWith("Converter=", StringComparison.Ordinal))
             {
+                // {Binding Converter=...} binds the item itself; there is no path to resolve.
                 continue;
             }
 

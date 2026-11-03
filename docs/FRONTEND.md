@@ -140,6 +140,32 @@ milliseconds, outcome code) are recorded under
 `%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log` (see BUILD-WINUI.md) and in the
 Diagnostics workspace.
 
+## The overview dashboard
+
+The Overview workspace carries four local hardware cards (CPU with a one-minute trend, GPU,
+RAM, system drive). They are fed by the read-only `metrics.snapshot` operation, which the
+engine serves as a short inline read of local Windows sources (formatted performance counters
+with CIM fallbacks, `Win32_VideoController` for the adapter, the GPU Engine counter set when
+the machine publishes it). No Prometheus server, Grafana, exporter, agent or network service is
+involved, and no process is started per sample: the window samples through the session it
+already has.
+
+The sampling loop belongs to the view model, not the view: it runs only while the Overview
+workspace is visible *and* connected, samples once per second, never overlaps a sample, keeps
+at most sixty trend points, calls only `metrics.snapshot` (never a workspace reload) and stops
+on navigation, on connection loss and on close. Every reading carries the engine's own quality
+and note, and a value that was not measured is null — the cards print the localized
+"utilization unavailable" instead of drawing a 0%, so "idle" and "unknown" are never confused.
+The cards and their bars are laid out with grid columns and carry no animation at all, which
+is what reduced motion requires; the bar is deliberately not a `ProgressBar`, whose fill
+animates by default.
+
+Because sampling and workspace loads can be in flight together, the client serializes writes to
+the backend's stdin: the protocol allows several requests at once, but one `StreamWriter`
+cannot serve two overlapping writes (on Windows the second one fails with "The stream is
+currently in use by a previous operation on the stream" and takes the session down). Requests
+stay concurrent; only the wire write is serialized.
+
 ## Appearance
 
 The window uses the same Catppuccin Mocha palette as the terminal interface, applied through

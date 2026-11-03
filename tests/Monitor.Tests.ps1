@@ -561,3 +561,41 @@ Describe 'Remote Prometheus data source' {
         }
     }
 }
+
+Describe 'Overview metrics snapshot' {
+
+    It 'shapes one bounded local reading per dashboard card' {
+        InModuleScope WindowsTweaker {
+            $Snapshot = Get-WtMetricOverviewSnapshot
+
+            # One document per card, each with its own quality and note.
+            foreach ($Card in @('cpu', 'memory', 'disk', 'gpu')) {
+                $Snapshot.ContainsKey($Card) | Should -BeTrue -Because "the $Card card must always be present"
+                $Snapshot[$Card].ContainsKey('quality') | Should -BeTrue
+                @('valid', 'unavailable', 'unsupported', 'stale', 'error') | Should -Contain $Snapshot[$Card].quality
+            }
+
+            # A missing measurement is null, never 0: the interface must be able to tell
+            # "idle" from "not measured", which is the whole point of the quality field.
+            if ($Snapshot.gpu.quality -ne 'valid') {
+                $Snapshot.gpu.utilizationPercent | Should -BeNullOrEmpty -Because 'an unmeasured GPU value must not be reported as a number'
+            }
+            if ($Snapshot.cpu.quality -ne 'valid') {
+                $Snapshot.cpu.percent | Should -BeNullOrEmpty
+            }
+            if ($Snapshot.memory.quality -eq 'valid') {
+                $Snapshot.memory.totalBytes | Should -BeGreaterThan 0
+                $Snapshot.memory.usedBytes | Should -BeGreaterOrEqual 0
+                $Snapshot.memory.usedBytes | Should -BeLessOrEqual $Snapshot.memory.totalBytes
+            }
+            if ($Snapshot.disk.quality -eq 'valid') {
+                $Snapshot.disk.totalBytes | Should -BeGreaterThan 0
+                $Snapshot.disk.drive | Should -Not -BeNullOrEmpty
+            }
+
+            # The system volume is the platform's own root, not a hardcoded C:.
+            $ExpectedRoot = if ((Get-WtRuntimeProfile).IsWindows) { '\' } else { '/' }
+            $Snapshot.disk.drive | Should -BeLike "*$ExpectedRoot*"
+        }
+    }
+}

@@ -98,6 +98,14 @@ function Get-WtMonitorFastSnapshot
     if (-not $NowMs) { $NowMs = [int64]([datetime]::UtcNow.ToUniversalTime() - [datetime]::new(1970,1,1,0,0,0,[datetimekind]::Utc)).TotalMilliseconds }
     if (-not $CpuState) { $CpuState = @{ Total = $null; Idle = $null; Wall = 0; Mono = 0 } }
 
+    # Windows reads its own local sources (formatted counters and CIM). The /proc and /sys
+    # code below never runs there, and the Windows providers keep the same metric ids, so
+    # every consumer sees one vocabulary on both platforms.
+    if ((Get-WtRuntimeProfile).IsWindows)
+    {
+        return (Get-WtWindowsFastSnapshot -NowMs $NowMs)
+    }
+
     $Samples = [System.Collections.Generic.List[object]]::new()
 
     # --- CPU ------------------------------------------------------------------
@@ -243,10 +251,8 @@ function Get-WtMonitorSlowSnapshot
     {
         if ($RuntimeProfile.IsWindows)
         {
-            $SystemDrive = [string](Get-WtEnvironment).OSName -replace '.*', ''
-            if (-not $SystemDrive) { $SystemDrive = $env:SystemDrive }
-            if (-not $SystemDrive) { $SystemDrive = 'C:' }
-            $Drive = $SystemDrive.TrimEnd('\') + '\'
+            $SystemDrive = Get-WtSystemVolumeDriveLetter
+            $Drive = $SystemDrive
         }
         else
         {

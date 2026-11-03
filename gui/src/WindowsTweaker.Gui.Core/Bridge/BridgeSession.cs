@@ -68,6 +68,7 @@ public sealed class BridgeSession : IAsyncDisposable
     private readonly Process _process;
     private readonly int _processId;
     private readonly StreamWriter _stdin;
+    private readonly SemaphoreSlim _stdinGate = new(1, 1);
     private readonly Task _stdoutPump;
     private readonly Task _stderrPump;
     private readonly StringBuilder _stderrTail = new();
@@ -424,7 +425,23 @@ public sealed class BridgeSession : IAsyncDisposable
         var line = JsonSerializer.Serialize(payload);
         try
         {
-            await _stdin.WriteLineAsync(line.AsMemory(), cancellationToken).ConfigureAwait(false);
+            // The backend accepts several requests in flight (its own frame bound and
+            // pending limit govern how many), so two callers can reach this line at the
+            // same moment - the overview dashboard samples on its own timer while a
+            // workspace loads. One StreamWriter cannot serve two overlapping async writes:
+            // the second one fails with "The stream is currently in use by a previous
+            // operation on the stream" and takes the session down with it. Writes are
+            // therefore serialized here, which keeps the requests concurrent and the wire
+            // well formed.
+            await _stdinGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _stdin.WriteLineAsync(line.AsMemory(), cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                _stdinGate.Release();
+            }
         }
         catch (Exception exception)
         {
@@ -731,6 +748,7 @@ public sealed class BridgeSession : IAsyncDisposable
         }
 
         _stdin.Dispose();
+        _stdinGate.Dispose();
         _process.Dispose();
         _lifetime.Dispose();
         _stderrLock.Dispose();

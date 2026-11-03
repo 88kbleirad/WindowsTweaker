@@ -1,0 +1,5 @@
+runner: 7.4.7 Core bits=64
+runner PSHOME: C:\wt\pwsh7
+runner PSModulePath: C:\Users\wtssh\Documents\PowerShell\Modules;C:\Program Files\PowerShell\Modules;c:\wt\pwsh7\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -> 5.1.26100.9444|Desktop|64|C:\Windows\System32\WindowsPowerShell\v1.0|Microsoft.PowerShell.Utility
+C:\wt\pwsh7\pwsh.exe -> 7.4.7|Core|64|C:\wt\pwsh7|Microsoft.PowerShell.Utility

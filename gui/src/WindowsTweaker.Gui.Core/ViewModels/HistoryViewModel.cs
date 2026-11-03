@@ -123,7 +123,14 @@ public sealed class HistoryViewModel : WorkspaceViewModel
                 lines.Add($"{Strings["Gui.Column.Time"]}: {row.Time}");
                 lines.Add($"{Strings["Gui.Column.Tweak"]}: {row.TweakId}");
                 lines.Add($"{Strings["Gui.Column.State"]}: {row.State}");
-                lines.Add($"{Strings["Gui.Column.Outcome"]}: {row.Outcome}");
+                lines.Add($"{Strings["Gui.Column.Result"]}: {row.OutcomeText}");
+                if (!string.Equals(row.Outcome, row.OutcomeText, StringComparison.Ordinal))
+                {
+                    // The engine's own wording for the code is kept when it differs from the
+                    // shared result label: the label is a summary, never a replacement.
+                    lines.Add($"{Strings["Gui.Column.Outcome"]}: {row.Outcome}");
+                }
+
                 if (row.Detail.Length > 0)
                 {
                     lines.Add($"{Strings["Gui.Column.Detail"]}: {row.Detail}");
@@ -391,13 +398,50 @@ public sealed class HistoryViewModel : WorkspaceViewModel
         return text.StartsWith("[", StringComparison.Ordinal) ? code : text;
     }
 
-    private HistoryDisplayRow FromHistory(HistoryRow row) => new(
-        FormatTime(row.Timestamp),
-        row.TweakId,
-        LocalizeState(row.State),
-        LocalizeOp(row.Outcome),
-        string.Join("; ", row.Messages.Where(m => !string.IsNullOrEmpty(m))),
-        row);
+    private HistoryDisplayRow FromHistory(HistoryRow row)
+    {
+        var (outcomeText, outcomeTone) = OutcomeOf(row.Outcome);
+        return new HistoryDisplayRow(
+            FormatTime(row.Timestamp),
+            row.TweakId,
+            LocalizeState(row.State),
+            LocalizeOp(row.Outcome),
+            outcomeText,
+            outcomeTone,
+            string.Join("; ", row.Messages.Where(m => !string.IsNullOrEmpty(m))),
+            row);
+    }
+
+    /// <summary>Maps one engine outcome code to the label and tone the result column shows.</summary>
+    /// <remarks>
+    /// The tone comes from the code the engine recorded, never from localized text, so the
+    /// colour of a row is the same in every language. A code this build does not know keeps
+    /// the engine's own label and claims no tone, rather than being folded into one.
+    /// </remarks>
+    private (string Text, string Tone) OutcomeOf(string code)
+    {
+        var (key, tone) = code switch
+        {
+            "succeeded" => ("Gui.Outcome.Success", "success"),
+            "failed" => ("Gui.Outcome.Failure", "failure"),
+
+            // An operation that never finished ('pending'), was abandoned, still needs a
+            // review, or left its journal incomplete: none of these is a clean success.
+            "pending" or "abandoned" or "review-required" or "partial" => ("Gui.Outcome.Interrupted", "interrupted"),
+
+            // Recorded without a change being made.
+            "skipped" or "unsupported" or "unchanged" => ("Gui.Outcome.Unchanged", "muted"),
+            _ => (string.Empty, "muted"),
+        };
+
+        if (key.Length == 0)
+        {
+            return (LocalizeOp(code), tone);
+        }
+
+        var text = Strings[key];
+        return (text.StartsWith("[", StringComparison.Ordinal) ? LocalizeOp(code) : text, tone);
+    }
 
     private OperationDisplayRow FromOperation(OperationRow row) => new(
         FormatTime(row.Timestamp),
@@ -418,7 +462,22 @@ public sealed class HistoryViewModel : WorkspaceViewModel
 }
 
 /// <summary>One history row as the panel renders it (localized, local time).</summary>
-public sealed record HistoryDisplayRow(string Time, string TweakId, string State, string Outcome, string Detail, HistoryRow Source);
+/// <remarks>
+/// The configuration state and the operation outcome are two independent values on a row: a
+/// tweak can be disabled while its last operation succeeded, and neither is derived from the
+/// other. <see cref="OutcomeTone"/> is one of <c>success</c>, <c>failure</c>, <c>interrupted</c>
+/// or <c>muted</c>, computed from the engine's outcome code; <see cref="OutcomeText"/> is that
+/// outcome's shared label while <see cref="Outcome"/> keeps the engine's own wording.
+/// </remarks>
+public sealed record HistoryDisplayRow(
+    string Time,
+    string TweakId,
+    string State,
+    string Outcome,
+    string OutcomeText,
+    string OutcomeTone,
+    string Detail,
+    HistoryRow Source);
 
 /// <summary>One journal operation row as the panel renders it.</summary>
 public sealed record OperationDisplayRow(string Time, string TweakId, string Stage, string Outcome, string Origin, string Detail, OperationRow Source);
@@ -443,6 +502,9 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
     private readonly SectionState _setup = new();
     private RuntimeStatus? _runtime;
     private string _scanPath = string.Empty;
+    private string _technicalDetailsText = string.Empty;
+    private bool _technicalDetailsVisible;
+    private bool _technicalCopied;
     private readonly ObservableCollection<string> _diagnostics = new();
 
     public DiagnosticsViewModel(ShellViewModel shell)
@@ -461,6 +523,10 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
             }
         };
 
+        // The summary, the dump and the action labels are text from the tables: a language
+        // switch re-reads them instead of leaving the previous language on screen.
+        Shell.Strings.LanguageChanged += (_, _) => RaiseLocalizedText();
+
         RebuildEnvironmentFacts();
     }
 
@@ -470,6 +536,76 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         get => _runtime;
         private set => Set(ref _runtime, value);
     }
+
+    // ---- summary ----
+
+    /// <summary>Operating system, build and culture, as one short line.</summary>
+    public string SummaryOs => $"{Strings["Gui.Overview.Os"]}: {Shell.EnvironmentSummary}";
+
+    /// <summary>PowerShell host, required version and language mode, as one short line.</summary>
+    public string SummaryPowerShell => $"{Strings["Gui.Overview.PowerShell"]}: {Shell.RuntimeSummary}";
+
+    /// <summary>Privilege level of the backend session, as one short line.</summary>
+    public string SummaryPrivilege => $"{Strings["Gui.Overview.Privilege"]}: {Shell.PrivilegeLabel}";
+
+    /// <summary>Engine (module) version, as one short line.</summary>
+    public string SummaryEngine =>
+        $"{Strings["Gui.Overview.Engine"]}: {(string.IsNullOrEmpty(Shell.EngineVersion) ? Strings["Gui.Overview.NotLoaded"] : Shell.EngineVersion)}";
+
+    /// <summary>
+    /// The backend connection state, as one short line. It reports the live connection, not
+    /// the last successful one: a disconnected backend must never read as connected.
+    /// </summary>
+    public string SummaryBackend =>
+        $"{Strings["Gui.Header.Backend"]}: {(Shell.IsConnected ? Strings["Gui.Connected"] : Shell.ConnectionLabel)}";
+
+    /// <summary>
+    /// True while the long technical property dump is expanded. The compact summary above
+    /// stays on the surface; the dump is the complete, copyable detail behind this flag.
+    /// </summary>
+    public bool TechnicalDetailsVisible
+    {
+        get => _technicalDetailsVisible;
+        set
+        {
+            if (Set(ref _technicalDetailsVisible, value))
+            {
+                // A copy confirmation belongs to the click that produced it: re-opening the
+                // dump starts from "Copy" again.
+                _technicalCopied = false;
+                Raise(nameof(TechnicalDetailsCopyText));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The complete environment and protocol property dump as one text block. It is a text
+    /// property rather than a rendering of the list so a long journal or log path can be
+    /// selected and copied whole.
+    /// </summary>
+    public string TechnicalDetailsText
+    {
+        get => _technicalDetailsText;
+        private set => Set(ref _technicalDetailsText, value);
+    }
+
+    /// <summary>Label of the copy action: Copy, or Copied immediately after a copy.</summary>
+    public string TechnicalDetailsCopyText => _technicalCopied
+        ? Strings["Gui.Diagnostics.Copied"]
+        : Strings["Gui.Diagnostics.Copy"];
+
+    /// <summary>Records that the view copied <see cref="TechnicalDetailsText"/> to the clipboard.</summary>
+    public void MarkTechnicalDetailsCopied()
+    {
+        _technicalCopied = true;
+        Raise(nameof(TechnicalDetailsCopyText));
+    }
+
+    /// <summary>Label of the directory-scan action.</summary>
+    public string ScanActionText => Strings["Gui.Diagnostics.ScanDirectory"];
+
+    /// <summary>Label of the report (re)generation action.</summary>
+    public string ReportActionText => Strings["Gui.Action.RefreshReport"];
 
     // ---- report ----
 
@@ -894,6 +1030,29 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         Raise(prefix + "Raw");
     }
 
+    /// <summary>
+    /// Re-reads every text this workspace renders from the tables, so a language switch
+    /// reaches the summary, the dump, the section statuses and the action labels.
+    /// </summary>
+    private void RaiseLocalizedText()
+    {
+        RebuildEnvironmentFacts();
+        foreach (var prefix in SectionPrefixes)
+        {
+            RaiseSection(prefix);
+        }
+
+        Raise(nameof(TechnicalDetailsCopyText));
+        Raise(nameof(ScanActionText));
+        Raise(nameof(ReportActionText));
+        Raise(nameof(CountText));
+    }
+
+    private static readonly string[] SectionPrefixes =
+    {
+        "Report", "Scan", "Monitor", "Devices", "Power", "Privacy", "Quarantine", "Setup",
+    };
+
     /// <summary>The localized status line a section's state renders.</summary>
     private string StatusTextFor(SectionState section) => section.State switch
     {
@@ -943,6 +1102,23 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         {
             EnvironmentFacts.Add(fact);
         }
+
+        // The dump is those facts as one copyable block. It is the long detail behind the
+        // compact summary: every property the shell reports, including the store and log
+        // paths, which must stay selectable in full.
+        TechnicalDetailsText = string.Join(Environment.NewLine, facts);
+
+        RaiseSummary();
+    }
+
+    /// <summary>Re-publishes the compact summary lines.</summary>
+    private void RaiseSummary()
+    {
+        Raise(nameof(SummaryOs));
+        Raise(nameof(SummaryPowerShell));
+        Raise(nameof(SummaryPrivilege));
+        Raise(nameof(SummaryEngine));
+        Raise(nameof(SummaryBackend));
     }
 
     /// <summary>Turns a JSON object into up to ~12 "label: value" lines.</summary>
@@ -1039,6 +1215,7 @@ public sealed class LicensingViewModel : WorkspaceViewModel
     private ExternalToolStatus? _toolStatus;
     private string _lastOutcome = string.Empty;
     private string _licensingRaw = string.Empty;
+    private bool _activationFailed;
 
     public LicensingViewModel(ShellViewModel shell)
         : base(shell)
@@ -1057,6 +1234,9 @@ public sealed class LicensingViewModel : WorkspaceViewModel
                 Raise(nameof(CanRequestSlmgr));
             }
         };
+
+        // Every label below is text from the tables: a language switch re-reads them.
+        Shell.Strings.LanguageChanged += (_, _) => RaiseLocalizedText();
     }
 
     /// <summary>Activation methods offered by the pinned external tool.</summary>
@@ -1067,6 +1247,49 @@ public sealed class LicensingViewModel : WorkspaceViewModel
 
     /// <summary>The raw licensing diagnostics document (for the expandable section).</summary>
     public string LicensingRaw => _licensingRaw;
+
+    // ---- three independent facts ----
+    //
+    // The panel keeps three facts apart, and each one comes from exactly one source:
+    //
+    //   Windows licensing state     - the read-only licensing read (the badge below);
+    //   external-tool readiness     - exttool.status (ToolStatus/ToolStatusText);
+    //   advertised duration         - the selected method's own table row (MethodDurationText).
+    //
+    // Nothing merges them: choosing a "Permanent" method changes the advertised duration and
+    // nothing else. Only the licensing read can say Windows is activated.
+
+    /// <summary>Label of the Windows licensing state the badge shows.</summary>
+    public string LicenseStateTitle => Strings["Gui.Licensing.State"];
+
+    /// <summary>
+    /// The Windows licensing state, as the prominent value. It is derived from the licensing
+    /// read alone: an activation attempt's exit code never sets it, and selecting a method
+    /// never suggests a duration Windows has not reported.
+    /// </summary>
+    public string LicenseBadgeText => LicenseVerdict().Text;
+
+    /// <summary>
+    /// The badge's tone: <c>ok</c> only for the activated state Windows reported, <c>error</c>
+    /// only after an activation attempt actually failed, and <c>warn</c> for everything that is
+    /// not confirmed - an unreadable or unverified read, and a confirmed unactivated state.
+    /// </summary>
+    public string LicenseBadgeTone => LicenseVerdict().Tone;
+
+    /// <summary>Label of the external tool's own section (readiness, never licensing).</summary>
+    public string ToolSectionTitle => Strings["Gui.Licensing.ToolSection"];
+
+    /// <summary>Label of the selected method's advertised duration.</summary>
+    public string MethodDurationTitle => Strings["Gui.Licensing.MethodDuration"];
+
+    /// <summary>
+    /// The selected method's advertised duration, in the engine's own words. It is what the
+    /// method claims, not a licence Windows has reported; it is shown beside the method and
+    /// never inside the licensing badge.
+    /// </summary>
+    public string MethodDurationText => _selectedMethod is null
+        ? Strings["Gui.Licensing.NoMethod"]
+        : MethodDurationModel;
 
     /// <summary>Installed edition.</summary>
     public string EditionText
@@ -1084,6 +1307,7 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             if (Set(ref _selectedMethod, value))
             {
                 Raise(nameof(MethodDetail));
+                Raise(nameof(MethodDurationText));
                 Raise(nameof(CanActivate));
             }
         }
@@ -1124,8 +1348,13 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             {
                 $"{_selectedMethod.Id}: {_selectedMethod.Switch}",
                 _selectedMethod.ExtraSwitches.Count > 0 ? string.Join(" ", _selectedMethod.ExtraSwitches) : string.Empty,
-                Strings.Get("Gui.Licensing.Duration", _selectedMethod.DurationModel),
+                Strings.Get("Gui.Licensing.Duration", MethodDurationModel),
             }.Where(line => !string.IsNullOrEmpty(line)));
+
+    /// <summary>The selected method's duration model in the engine's own words (raw when unknown).</summary>
+    private string MethodDurationModel => _selectedMethod is null
+        ? string.Empty
+        : Localize("Act.DurationModel." + _selectedMethod.DurationModel, _selectedMethod.DurationModel);
 
     /// <summary>True when the shell can run a command right now.</summary>
     public bool CanRunCommand => Shell.IsConnected && !Shell.Busy;
@@ -1147,24 +1376,13 @@ public sealed class LicensingViewModel : WorkspaceViewModel
     {
         StatusText = Strings["Gui.Overview.Loading"];
 
-        var ok = await RunAsync(
-            "licensing.diagnostics",
-            element => element.GetRawText(),
-            raw =>
-            {
-                _licensingRaw = raw ?? string.Empty;
-                Raise(nameof(LicensingRaw));
-                Raise(nameof(LicensingStatus));
-            },
-            timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
-
-        if (!ok)
+        if (!await RefreshLicensingAsync().ConfigureAwait(true))
         {
             Loaded = true;
             return;
         }
 
-        ok = await RunAsync(
+        var ok = await RunAsync(
             "exttool.methods",
             Projections.ExternalToolMethods,
             value =>
@@ -1201,6 +1419,144 @@ public sealed class LicensingViewModel : WorkspaceViewModel
         MarkLoaded(Methods.Count);
         StatusText = Strings["Gui.Ready"];
         Loaded = true;
+    }
+
+    /// <summary>
+    /// Re-reads the Windows licensing state with the engine's read-only diagnostics query and
+    /// re-derives the badge from what it says.
+    /// </summary>
+    /// <remarks>
+    /// This is the verification step after an activation attempt, and the same read the panel
+    /// loads with. It is the only thing that can put the badge into the activated state: a
+    /// tool exit code, a method's advertised duration and the external tool's readiness are
+    /// all separate facts and none of them is evidence about the licence.
+    /// </remarks>
+    private async Task<bool> RefreshLicensingAsync()
+    {
+        var ok = await RunAsync(
+            "licensing.diagnostics",
+            element => element.GetRawText(),
+            raw =>
+            {
+                _licensingRaw = raw ?? string.Empty;
+                RaiseLicensing();
+            },
+            timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+
+        if (ok)
+        {
+            // The read settles the section: without this the panel would stay "loading" on a
+            // section that already has its answer.
+            MarkLoaded(Methods.Count);
+            StatusText = Strings["Gui.Ready"];
+        }
+
+        return ok;
+    }
+
+    /// <summary>The licensing read's own verdict on Windows, and the badge it renders as.</summary>
+    /// <remarks>
+    /// The verdict is read from the engine's status code, never from a localized line, and the
+    /// labels fall back to the engine's raw status token rather than to invented text.
+    /// </remarks>
+    private (string Text, string Tone) LicenseVerdict()
+    {
+        var (readable, activated, status) = ReadLicense();
+
+        if (activated)
+        {
+            return (Localize("Gui.Licensing.Activated", status), "ok");
+        }
+
+        if (_activationFailed)
+        {
+            // An actual operation error: the only path to the error tone. It outranks a "not
+            // activated" reading because it is what the user has to act on, and it never
+            // outranks a verified activation, which is evidence the operation did not produce.
+            return (Localize("Gui.Licensing.OperationError", status), "error");
+        }
+
+        return readable
+            ? (Localize("Gui.Licensing.NotActivated", status), "warn")
+            : (Localize("Gui.Licensing.Awaiting", status), "warn");
+    }
+
+    /// <summary>
+    /// Reads what the licensing document says about Windows itself: whether it could be read
+    /// at all, whether it reports the activated state, and the raw status token (used only as
+    /// a fallback label when a table lacks a key).
+    /// </summary>
+    private (bool Readable, bool Activated, string Status) ReadLicense()
+    {
+        if (string.IsNullOrWhiteSpace(_licensingRaw))
+        {
+            return (false, false, string.Empty);
+        }
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(_licensingRaw);
+            var root = document.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                !root.TryGetProperty("Inventory", out var inventory) ||
+                inventory.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                (inventory.TryGetProperty("Unreadable", out var unreadable) && unreadable.ValueKind == System.Text.Json.JsonValueKind.True) ||
+                !inventory.TryGetProperty("Active", out var active) ||
+                active.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                return (false, false, string.Empty);
+            }
+
+            var status = JString(active, "LicenseStatus");
+            var raw = active.TryGetProperty("LicenseStatusRaw", out var code) && code.ValueKind == System.Text.Json.JsonValueKind.Number
+                ? code.GetInt32()
+                : -1;
+
+            // Code 1 is the activation state; the string is checked too because an older
+            // backend may not carry the raw code.
+            return (true, raw == 1 || string.Equals(status, "Licensed", StringComparison.Ordinal), status);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return (false, false, string.Empty);
+        }
+    }
+
+    /// <summary>Re-publishes everything the licensing read derives.</summary>
+    private void RaiseLicensing()
+    {
+        Raise(nameof(LicensingRaw));
+        Raise(nameof(LicensingStatus));
+        RaiseBadge();
+    }
+
+    /// <summary>Re-publishes the badge alone (its verdict also depends on the last attempt).</summary>
+    private void RaiseBadge()
+    {
+        Raise(nameof(LicenseBadgeText));
+        Raise(nameof(LicenseBadgeTone));
+    }
+
+    /// <summary>Re-reads every label this workspace renders from the tables.</summary>
+    private void RaiseLocalizedText()
+    {
+        RaiseLicensing();
+        Raise(nameof(ToolStatusText));
+        Raise(nameof(MethodDetail));
+        Raise(nameof(MethodDurationText));
+        Raise(nameof(LicenseStateTitle));
+        Raise(nameof(ToolSectionTitle));
+        Raise(nameof(MethodDurationTitle));
+    }
+
+    /// <summary>
+    /// Looks a key up in the served tables, falling back to the engine's own token when the
+    /// table does not carry it. The fallback is never invented text: it is what the engine sent.
+    /// </summary>
+    private string Localize(string key, string fallback)
+    {
+        var text = Strings[key];
+        return text.StartsWith("[", StringComparison.Ordinal) && fallback.Length > 0 ? fallback : text;
     }
 
     /// <summary>Renders the active licensing record as localized label/value lines.</summary>
@@ -1364,6 +1720,10 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             return;
         }
 
+        // One attempt, one verdict: the previous attempt's error no longer describes this one.
+        _activationFailed = false;
+        RaiseBadge();
+
         await Shell.RunMutatingAsync(async () =>
         {
             var outcome = await Shell.Runner.RunAsync(
@@ -1376,21 +1736,20 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             if (!outcome.Ok)
             {
                 ErrorText = outcome.Message;
+                _activationFailed = true;
             }
 
             return true;
         }).ConfigureAwait(true);
 
-        await RunAsync(
-            "licensing.diagnostics",
-            element => element.GetRawText(),
-            raw =>
-            {
-                _licensingRaw = raw ?? string.Empty;
-                Raise(nameof(LicensingRaw));
-                Raise(nameof(LicensingStatus));
-            },
-            timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+        // The result of the run is not the licensing state: the read-only diagnostics query
+        // decides, and the badge follows it.
+        StatusText = Strings["Gui.Licensing.Checking"];
+        await RefreshLicensingAsync().ConfigureAwait(true);
+
+        // A verification read that failed leaves the badge on the attempt's own verdict rather
+        // than on the one from before the run.
+        RaiseBadge();
     }
 
     /// <summary>Requests activation with the installed licence (slmgr /ato). Privileged.</summary>
@@ -1401,6 +1760,10 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             return;
         }
 
+        // One attempt, one verdict: the previous attempt's error no longer describes this one.
+        _activationFailed = false;
+        RaiseBadge();
+
         await Shell.RunMutatingAsync(async () =>
         {
             var outcome = await Shell.Runner.RunAsync("slmgr.request", element => element.GetRawText(), timeout: TimeSpan.FromMinutes(10)).ConfigureAwait(true);
@@ -1408,9 +1771,19 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             if (!outcome.Ok)
             {
                 ErrorText = outcome.Code == "RequiresElevation" ? Strings["Gui.Error.RequiresElevation"] : outcome.Message;
+                _activationFailed = true;
             }
 
             return true;
         }).ConfigureAwait(true);
+
+        // The accepted request is not the licensing state: the read-only diagnostics query
+        // decides, and the badge follows it.
+        StatusText = Strings["Gui.Licensing.Checking"];
+        await RefreshLicensingAsync().ConfigureAwait(true);
+
+        // A verification read that failed leaves the badge on the attempt's own verdict rather
+        // than on the one from before the request.
+        RaiseBadge();
     }
 }

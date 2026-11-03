@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Globalization;
 using WindowsTweaker.Gui.Core.Model;
 
 namespace WindowsTweaker.Gui.Core.ViewModels;
@@ -310,6 +312,56 @@ public abstract class WorkspaceViewModel : ObservableObject
 /// <summary>The overview workspace: environment, catalog size, and anything outstanding.</summary>
 public sealed class OverviewViewModel : WorkspaceViewModel
 {
+    /// <summary>One sample per second: fast enough to look live, cheap enough to leave running.</summary>
+    private static readonly TimeSpan MetricsInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// The bridge call's own limit. A sample that cannot answer in fifteen seconds is a
+    /// failure with a reason, not a hang that would hold the loop.
+    /// </summary>
+    private static readonly TimeSpan MetricsTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>One minute of history at one sample per second.</summary>
+    private const int CpuTrendCapacity = 60;
+
+    /// <summary>
+    /// Serializes the loop's bookkeeping. The fields below are only ever swapped here, so
+    /// starting and stopping from the UI cannot race the loop's own exit.
+    /// </summary>
+    private readonly object _metricsGate = new();
+
+    /// <summary>
+    /// Held across one bridge call. Two samples can therefore never overlap, however slow the
+    /// engine is; the loop uses the waiting form so a slow sample delays the next tick instead
+    /// of dropping it.
+    /// </summary>
+    private readonly SemaphoreSlim _metricsSampleGate = new(1, 1);
+
+    private MetricsSnapshot? _metrics;
+    private DateTimeOffset? _metricsUpdatedAt;
+    private CancellationTokenSource? _metricsCancellation;
+
+    /// <summary>
+    /// Bumped on every start and stop. The loop that owns the number it was started with is
+    /// the only one allowed to clear the state on its way out, so a stopped-then-restarted
+    /// loop can neither hide the new one's flags nor clear its cancellation source.
+    /// </summary>
+    private volatile int _metricsGeneration;
+
+    private int _metricsRunning;
+
+    /// <summary>
+    /// Whether the overview is the visible workspace, as the shell reports it. It starts as
+    /// true because the shell's initial workspace is the overview: until the shell reports
+    /// visibility on its first navigation, sampling follows the current workspace and the
+    /// connection, which is exactly the same rule.
+    /// </summary>
+    private bool _metricsVisible = true;
+
+    private LoadState _metricsState = LoadState.Idle;
+    private string _metricsErrorText = string.Empty;
+    private string _metricsErrorDetail = string.Empty;
+
     private int _tweakCount;
     private int _categoryCount;
     private int _interruptedCount;
@@ -329,6 +381,22 @@ public sealed class OverviewViewModel : WorkspaceViewModel
             {
                 RaiseEnvironment();
             }
+            else if (e.PropertyName is nameof(ShellViewModel.Current)
+                or nameof(ShellViewModel.IsConnected))
+            {
+                // Sampling follows the workspace that is on screen and the live connection:
+                // navigating away - or losing the backend - stops it, arriving at a connected
+                // overview starts it. The view may also drive it directly.
+                SyncMetricsSampling();
+            }
+        };
+
+        // The metric text is localized too: a language switch must re-read every label from
+        // the tables, so the values are re-raised rather than re-sampled.
+        Shell.Strings.LanguageChanged += (_, _) =>
+        {
+            RaiseMetrics();
+            Raise(nameof(InterruptedNoteText));
         };
 
         RaiseEnvironment();
@@ -352,8 +420,27 @@ public sealed class OverviewViewModel : WorkspaceViewModel
     public int InterruptedCount
     {
         get => _interruptedCount;
-        private set => Set(ref _interruptedCount, value);
+        private set
+        {
+            if (Set(ref _interruptedCount, value))
+            {
+                Raise(nameof(InterruptedVisible));
+                Raise(nameof(InterruptedNoteText));
+            }
+        }
     }
+
+    /// <summary>
+    /// True when an operation started and never finished: the window shows a warning strip,
+    /// because an unfinished change is a fact the user has to act on, not a statistic.
+    /// </summary>
+    public bool InterruptedVisible => InterruptedCount > 0;
+
+    /// <summary>
+    /// The localized description of the action that takes the user to those operations. It is
+    /// only text: navigating is the shell's decision, so this workspace never navigates.
+    /// </summary>
+    public string InterruptedNoteText => Strings["Gui.Overview.InterruptedAction"];
 
     /// <summary>Changes waiting in the review list.</summary>
     public int ReviewedCount
@@ -403,6 +490,485 @@ public sealed class OverviewViewModel : WorkspaceViewModel
 
     /// <summary>True when the environment snapshot is available.</summary>
     public bool HasEnvironment => Shell.Environment is not null;
+
+    // ---- live metrics ---------------------------------------------------------
+    //
+    // Every value below is computed from the last sample, so a null measurement is rendered as
+    // the localized "not measured" text and never as a zero, and nothing here touches the
+    // workspace's own load state (a metric hiccup must not empty the catalog panel).
+
+    /// <summary>
+    /// The CPU percentages of the last minute, oldest first, one value per second. The instance
+    /// is created once and mutated in place (a chart bound to it sees the appends), and it is
+    /// capped at <see cref="CpuTrendCapacity"/> samples so a window left open all day cannot
+    /// grow it.
+    /// </summary>
+    public ObservableCollection<double> CpuTrend { get; } = new();
+
+    /// <summary>True when the trend holds enough points to draw (two or more).</summary>
+    public bool CpuTrendVisible => CpuTrend.Count >= 2;
+
+    /// <summary>True only while the sampling loop is running for this workspace.</summary>
+    public bool MetricsSampling => Volatile.Read(ref _metricsRunning) == 1;
+
+    /// <summary>True whenever sampling is not running (not started, stopped, or paused).</summary>
+    public bool MetricsPaused => !MetricsSampling;
+
+    /// <summary>The measured CPU percentage, or null when that card was not measured.</summary>
+    public double? CpuPercent => _metrics?.Cpu.Percent;
+
+    /// <summary>How far the CPU number can be trusted (the engine's own word).</summary>
+    public MetricQuality CpuQuality => _metrics?.Cpu.Quality ?? MetricQuality.Unavailable;
+
+    /// <summary>The engine's note for the CPU card (why it is missing, when it is).</summary>
+    public string CpuNote => _metrics?.Cpu.Note ?? string.Empty;
+
+    /// <summary>The CPU value as a whole percentage ("42%"), or the localized "not measured" text.</summary>
+    public string CpuValueText => PercentText(CpuPercent);
+
+    /// <summary>
+    /// The CPU card's detail line: the caption of the drawn trend while there is one, otherwise
+    /// the engine's note (which is where the reason for a missing measurement is written).
+    /// </summary>
+    public string CpuDetailText => CpuTrendVisible ? Strings["Gui.Metrics.Trend"] : CpuNote;
+
+    /// <summary>Total physical memory in bytes, or null when it was not measured.</summary>
+    public double? RamTotalBytes => _metrics?.Memory.TotalBytes;
+
+    /// <summary>Used physical memory in bytes, or null when it was not measured.</summary>
+    public double? RamUsedBytes => _metrics?.Memory.UsedBytes;
+
+    /// <summary>Used memory as "12.3 / 16.0 GiB", or the localized "not measured" text.</summary>
+    public string RamValueText => RamTotalBytes is { } total && RamUsedBytes is { } used
+        ? $"{Gib(used)} / {Gib(total)} GiB"
+        : Strings["Gui.Metrics.Unavailable"];
+
+    /// <summary>Used memory as a whole percentage, or empty when it was not measured.</summary>
+    public string RamPercentText => RamBarVisible
+        ? Strings.Get("Gui.Metrics.Percent", Percent(RamUsedPercent))
+        : string.Empty;
+
+    /// <summary>
+    /// Used memory as a percentage for the bar (0..100). It is 0 only because nothing was
+    /// measured - <see cref="RamBarVisible"/> is what the view must bind, so a missing
+    /// measurement is never drawn as an empty bar.
+    /// </summary>
+    public double RamUsedPercent => RamTotalBytes is { } total && RamUsedBytes is { } used && total > 0
+        ? Math.Clamp(used / total * 100d, 0d, 100d)
+        : 0d;
+
+    /// <summary>True only when both memory numbers were measured.</summary>
+    public bool RamBarVisible => RamTotalBytes is { } total && RamUsedBytes is not null && total > 0;
+
+    /// <summary>How far the memory numbers can be trusted.</summary>
+    public MetricQuality RamQuality => _metrics?.Memory.Quality ?? MetricQuality.Unavailable;
+
+    /// <summary>The engine's note for the memory card.</summary>
+    public string RamNote => _metrics?.Memory.Note ?? string.Empty;
+
+    /// <summary>The system drive's letter as the engine reports it ("C:\"), or empty.</summary>
+    public string DiskDriveText => _metrics?.Disk.Drive ?? string.Empty;
+
+    /// <summary>The system drive's total size in bytes, or null when it was not measured.</summary>
+    public double? DiskTotalBytes => _metrics?.Disk.TotalBytes;
+
+    /// <summary>Free space in bytes, or null when it was not measured.</summary>
+    public double? DiskFreeBytes => _metrics?.Disk.FreeBytes;
+
+    /// <summary>Used space in bytes: the difference of two measurements, or null when either is missing.</summary>
+    public double? DiskUsedBytes => DiskTotalBytes is { } total && DiskFreeBytes is { } free ? Math.Max(0d, total - free) : null;
+
+    /// <summary>Used space as "45.2 / 99.5 GiB", or the localized "not measured" text.</summary>
+    public string DiskValueText => DiskTotalBytes is { } total && DiskUsedBytes is { } used
+        ? $"{Gib(used)} / {Gib(total)} GiB"
+        : Strings["Gui.Metrics.Unavailable"];
+
+    /// <summary>Free space as "Free 45.2 GiB", or empty when it was not measured.</summary>
+    public string DiskFreeText => DiskFreeBytes is { } free
+        ? Strings.Get("Gui.Metrics.Free", $"{Gib(free)} GiB")
+        : string.Empty;
+
+    /// <summary>Used space as a percentage for the bar (0..100); see <see cref="RamUsedPercent"/>.</summary>
+    public double DiskUsedPercent => DiskTotalBytes is { } total && DiskUsedBytes is { } used && total > 0
+        ? Math.Clamp(used / total * 100d, 0d, 100d)
+        : 0d;
+
+    /// <summary>True only when both drive numbers were measured.</summary>
+    public bool DiskBarVisible => DiskTotalBytes is { } total && DiskFreeBytes is not null && total > 0;
+
+    /// <summary>How far the drive numbers can be trusted.</summary>
+    public MetricQuality DiskQuality => _metrics?.Disk.Quality ?? MetricQuality.Unavailable;
+
+    /// <summary>The engine's note for the drive card.</summary>
+    public string DiskNote => _metrics?.Disk.Note ?? string.Empty;
+
+    /// <summary>The adapter the engine reported, or the localized "adapter not reported" text.</summary>
+    public string GpuAdapterText => _metrics?.Gpu.Name is { Length: > 0 } name
+        ? name
+        : Strings["Gui.Metrics.AdapterUnknown"];
+
+    /// <summary>The measured GPU utilization, or null when it was not measured.</summary>
+    public double? GpuUtilizationPercent => _metrics?.Gpu.UtilizationPercent;
+
+    /// <summary>The GPU utilization as a whole percentage, or the localized "not measured" text.</summary>
+    public string GpuUtilizationText => PercentText(GpuUtilizationPercent);
+
+    /// <summary>True only when a utilization was measured (a VM reports the adapter without one).</summary>
+    public bool GpuUtilizationVisible => GpuUtilizationPercent is not null;
+
+    /// <summary>How far the GPU numbers can be trusted.</summary>
+    public MetricQuality GpuQuality => _metrics?.Gpu.Quality ?? MetricQuality.Unavailable;
+
+    /// <summary>The engine's note for the GPU card.</summary>
+    public string GpuNote => _metrics?.Gpu.Note ?? string.Empty;
+
+    /// <summary>Where the metrics section stands: idle, first sample in flight, ready, or failed.</summary>
+    public LoadState MetricsState
+    {
+        get => _metricsState;
+        private set => Set(ref _metricsState, value);
+    }
+
+    /// <summary>
+    /// The last sampling failure, in words (never the raw code). It is cleared by the next
+    /// successful sample, because the cards then show live numbers again.
+    /// </summary>
+    public string MetricsErrorText
+    {
+        get => _metricsErrorText;
+        private set => Set(ref _metricsErrorText, value);
+    }
+
+    /// <summary>The raw code and message behind <see cref="MetricsErrorText"/>, for the expander.</summary>
+    public string MetricsErrorDetail
+    {
+        get => _metricsErrorDetail;
+        private set => Set(ref _metricsErrorDetail, value);
+    }
+
+    /// <summary>
+    /// "Updated 14:03:21" for the newest sample, in local time. Empty until something has been
+    /// measured, so the card never claims a time it does not have.
+    /// </summary>
+    public string MetricsUpdatedText => _metricsUpdatedAt is { } updated
+        ? Strings.Get("Gui.Metrics.LastUpdated", updated.ToLocalTime().ToString("T", CultureInfo.CurrentCulture))
+        : string.Empty;
+
+    /// <summary>
+    /// Told by the shell, on every navigation, whether the overview is the visible workspace.
+    /// Sampling runs only while it is - and only with a ready backend - so navigating away
+    /// stops the loop instead of polling the backend behind another panel.
+    /// </summary>
+    public void SetMetricsVisible(bool visible)
+    {
+        _metricsVisible = visible;
+        if (visible)
+        {
+            StartMetricsSampling();
+        }
+        else
+        {
+            StopMetricsSampling();
+        }
+    }
+
+    /// <summary>
+    /// Starts the sampling loop: one sample per second, only while the overview is on screen and
+    /// the backend is ready. Calling it twice starts one loop, and calling it while the backend
+    /// is not ready starts nothing.
+    /// </summary>
+    public void StartMetricsSampling()
+    {
+        if (!Shell.IsConnected || Shell.Current != Workspace.Overview)
+        {
+            return;
+        }
+
+        CancellationTokenSource cancellation;
+        int generation;
+        lock (_metricsGate)
+        {
+            if (_metricsCancellation is not null)
+            {
+                // Exactly one loop: a second start is the same loop, not another one.
+                return;
+            }
+
+            cancellation = new CancellationTokenSource();
+            _metricsCancellation = cancellation;
+            generation = ++_metricsGeneration;
+        }
+
+        if (Interlocked.Exchange(ref _metricsRunning, 1) == 0)
+        {
+            Raise(nameof(MetricsSampling));
+            Raise(nameof(MetricsPaused));
+        }
+
+        if (_metrics is null && MetricsState == LoadState.Idle)
+        {
+            // Nothing has been measured yet: say so, rather than showing a blank card.
+            MetricsState = LoadState.Loading;
+        }
+
+        _ = RunMetricsLoopAsync(cancellation, generation);
+    }
+
+    /// <summary>
+    /// Stops the loop and cancels the sample in flight. It is safe to call at any time, from any
+    /// state, and it is what the view calls when the overview leaves the screen or the window
+    /// closes; the values already measured stay on screen.
+    /// </summary>
+    public void StopMetricsSampling()
+    {
+        CancellationTokenSource? cancellation;
+        lock (_metricsGate)
+        {
+            cancellation = _metricsCancellation;
+            _metricsCancellation = null;
+            _metricsGeneration++;
+        }
+
+        if (cancellation is not null)
+        {
+            try
+            {
+                cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The loop finished on its own and released the source before this call.
+            }
+        }
+
+        if (Interlocked.Exchange(ref _metricsRunning, 0) == 1)
+        {
+            Raise(nameof(MetricsSampling));
+            Raise(nameof(MetricsPaused));
+        }
+
+        if (_metrics is null && MetricsState == LoadState.Loading)
+        {
+            // Stopped before the first sample arrived: back to "nothing requested" instead of
+            // leaving the cards claiming they are being measured.
+            MetricsState = LoadState.Idle;
+        }
+    }
+
+    /// <summary>Starts or stops sampling to match what is on screen and whether the backend is live.</summary>
+    private void SyncMetricsSampling()
+    {
+        if (_metricsVisible && Shell.IsConnected && Shell.Current == Workspace.Overview)
+        {
+            StartMetricsSampling();
+        }
+        else
+        {
+            StopMetricsSampling();
+        }
+    }
+
+    /// <summary>
+    /// The sampling loop. It exits quietly on cancellation (stopping, navigating away) and when
+    /// the connection is no longer ready (the backend exited); one failed sample is reported on
+    /// the cards and the loop carries on, because a transient failure is not a dead backend.
+    /// </summary>
+    private async Task RunMetricsLoopAsync(CancellationTokenSource cancellation, int generation)
+    {
+        var token = cancellation.Token;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                if (!Shell.IsConnected)
+                {
+                    break;
+                }
+
+                await SampleMetricsAsync(token).ConfigureAwait(false);
+
+                if (token.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                await Task.Delay(MetricsInterval, token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopping is how this loop is meant to end, not a failure.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The shell closed under a running sample; nothing left to report it to.
+        }
+        finally
+        {
+            lock (_metricsGate)
+            {
+                if (_metricsGeneration == generation)
+                {
+                    _metricsCancellation = null;
+                }
+            }
+
+            cancellation.Dispose();
+
+            // Only the loop that is still current may report the stop: a restarted loop owns
+            // the flag by then, and a stale loop must not clear it.
+            if (_metricsGeneration == generation && Interlocked.Exchange(ref _metricsRunning, 0) == 1)
+            {
+                Shell.Dispatch(() =>
+                {
+                    Raise(nameof(MetricsSampling));
+                    Raise(nameof(MetricsPaused));
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// Takes one sample. Nothing else is ever called: this is a read-only snapshot of the local
+    /// machine, not a workspace reload and not a process launch.
+    /// </summary>
+    private async Task SampleMetricsAsync(CancellationToken token)
+    {
+        try
+        {
+            await _metricsSampleGate.WaitAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        try
+        {
+            var outcome = await Shell.Runner.RunAsync(
+                "metrics.snapshot",
+                Projections.MetricsSnapshot,
+                timeout: MetricsTimeout,
+                cancellationToken: token).ConfigureAwait(false);
+
+            if (token.IsCancellationRequested)
+            {
+                // Stopped while the answer was on its way: the reading belongs to a loop that
+                // is gone, so it is dropped instead of being applied.
+                return;
+            }
+
+            if (outcome.Ok && outcome.Value is { } snapshot)
+            {
+                Shell.Dispatch(() => ApplyMetrics(snapshot));
+            }
+            else
+            {
+                var code = outcome.Code;
+                var message = outcome.Message;
+                Shell.Dispatch(() => ApplyMetricsFailure(code, message));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            _metricsSampleGate.Release();
+        }
+    }
+
+    /// <summary>Publishes one successful sample: values, timestamp, the bounded trend, and the labels.</summary>
+    private void ApplyMetrics(MetricsSnapshot snapshot)
+    {
+        _metrics = snapshot;
+        _metricsUpdatedAt = Timestamp(snapshot.TimestampMs);
+        MetricsErrorText = string.Empty;
+        MetricsErrorDetail = string.Empty;
+        MetricsState = LoadState.Ready;
+
+        if (snapshot.Cpu.Percent is { } percent)
+        {
+            // Only a measured value enters the trend: a gap must not be drawn as a zero.
+            CpuTrend.Add(Math.Clamp(percent, 0d, 100d));
+            while (CpuTrend.Count > CpuTrendCapacity)
+            {
+                CpuTrend.RemoveAt(0);
+            }
+        }
+
+        RaiseMetrics();
+    }
+
+    /// <summary>Publishes one failed sample. The cards keep their last values and say what happened.</summary>
+    private void ApplyMetricsFailure(string code, string message)
+    {
+        MetricsErrorDetail = string.IsNullOrWhiteSpace(message) ? code : $"{code}: {message}";
+        MetricsErrorText = Shell.DescribeFailure(code, message);
+        MetricsState = LoadState.Failed;
+    }
+
+    /// <summary>Re-publishes every property this dashboard computes, after a sample or a language switch.</summary>
+    private void RaiseMetrics()
+    {
+        Raise(nameof(CpuPercent));
+        Raise(nameof(CpuQuality));
+        Raise(nameof(CpuNote));
+        Raise(nameof(CpuValueText));
+        Raise(nameof(CpuDetailText));
+        Raise(nameof(CpuTrendVisible));
+        Raise(nameof(RamTotalBytes));
+        Raise(nameof(RamUsedBytes));
+        Raise(nameof(RamValueText));
+        Raise(nameof(RamPercentText));
+        Raise(nameof(RamUsedPercent));
+        Raise(nameof(RamBarVisible));
+        Raise(nameof(RamQuality));
+        Raise(nameof(RamNote));
+        Raise(nameof(DiskDriveText));
+        Raise(nameof(DiskTotalBytes));
+        Raise(nameof(DiskFreeBytes));
+        Raise(nameof(DiskUsedBytes));
+        Raise(nameof(DiskValueText));
+        Raise(nameof(DiskFreeText));
+        Raise(nameof(DiskUsedPercent));
+        Raise(nameof(DiskBarVisible));
+        Raise(nameof(DiskQuality));
+        Raise(nameof(DiskNote));
+        Raise(nameof(GpuAdapterText));
+        Raise(nameof(GpuUtilizationPercent));
+        Raise(nameof(GpuUtilizationText));
+        Raise(nameof(GpuUtilizationVisible));
+        Raise(nameof(GpuQuality));
+        Raise(nameof(GpuNote));
+        Raise(nameof(MetricsUpdatedText));
+        Raise(nameof(MetricsState));
+    }
+
+    /// <summary>A whole percentage ("42%"), or the localized text for "nothing was measured".</summary>
+    private string PercentText(double? percent) => percent is { } value
+        ? Strings.Get("Gui.Metrics.Percent", Percent(value))
+        : Strings["Gui.Metrics.Unavailable"];
+
+    /// <summary>Rounds to a whole percentage, invariantly; the number never carries a culture.</summary>
+    private static string Percent(double value) =>
+        ((int)Math.Round(Math.Clamp(value, 0d, 100d), MidpointRounding.AwayFromZero)).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Bytes as GiB with one decimal, invariantly ("12.3"). The unit is added by the caller.</summary>
+    private static string Gib(double bytes) =>
+        (bytes / 1024d / 1024d / 1024d).ToString("0.0", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The engine's sample clock in local time. A document without a usable stamp is stamped on
+    /// arrival, so the "updated" line is never empty after a successful sample and never shows
+    /// the epoch.
+    /// </summary>
+    private static DateTimeOffset Timestamp(long timestampMs) => timestampMs is > 0 and < 4_102_444_800_000
+        ? DateTimeOffset.FromUnixTimeMilliseconds(timestampMs)
+        : DateTimeOffset.Now;
 
     /// <inheritdoc />
     protected override async Task LoadAsync()
