@@ -43,5 +43,22 @@ public static class ProtocolConstants
         public const string InternalError = "InternalError";
         public const string PayloadTooLarge = "PayloadTooLarge";
         public const string FrameFailure = "FrameFailure";
+
+        // ---- client-side codes: the session, not the engine, is the reason ----
+
+        /// <summary>No backend session is running (never started, stopped, or the process ended).</summary>
+        public const string BackendDown = "BackendDown";
+
+        /// <summary>The backend process ended while the request was in flight.</summary>
+        public const string BackendExited = "BackendExited";
+
+        /// <summary>The answer belonged to a connection that has since been replaced.</summary>
+        public const string StaleConnection = "StaleConnection";
+
+        /// <summary>The request could not be sent at all.</summary>
+        public const string TransportFailure = "TransportFailure";
+
+        /// <summary>The request was cancelled by the user.</summary>
+        public const string Cancelled = "Cancelled";
     }
 }

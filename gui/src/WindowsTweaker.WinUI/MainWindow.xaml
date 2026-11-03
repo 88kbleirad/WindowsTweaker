@@ -6,31 +6,16 @@
     <Grid x:Name="RootGrid" Background="{StaticResource WtBase}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Shown only when the backend cannot start (engine missing, no PowerShell host,
-             handshake failure). Keeps the window visible and explains the state instead of
-             silently closing. -->
-        <StackPanel x:Name="StartupFailurePanel" Grid.Row="1" Visibility="Collapsed"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12"
-                    MaxWidth="560" Margin="24">
-            <TextBlock Style="{StaticResource WtPanelTitle}" FontSize="18"
-                       Text="{Binding Strings[Gui.BackendDown]}" TextAlignment="Center"/>
-            <TextBlock x:Name="StartupFailureDetail" Style="{StaticResource WtTerminalText}"
-                       TextWrapping="Wrap" TextAlignment="Center"
-                       Text="{Binding StatusText}"/>
-            <Button x:Name="RetryBackendButton" Style="{StaticResource WtButton}"
-                    Click="RetryBackend_Click" HorizontalAlignment="Center">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
-                    <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
-                </StackPanel>
-            </Button>
-        </StackPanel>
-
-        <!-- Header: environment + backend + language + reduced motion. -->
+        <!--
+            Header: one compact status area. The connection state is the only session fact
+            shown here; environment, protocol and runtime details live in Diagnostics, and
+            the privilege is a single label rather than a repeated environment sentence.
+        -->
         <Grid Grid.Row="0" Background="{StaticResource WtMantle}" Padding="12,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -38,35 +23,87 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <TextBlock Text="WindowsTweaker" Style="{StaticResource WtPanelTitle}" Margin="0"/>
-                <TextBlock x:Name="EnvironmentText" Style="{StaticResource WtMutedText}" VerticalAlignment="Center"/>
-                <Border x:Name="BackendBadge" Style="{StaticResource WtBadge}" VerticalAlignment="Center">
-                    <TextBlock x:Name="BackendText" Style="{StaticResource WtTerminalText}" FontSize="12"/>
+                <Border x:Name="ConnectionPill" Style="{StaticResource WtStatusPill}" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Border x:Name="ConnectionDot" Width="8" Height="8" CornerRadius="4"
+                                Background="{StaticResource WtSurface2}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="ConnectionText" Style="{StaticResource WtTerminalText}" FontSize="12"
+                                   Text="{Binding ConnectionLabel}" VerticalAlignment="Center"/>
+                    </StackPanel>
                 </Border>
-                <Border x:Name="ElevationBadge" Style="{StaticResource WtBadgeWarn}" VerticalAlignment="Center" Visibility="Collapsed">
-                    <TextBlock x:Name="ElevationText" Style="{StaticResource WtTerminalText}" FontSize="12"/>
+                <Border x:Name="PrivilegePill" Style="{StaticResource WtStatusPill}" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource WtMutedText}" FontSize="12"
+                               Text="{Binding PrivilegeLabel}" VerticalAlignment="Center"/>
                 </Border>
             </StackPanel>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <TextBlock Text="{Binding Strings[Gui.Header.Language]}" Style="{StaticResource WtMutedText}" VerticalAlignment="Center"/>
-                <ComboBox x:Name="LanguageCombo" Style="{StaticResource WtComboBox}" MinWidth="90"
-                          ItemsSource="{Binding Strings.Languages}"/>
+                <ComboBox x:Name="LanguageCombo" Style="{StaticResource WtComboBox}" MinWidth="140"
+                          ItemsSource="{Binding AvailableLanguages}"
+                          SelectedItem="{Binding SelectedLanguage, Mode=TwoWay}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding DisplayName}"/>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
                 <CheckBox x:Name="ReduceMotionBox" Style="{StaticResource WtCheckBox}"
                           Content="{Binding Strings[Gui.Header.ReducedMotion]}"/>
                 <Button x:Name="ElevateButton" Style="{StaticResource WtButton}"
                         Content="{Binding Strings[Gui.Header.Elevate]}"
+                        IsEnabled="{Binding CanReconnect}"
                         ToolTipService.ToolTip="{Binding Strings[Gui.Header.ElevateHint]}"
                         AutomationProperties.Name="{Binding Strings[Gui.Header.ElevateHint]}"
                         Click="Elevate_Click" Visibility="Collapsed"/>
             </StackPanel>
         </Grid>
 
-        <!-- Navigation + workspace. -->
-        <Grid x:Name="WorkspaceHost" Grid.Row="1">
+        <!--
+            Recovery strip: shown whenever the connection is not ready - including after a
+            session that was lost long after startup, which the previous build could not
+            report at all. The window keeps showing what it has and says what happened.
+        -->
+        <Grid x:Name="RecoveryBanner" Grid.Row="1" Background="{StaticResource WtSurface0}"
+              Padding="12,8" Visibility="{Binding RecoveryVisible, Converter={StaticResource WtBoolToVisible}}">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Spacing="4">
+                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                           Text="{Binding RecoveryMessage}"/>
+                <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                           Visibility="{Binding HasStaleData, Converter={StaticResource WtBoolToVisible}}"
+                           Text="{Binding Strings[Gui.Data.Stale]}"/>
+                <StackPanel x:Name="ConnectionDetailPanel" Spacing="4" Visibility="Collapsed">
+                    <TextBox x:Name="ConnectionDetailBox" Style="{StaticResource WtTextBox}"
+                             IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="150"
+                             Text="{Binding ConnectionDetail, Mode=OneWay}"
+                             AutomationProperties.Name="{Binding Strings[Gui.Diagnostics.Raw]}"/>
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button x:Name="ConnectionDetailButton" Style="{StaticResource WtButton}"
+                        Content="{Binding Strings[Gui.Diagnostics.Raw]}" Click="ConnectionDetail_Click"/>
+                <Button x:Name="RetryBackendButton" Style="{StaticResource WtButton}"
+                        IsEnabled="{Binding CanReconnect}" Click="RetryBackend_Click">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
+                        <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- Navigation + workspace. -->
+        <Grid x:Name="WorkspaceHost" Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="210"/>
                 <ColumnDefinition Width="1"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
@@ -76,23 +113,53 @@
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                        <Setter Property="Padding" Value="12,8"/>
+                        <Setter Property="Padding" Value="10,6"/>
                         <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace"/>
                         <Setter Property="FontSize" Value="14"/>
                     </Style>
                 </ListView.ItemContainerStyle>
-                <ListViewItem Content="{Binding Strings[Gui.Nav.Overview]}"
-                              AutomationProperties.Name="{Binding Strings[Gui.Nav.Overview]}"/>
-                <ListViewItem Content="{Binding Strings[Gui.Nav.Tweaks]}"
-                              AutomationProperties.Name="{Binding Strings[Gui.Nav.Tweaks]}"/>
-                <ListViewItem Content="{Binding Strings[Gui.Nav.Review]}"
-                              AutomationProperties.Name="{Binding Strings[Gui.Nav.Review]}"/>
-                <ListViewItem Content="{Binding Strings[Gui.Nav.History]}"
-                              AutomationProperties.Name="{Binding Strings[Gui.Nav.History]}"/>
-                <ListViewItem Content="{Binding Strings[Gui.Nav.Diagnostics]}"
-                              AutomationProperties.Name="{Binding Strings[Gui.Nav.Diagnostics]}"/>
-                <ListViewItem Content="{Binding Strings[Gui.Nav.Licensing]}"
-                              AutomationProperties.Name="{Binding Strings[Gui.Nav.Licensing]}"/>
+                <ListViewItem AutomationProperties.Name="{Binding Strings[Gui.Nav.Overview]}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE80F;" FontSize="14"
+                                  Foreground="{StaticResource WtSubtext}"/>
+                        <TextBlock Text="{Binding Strings[Gui.Nav.Overview]}"/>
+                    </StackPanel>
+                </ListViewItem>
+                <ListViewItem AutomationProperties.Name="{Binding Strings[Gui.Nav.Tweaks]}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE9F5;" FontSize="14"
+                                  Foreground="{StaticResource WtSubtext}"/>
+                        <TextBlock Text="{Binding Strings[Gui.Nav.Tweaks]}"/>
+                    </StackPanel>
+                </ListViewItem>
+                <ListViewItem AutomationProperties.Name="{Binding Strings[Gui.Nav.Review]}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE8FB;" FontSize="14"
+                                  Foreground="{StaticResource WtSubtext}"/>
+                        <TextBlock Text="{Binding Strings[Gui.Nav.Review]}"/>
+                    </StackPanel>
+                </ListViewItem>
+                <ListViewItem AutomationProperties.Name="{Binding Strings[Gui.Nav.History]}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE81C;" FontSize="14"
+                                  Foreground="{StaticResource WtSubtext}"/>
+                        <TextBlock Text="{Binding Strings[Gui.Nav.History]}"/>
+                    </StackPanel>
+                </ListViewItem>
+                <ListViewItem AutomationProperties.Name="{Binding Strings[Gui.Nav.Diagnostics]}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE9D9;" FontSize="14"
+                                  Foreground="{StaticResource WtSubtext}"/>
+                        <TextBlock Text="{Binding Strings[Gui.Nav.Diagnostics]}"/>
+                    </StackPanel>
+                </ListViewItem>
+                <ListViewItem AutomationProperties.Name="{Binding Strings[Gui.Nav.Licensing]}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE8D7;" FontSize="14"
+                                  Foreground="{StaticResource WtSubtext}"/>
+                        <TextBlock Text="{Binding Strings[Gui.Nav.Licensing]}"/>
+                    </StackPanel>
+                </ListViewItem>
             </ListView>
 
             <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>
@@ -111,9 +178,19 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="WorkspaceTitle" Style="{StaticResource WtPanelTitle}" FontSize="16"/>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Style="{StaticResource WtPanelTitle}" FontSize="16"
+                                   Margin="0,0,0,6" Text="{Binding CurrentTitle}"/>
+                        <Border Style="{StaticResource WtBadgeWarn}" VerticalAlignment="Center"
+                                Margin="0,0,0,6"
+                                Visibility="{Binding CurrentIsStale, Converter={StaticResource WtBoolToVisible}}">
+                            <TextBlock Style="{StaticResource WtMutedText}" FontSize="11"
+                                       Text="{Binding Strings[Gui.Data.Stale]}"/>
+                        </Border>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="0,0,0,6">
                         <Button x:Name="RefreshButton" Style="{StaticResource WtButton}" Click="RefreshButton_Click"
+                                IsEnabled="{Binding IsConnected}"
                                 ToolTipService.ToolTip="{Binding Strings[Gui.Action.Refresh]}">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
@@ -121,7 +198,7 @@
                             </StackPanel>
                         </Button>
                         <Button x:Name="CancelButton" Style="{StaticResource WtButton}" Click="CancelButton_Click"
-                                Visibility="Collapsed"
+                                Visibility="{Binding Busy, Converter={StaticResource WtBoolToVisible}}"
                                 ToolTipService.ToolTip="{Binding Strings[Gui.Action.Cancel]}">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE711;" FontSize="13"/>
@@ -151,7 +228,6 @@
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
                                     <TextBlock Grid.Row="0" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Overview.Os]}"/>
                                     <TextBlock Grid.Row="0" Grid.Column="1" Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Overview.OsText}"/>
@@ -161,8 +237,6 @@
                                     <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding Overview.PrivilegeText}"/>
                                     <TextBlock Grid.Row="3" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Overview.Engine]}"/>
                                     <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding Overview.EngineText}"/>
-                                    <TextBlock Grid.Row="4" Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Header.Backend]}"/>
-                                    <TextBlock Grid.Row="4" Grid.Column="1" Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding BackendSummary}"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
@@ -174,14 +248,12 @@
                                 <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
                                            Text="{Binding Strings[Gui.Overview.Loading]}"
                                            Visibility="{Binding Overview.IsLoading, Converter={StaticResource WtBoolToVisible}}"/>
-                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
-                                           Text="{Binding Strings[Gui.Overview.Empty]}"
-                                           Visibility="{Binding Overview.IsEmpty, Converter={StaticResource WtBoolToVisible}}"/>
                                 <StackPanel Margin="10,0,10,10" Spacing="6"
                                             Visibility="{Binding Overview.IsFailed, Converter={StaticResource WtBoolToVisible}}">
                                     <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
                                                Foreground="{StaticResource WtRed}" Text="{Binding Overview.ErrorText}"/>
                                     <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                            IsEnabled="{Binding IsConnected}"
                                             Click="RetryWorkspace_Click" Tag="overview">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
                                             <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
@@ -196,58 +268,81 @@
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Overview.Pending]}"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,10" Text="{Binding Review.Changes.Count, Mode=OneWay}"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,10"
+                                           Text="{Binding Review.Changes.Count, Mode=OneWay}"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Overview.Interrupted]}"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,10" Text="{Binding Overview.InterruptedCount, Mode=OneWay}"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,10"
+                                           Text="{Binding Overview.InterruptedCount, Mode=OneWay}"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
                 </Grid>
 
-                <!-- Tweaks. -->
+                <!--
+                    Tweaks: three labelled panes - filters and categories, the tweak list,
+                    and the details of the selected row.
+                -->
                 <Grid x:Name="TweaksPanel" Grid.Row="1" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="320"/>
+                        <ColumnDefinition Width="300"/>
                         <ColumnDefinition Width="1"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0" Spacing="8" Margin="0,0,12,0">
-                        <TextBox x:Name="SearchBox" Style="{StaticResource WtTextBox}"
-                                 PlaceholderText="{Binding Strings[Gui.Search]}"
-                                 AutomationProperties.Name="{Binding Strings[Gui.Search]}"
-                                 Text="{Binding Tweaks.Search, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                        <ComboBox x:Name="CategoryCombo" Style="{StaticResource WtComboBox}"
-                                  ItemsSource="{Binding Tweaks.Categories}"
-                                  SelectedItem="{Binding Tweaks.Category, Mode=TwoWay}"/>
-                        <CheckBox x:Name="OnlySupportedBox" Style="{StaticResource WtCheckBox}"
-                                  Content="{Binding Strings[Gui.Tweaks.OnlySupported]}"
-                                  IsChecked="{Binding Tweaks.OnlySupported, Mode=TwoWay}"/>
-                        <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
-                                   Text="{Binding Tweaks.RowsSummary}"/>
-                        <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
-                                   Text="{Binding Strings[Gui.Tweaks.Loading]}"
-                                   Visibility="{Binding Tweaks.IsLoading, Converter={StaticResource WtBoolToVisible}}"/>
-                        <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
-                                   Text="{Binding Tweaks.EmptyMessage}"
-                                   Visibility="{Binding Tweaks.EmptySearchVisible, Converter={StaticResource WtBoolToVisible}}"/>
-                        <StackPanel Spacing="6"
-                                    Visibility="{Binding Tweaks.IsFailed, Converter={StaticResource WtBoolToVisible}}">
+                    <Grid Grid.Column="0" Margin="0,0,12,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Style="{StaticResource WtSectionTitle}"
+                                   Text="{Binding Strings[Gui.Column.Category]}"/>
+                        <StackPanel Grid.Row="1" Spacing="8">
+                            <TextBox x:Name="SearchBox" Style="{StaticResource WtTextBox}"
+                                     PlaceholderText="{Binding Strings[Gui.Search]}"
+                                     AutomationProperties.Name="{Binding Strings[Gui.Search]}"
+                                     Text="{Binding Tweaks.Search, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                            <ComboBox x:Name="CategoryCombo" Style="{StaticResource WtComboBox}"
+                                      AutomationProperties.Name="{Binding Strings[Gui.Column.Category]}"
+                                      ItemsSource="{Binding Tweaks.CategoryOptions}"
+                                      SelectedValue="{Binding Tweaks.Category, Mode=TwoWay}"
+                                      SelectedValuePath="Code"
+                                      DisplayMemberPath="Label"/>
+                            <CheckBox x:Name="OnlySupportedBox" Style="{StaticResource WtCheckBox}"
+                                      Content="{Binding Strings[Gui.Tweaks.OnlySupported]}"
+                                      IsChecked="{Binding Tweaks.OnlySupported, Mode=TwoWay}"/>
                             <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
-                                       Foreground="{StaticResource WtRed}" Text="{Binding Tweaks.ErrorText}"/>
-                            <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
-                                    Click="RetryWorkspace_Click" Tag="tweaks">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
-                                    <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
+                                       Text="{Binding Tweaks.RowsSummary}"/>
+                            <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                       Text="{Binding Strings[Gui.Tweaks.Loading]}"
+                                       Visibility="{Binding Tweaks.IsLoading, Converter={StaticResource WtBoolToVisible}}"/>
+                            <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                       Text="{Binding Tweaks.EmptyMessage}"
+                                       Visibility="{Binding Tweaks.ShowFilteredEmpty, Converter={StaticResource WtBoolToVisible}}"/>
+                            <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                       Text="{Binding Strings[Gui.Overview.Empty]}"
+                                       Visibility="{Binding Tweaks.ShowCatalogEmpty, Converter={StaticResource WtBoolToVisible}}"/>
+                            <StackPanel Spacing="6"
+                                        Visibility="{Binding Tweaks.IsFailed, Converter={StaticResource WtBoolToVisible}}">
+                                <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                           Foreground="{StaticResource WtRed}" Text="{Binding Tweaks.ErrorText}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Click="RetryWorkspace_Click" Tag="tweaks">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon FontFamily="{StaticResource WtIconFont}" Glyph="&#xE72C;" FontSize="13"/>
+                                        <TextBlock Text="{Binding Strings[Gui.Action.Retry]}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <TextBox Style="{StaticResource WtTextBox}" IsReadOnly="True" TextWrapping="Wrap"
+                                         AcceptsReturn="True" MaxHeight="120"
+                                         Text="{Binding Tweaks.ErrorDetail, Mode=OneWay}"/>
+                            </StackPanel>
                         </StackPanel>
-                    </StackPanel>
+                    </Grid>
 
                     <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>
 
@@ -258,65 +353,17 @@
                             <ColumnDefinition Width="360"/>
                         </Grid.ColumnDefinitions>
 
-                        <ListView x:Name="TweakList" Grid.Column="0" Background="{StaticResource WtMantle}"
-                                  SelectionMode="Single"
-                                  ItemsSource="{Binding Tweaks.States}"
-                                  SelectedItem="{Binding Tweaks.Selected, Mode=TwoWay}">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="8,6" ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Style="{StaticResource WtTerminalText}" Text="{Binding Id}"/>
-                                        <TextBlock Grid.Column="1" Style="{StaticResource WtMutedText}" Text="{Binding State}"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-
-                        <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>
-
-                        <ScrollViewer Grid.Column="2" Background="{StaticResource WtMantle}">
-                            <StackPanel Padding="12" Spacing="10">
-                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Tweaks.DetailsTitle}"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Tweaks.DetailsBody}"/>
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Strings[Gui.Column.Target]}" VerticalAlignment="Center"/>
-                                    <ComboBox Style="{StaticResource WtComboBox}" MinWidth="140"
-                                              ItemsSource="{Binding Tweaks.Selected.StateNames, Mode=OneWay}"
-                                              SelectedItem="{Binding Tweaks.TargetState, Mode=TwoWay}"/>
-                                </StackPanel>
-                                <Button Style="{StaticResource WtAccentButton}"
-                                        Content="{Binding Strings[Gui.Action.AddPending]}"
-                                        IsEnabled="{Binding Tweaks.CanAdd}"
-                                        Click="AddPending_Click"/>
-                            </StackPanel>
-                        </ScrollViewer>
-                    </Grid>
-                </Grid>
-
-                <!-- Review. -->
-                <Grid x:Name="ReviewPanel" Grid.Row="1" Visibility="Collapsed">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-                    <Grid Grid.Row="0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <Grid Grid.Row="0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="1"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-
-                            <ListView x:Name="ReviewList" Grid.Column="0" Background="{StaticResource WtMantle}"
-                                      SelectionMode="Single" ItemsSource="{Binding Review.Changes}">
+                        <Grid Grid.Column="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Style="{StaticResource WtSectionTitle}"
+                                       Text="{Binding Strings[Gui.Nav.Tweaks]}"/>
+                            <ListView x:Name="TweakList" Grid.Row="1" Background="{StaticResource WtMantle}"
+                                      SelectionMode="Single"
+                                      ItemsSource="{Binding Tweaks.States}"
+                                      SelectedItem="{Binding Tweaks.Selected, Mode=TwoWay}">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
                                         <Grid Padding="8,6" ColumnSpacing="8">
@@ -330,16 +377,112 @@
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
                             </ListView>
+                        </Grid>
+
+                        <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>
+
+                        <Grid Grid.Column="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Style="{StaticResource WtSectionTitle}"
+                                       Text="{Binding Strings[Gui.Details]}"/>
+                            <ScrollViewer Grid.Row="1" Background="{StaticResource WtMantle}">
+                                <StackPanel Padding="12" Spacing="10">
+                                    <TextBlock Style="{StaticResource WtPanelTitle}"
+                                               Text="{Binding Tweaks.DetailsTitle}"/>
+                                    <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                               Text="{Binding Tweaks.DetailsBody}"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Style="{StaticResource WtMutedText}" VerticalAlignment="Center"
+                                                   Text="{Binding Strings[Gui.Column.Target]}"/>
+                                        <ComboBox Style="{StaticResource WtComboBox}" MinWidth="140"
+                                                  ItemsSource="{Binding Tweaks.Selected.StateNames, Mode=OneWay}"
+                                                  SelectedItem="{Binding Tweaks.TargetState, Mode=TwoWay}"/>
+                                    </StackPanel>
+                                    <Button Style="{StaticResource WtAccentButton}"
+                                            Content="{Binding Strings[Gui.Action.AddPending]}"
+                                            IsEnabled="{Binding Tweaks.CanAdd}"
+                                            Click="AddPending_Click"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </Grid>
+
+                <!-- Review: staging area for changes that have not been applied. -->
+                <Grid x:Name="ReviewPanel" Grid.Row="1" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                               Margin="0,0,0,8" Text="{Binding Strings[Gui.Review.Staged]}"/>
+
+                    <Grid Grid.Row="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="1"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Grid Grid.Column="0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Style="{StaticResource WtSectionTitle}"
+                                           Text="{Binding Strings[Gui.Review.Title]}"/>
+                                <TextBlock Grid.Row="1" Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                                           Margin="0,0,0,6" Text="{Binding Strings[Gui.Review.Empty]}"
+                                           Visibility="{Binding Review.HasChanges, Converter={StaticResource WtBoolToCollapsed}}"/>
+                                <ListView x:Name="ReviewList" Grid.Row="2" Background="{StaticResource WtMantle}"
+                                          SelectionMode="Single" ItemsSource="{Binding Review.Changes}"
+                                          SelectedItem="{Binding Review.SelectedChange, Mode=TwoWay}">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Padding="8,6" ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Style="{StaticResource WtTerminalText}" Text="{Binding Id}"/>
+                                                <TextBlock Grid.Column="1" Style="{StaticResource WtMutedText}" Text="{Binding State}"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+                            </Grid>
 
                             <Border Grid.Column="1" Background="{StaticResource WtSurface1}"/>
 
-                            <ScrollViewer Grid.Column="2" Background="{StaticResource WtMantle}">
-                                <StackPanel Padding="12" Spacing="10">
-                                    <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Review.Title]}"/>
-                                    <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Review.PreviewText}"/>
-                                    <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Action.Preview]}" Click="Preview_Click"/>
-                                </StackPanel>
-                            </ScrollViewer>
+                            <Grid Grid.Column="2">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+                                <TextBlock Grid.Row="0" Style="{StaticResource WtSectionTitle}"
+                                           Text="{Binding Strings[Gui.Action.Preview]}"/>
+                                <ScrollViewer Grid.Row="1" Background="{StaticResource WtMantle}">
+                                    <StackPanel Padding="12" Spacing="10">
+                                        <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                                   Text="{Binding Review.PreviewText}"/>
+                                        <Button Style="{StaticResource WtButton}"
+                                                Content="{Binding Strings[Gui.Action.Preview]}"
+                                                IsEnabled="{Binding Review.CanPreview}"
+                                                Click="Preview_Click"/>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
                         </Grid>
 
                         <!-- Result table: the engine's own verdicts, one row per applied
@@ -376,7 +519,7 @@
                         </Grid>
                     </Grid>
 
-                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                    <Grid Grid.Row="2" Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
@@ -386,11 +529,14 @@
                         <CheckBox Grid.Column="0" Style="{StaticResource WtCheckBox}"
                                   Content="{Binding Strings[Gui.DryRun]}" IsChecked="{Binding Review.DryRun, Mode=TwoWay}" VerticalAlignment="Center"/>
                         <Button Grid.Column="1" Style="{StaticResource WtButton}" Margin="8,0,0,0"
-                                Content="{Binding Strings[Gui.Action.ClearPending]}" Click="ClearPending_Click"/>
+                                Content="{Binding Strings[Gui.Action.ClearPending]}"
+                                IsEnabled="{Binding Review.CanClear}" Click="ClearPending_Click"/>
                         <Button Grid.Column="2" Style="{StaticResource WtButton}" Margin="8,0,0,0"
-                                Content="{Binding Strings[Gui.Action.RemovePending]}" Click="RemovePending_Click"/>
+                                Content="{Binding Strings[Gui.Action.RemovePending]}"
+                                IsEnabled="{Binding Review.CanRemove}" Click="RemovePending_Click"/>
                         <Button Grid.Column="3" Style="{StaticResource WtAccentButton}" Margin="8,0,0,0"
-                                Content="{Binding Strings[Gui.Action.Apply]}" Click="Apply_Click"/>
+                                Content="{Binding Strings[Gui.Action.Apply]}"
+                                IsEnabled="{Binding Review.CanApply}" Click="Apply_Click"/>
                     </Grid>
                 </Grid>
 
@@ -399,6 +545,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
@@ -411,75 +558,155 @@
                     </StackPanel>
 
                     <Grid Grid.Row="1">
-                        <ListView x:Name="HistoryList" Background="{StaticResource WtMantle}"
-                                  SelectionMode="Single" ItemsSource="{Binding History.Rows}"
-                                  SelectedItem="{Binding History.SelectedRow, Mode=TwoWay}">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="8,6" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="220"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="120"/>
-                                            <ColumnDefinition Width="120"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Timestamp}"/>
-                                        <TextBlock Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding TweakId}"/>
-                                        <TextBlock Grid.Column="2" Style="{StaticResource WtTerminalText}" Text="{Binding State}"/>
-                                        <TextBlock Grid.Column="3" Style="{StaticResource WtTerminalText}" Text="{Binding Outcome}"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
+                        <Grid x:Name="HistoryMode">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="8,4" Background="{StaticResource WtSurface0}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="150"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Time]}"/>
+                                <TextBlock Grid.Column="1" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Tweak]}"/>
+                                <TextBlock Grid.Column="2" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.State]}"/>
+                                <TextBlock Grid.Column="3" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Outcome]}"/>
+                            </Grid>
+                            <ListView x:Name="HistoryList" Grid.Row="1" Background="{StaticResource WtMantle}"
+                                      SelectionMode="Single" ItemsSource="{Binding History.Rows}"
+                                      SelectedItem="{Binding History.SelectedRow, Mode=TwoWay}">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="8,6" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="170"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="150"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Time}"/>
+                                            <TextBlock Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding TweakId}"/>
+                                            <TextBlock Grid.Column="2" Style="{StaticResource WtTerminalText}" Text="{Binding State}"/>
+                                            <TextBlock Grid.Column="3" Style="{StaticResource WtTerminalText}" Text="{Binding Outcome}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
 
-                        <ListView x:Name="JournalList" Background="{StaticResource WtMantle}" Visibility="Collapsed"
-                                  SelectionMode="Single" ItemsSource="{Binding History.Operations}">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="8,6" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="220"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="100"/>
-                                            <ColumnDefinition Width="100"/>
-                                            <ColumnDefinition Width="100"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Timestamp}"/>
-                                        <TextBlock Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding TweakId}"/>
-                                        <TextBlock Grid.Column="2" Style="{StaticResource WtTerminalText}" Text="{Binding Stage}"/>
-                                        <TextBlock Grid.Column="3" Style="{StaticResource WtTerminalText}" Text="{Binding Outcome}"/>
-                                        <TextBlock Grid.Column="4" Style="{StaticResource WtMutedText}" Text="{Binding Origin}"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
+                        <Grid x:Name="JournalMode" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="8,4" Background="{StaticResource WtSurface0}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="150"/>
+                                    <ColumnDefinition Width="110"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Time]}"/>
+                                <TextBlock Grid.Column="1" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Tweak]}"/>
+                                <TextBlock Grid.Column="2" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.State]}"/>
+                                <TextBlock Grid.Column="3" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Outcome]}"/>
+                                <TextBlock Grid.Column="4" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Source]}"/>
+                            </Grid>
+                            <ListView x:Name="JournalList" Grid.Row="1" Background="{StaticResource WtMantle}"
+                                      SelectionMode="Single" ItemsSource="{Binding History.Operations}"
+                                      SelectedItem="{Binding History.SelectedOperation, Mode=TwoWay}">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="8,6" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="170"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="150"/>
+                                                <ColumnDefinition Width="110"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Time}"/>
+                                            <TextBlock Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding TweakId}"/>
+                                            <TextBlock Grid.Column="2" Style="{StaticResource WtTerminalText}" Text="{Binding Stage}"/>
+                                            <TextBlock Grid.Column="3" Style="{StaticResource WtTerminalText}" Text="{Binding Outcome}"/>
+                                            <TextBlock Grid.Column="4" Style="{StaticResource WtMutedText}" Text="{Binding Origin}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
 
-                        <ListView x:Name="InterruptedList" Background="{StaticResource WtMantle}" Visibility="Collapsed"
-                                  SelectionMode="Single" ItemsSource="{Binding History.Interrupted}"
-                                  SelectedItem="{Binding History.SelectedInterrupted, Mode=TwoWay}">
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <Grid Padding="8,6" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="220"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="100"/>
-                                            <ColumnDefinition Width="100"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Timestamp}"/>
-                                        <TextBlock Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding TweakId}"/>
-                                        <TextBlock Grid.Column="2" Style="{StaticResource WtTerminalText}" Text="{Binding Stage}"/>
-                                        <TextBlock Grid.Column="3" Style="{StaticResource WtTerminalText}" Text="{Binding CanRestore}"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
+                        <Grid x:Name="InterruptedMode" Visibility="Collapsed">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0" Padding="8,4" Background="{StaticResource WtSurface0}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="120"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Time]}"/>
+                                <TextBlock Grid.Column="1" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.Tweak]}"/>
+                                <TextBlock Grid.Column="2" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Column.State]}"/>
+                                <TextBlock Grid.Column="3" Style="{StaticResource WtColumnHeader}" Text="{Binding Strings[Gui.Action.Restore]}"/>
+                            </Grid>
+                            <ListView x:Name="InterruptedList" Grid.Row="1" Background="{StaticResource WtMantle}"
+                                      SelectionMode="Single" ItemsSource="{Binding History.Interrupted}"
+                                      SelectedItem="{Binding History.SelectedInterrupted, Mode=TwoWay}">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Padding="8,6" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="170"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="120"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" Text="{Binding Time}"/>
+                                            <TextBlock Grid.Column="1" Style="{StaticResource WtTerminalText}" Text="{Binding TweakId}"/>
+                                            <TextBlock Grid.Column="2" Style="{StaticResource WtTerminalText}" Text="{Binding Stage}"/>
+                                            <TextBlock Grid.Column="3" Style="{StaticResource WtTerminalText}" Text="{Binding CanRestoreLabel}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                        </Grid>
                     </Grid>
 
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom" Margin="0,8,0,0">
-                        <Button Style="{StaticResource WtAccentButton}" Content="{Binding Strings[Gui.Action.Restore]}"
+                    <Grid Grid.Row="2" Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Spacing="4">
+                            <TextBlock Style="{StaticResource WtSectionTitle}" Margin="0"
+                                       Text="{Binding Strings[Gui.History.Selected]}"/>
+                            <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                       Text="{Binding History.SelectedSummary}"/>
+                            <TextBlock Style="{StaticResource WtMutedText}"
+                                       Text="{Binding Strings[Gui.History.NoSelection]}"
+                                       Visibility="{Binding History.HasSelection, Converter={StaticResource WtBoolToCollapsed}}"/>
+                            <StackPanel Spacing="4">
+                                <Button x:Name="HistoryDetailButton" Style="{StaticResource WtButton}"
+                                        HorizontalAlignment="Left"
+                                        Content="{Binding Strings[Gui.Diagnostics.Raw]}"
+                                        Click="HistoryDetail_Click"/>
+                                <TextBox x:Name="HistoryDetailBox" Style="{StaticResource WtTextBox}" IsReadOnly="True"
+                                         TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="120" Visibility="Collapsed"
+                                         Text="{Binding History.SelectedRaw, Mode=OneWay}"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <Button Grid.Column="1" Style="{StaticResource WtAccentButton}" VerticalAlignment="Top"
+                                Content="{Binding Strings[Gui.Action.Restore]}"
                                 IsEnabled="{Binding History.CanRestore}" Click="Restore_Click"/>
-                    </StackPanel>
+                    </Grid>
                 </Grid>
 
                 <!-- Diagnostics. -->
@@ -487,38 +714,142 @@
                     <StackPanel Spacing="10" Padding="0,0,12,12">
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Report]}"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" MaxHeight="160"
-                                           Text="{Binding Diagnostics.ReportText}"/>
+                                <TextBlock Style="{StaticResource WtPanelTitle}"
+                                           Text="{Binding Strings[Gui.Diagnostics.Environment]}"/>
+                                <ItemsControl Margin="10,0,10,10" ItemsSource="{Binding Diagnostics.EnvironmentFacts}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding}"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </StackPanel>
                         </Border>
+
+                        <Border Style="{StaticResource WtPanel}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Report]}"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" Margin="10,0,10,4" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.ReportSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
+                                           Text="{Binding Diagnostics.ReportStatusText}"/>
+                                <StackPanel Margin="10,0,10,10" Spacing="4">
+                                    <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                            IsEnabled="{Binding IsConnected}"
+                                            Content="{Binding Strings[Gui.Action.Refresh]}" Click="DiagnosticsSection_Click" Tag="report"/>
+                                    <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                            Content="{Binding Strings[Gui.Diagnostics.Raw]}" Click="ReportDetail_Click"/>
+                                    <TextBox x:Name="ReportDetailBox" Style="{StaticResource WtTextBox}" IsReadOnly="True"
+                                             TextWrapping="Wrap" AcceptsReturn="True" MaxHeight="150" Visibility="Collapsed"
+                                             Text="{Binding Diagnostics.ReportRaw, Mode=OneWay}"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel Spacing="8">
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Scan]}"/>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBox Style="{StaticResource WtTextBox}" MinWidth="300"
+                                             AutomationProperties.Name="{Binding Strings[Gui.Diagnostics.ScanPath]}"
+                                             PlaceholderText="{Binding Strings[Gui.Diagnostics.ScanPath]}"
                                              Text="{Binding Diagnostics.ScanPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
-                                    <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Action.Refresh]}" Click="Scan_Click"/>
+                                    <Button Style="{StaticResource WtButton}" IsEnabled="{Binding IsConnected}"
+                                            Content="{Binding Strings[Gui.Diagnostics.Run]}" Click="DiagnosticsSection_Click" Tag="scan"/>
                                 </StackPanel>
-                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Diagnostics.ScanResult}"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.ScanSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.ScanStatusText}"/>
                             </StackPanel>
                         </Border>
+
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel Spacing="8">
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Monitor]}"/>
-                                <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Diagnostics.MonitorRun]}" Click="Monitor_Click"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Diagnostics.MonitorResult}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Content="{Binding Strings[Gui.Diagnostics.MonitorRun]}" Click="DiagnosticsSection_Click" Tag="monitor"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.MonitorSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.MonitorStatusText}"/>
                             </StackPanel>
                         </Border>
+
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel Spacing="8">
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Devices]}"/>
-                                <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Action.Refresh]}" Click="Devices_Click"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Diagnostics.DeviceResult}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Content="{Binding Strings[Gui.Diagnostics.Run]}" Click="DiagnosticsSection_Click" Tag="devices"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.DeviceSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.DeviceStatusText}"/>
                             </StackPanel>
                         </Border>
-                        <TextBlock Style="{StaticResource WtMutedText}"
-                                   Text="{Binding Diagnostics.CountText}"/>
+
+                        <Border Style="{StaticResource WtPanel}">
+                            <StackPanel Spacing="8">
+                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Power]}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Content="{Binding Strings[Gui.Diagnostics.Run]}" Click="DiagnosticsSection_Click" Tag="power"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.PowerSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.PowerStatusText}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource WtPanel}">
+                            <StackPanel Spacing="8">
+                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Privacy]}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Content="{Binding Strings[Gui.Diagnostics.Run]}" Click="DiagnosticsSection_Click" Tag="privacy"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.PrivacySummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.PrivacyStatusText}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource WtPanel}">
+                            <StackPanel Spacing="8">
+                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.Quarantine]}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Content="{Binding Strings[Gui.Diagnostics.Run]}" Click="DiagnosticsSection_Click" Tag="quarantine"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.QuarantineSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.QuarantineStatusText}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource WtPanel}">
+                            <StackPanel Spacing="8">
+                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Diagnostics.SetupPlans]}"/>
+                                <Button Style="{StaticResource WtButton}" HorizontalAlignment="Left"
+                                        IsEnabled="{Binding IsConnected}"
+                                        Content="{Binding Strings[Gui.Diagnostics.Run]}" Click="DiagnosticsSection_Click" Tag="setup"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap"
+                                           Text="{Binding Diagnostics.SetupSummary}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.SetupStatusText}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource WtPanel}">
+                            <StackPanel Spacing="4">
+                                <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Busy.Title]}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Text="{Binding Diagnostics.CountText}"/>
+                                <ScrollViewer MaxHeight="160">
+                                    <ItemsControl ItemsSource="{Binding Diagnostics.Diagnostics}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -534,8 +865,12 @@
                         <Border Style="{StaticResource WtPanel}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource WtPanelTitle}" Text="{Binding Strings[Gui.Licensing.Status]}"/>
-                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Licensing.LicensingStatus}"/>
-                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,6,10,10" Text="{Binding Licensing.EditionText}"/>
+                                <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Margin="10,0,10,4"
+                                           Text="{Binding Licensing.LicensingStatus}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
+                                           Text="{Binding Licensing.EditionText}"/>
+                                <TextBlock Style="{StaticResource WtMutedText}" Margin="10,0,10,10"
+                                           Text="{Binding Licensing.StatusText}"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource WtPanel}">
@@ -559,35 +894,36 @@
 
                     <StackPanel Grid.Column="2" Spacing="10" Margin="12,0,0,0">
                         <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap" Text="{Binding Strings[Gui.Licensing.Separate]}"/>
-                        <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Licensing.Download]}" Click="DownloadTool_Click"/>
-                        <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Licensing.Remove]}" Click="RemoveTool_Click"/>
+                        <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Licensing.Download]}"
+                                IsEnabled="{Binding Licensing.CanDownload}" Click="DownloadTool_Click"/>
+                        <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Licensing.Remove]}"
+                                IsEnabled="{Binding Licensing.CanRemove}" Click="RemoveTool_Click"/>
                         <Button Style="{StaticResource WtDangerButton}" Content="{Binding Strings[Gui.Licensing.Activate]}"
                                 IsEnabled="{Binding Licensing.CanActivate}" Click="Activate_Click"/>
-                        <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Licensing.Slmgr]}" Click="Slmgr_Click"/>
+                        <Button Style="{StaticResource WtButton}" Content="{Binding Strings[Gui.Licensing.Slmgr]}"
+                                IsEnabled="{Binding Licensing.CanRequestSlmgr}" Click="Slmgr_Click"/>
                         <TextBlock Style="{StaticResource WtTerminalText}" TextWrapping="Wrap" Text="{Binding Licensing.LastOutcome}"/>
+                        <TextBlock Style="{StaticResource WtMutedText}" TextTrimming="CharacterEllipsis"
+                                   Text="{Binding Licensing.ToolStatusText}"/>
                     </StackPanel>
                 </Grid>
 
-                <!-- Result strip (shared by review/history ops). -->
+                <!-- Result strip: what the current workspace is doing, once. -->
                 <Grid Grid.Row="2" Margin="0,12,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                    <TextBlock Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
                                Text="{Binding ProgressText}"/>
-                    <TextBlock Grid.Column="1" Style="{StaticResource WtMutedText}" Text="{Binding StatusText}"/>
                 </Grid>
             </Grid>
         </Grid>
 
-        <!-- Status bar. -->
-        <Grid Grid.Row="2" Background="{StaticResource WtMantle}" Padding="12,6">
+        <!-- Status bar: one status line, plus the key hints. -->
+        <Grid Grid.Row="3" Background="{StaticResource WtMantle}" Padding="12,6">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" TextWrapping="Wrap" Text="{Binding StatusText}"/>
+            <TextBlock Grid.Column="0" Style="{StaticResource WtMutedText}" TextWrapping="Wrap"
+                       Text="{Binding StatusText}"/>
             <TextBlock Grid.Column="1" Style="{StaticResource WtMutedText}"
                        Text="{Binding Strings[Gui.Footer.Hint]}" Margin="12,0,0,0"/>
         </Grid>

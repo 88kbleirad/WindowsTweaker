@@ -24,7 +24,8 @@ public sealed class TweaksViewModel : WorkspaceViewModel
     {
         States.CollectionChanged += (_, _) =>
         {
-            Raise(nameof(EmptySearchVisible));
+            Raise(nameof(ShowFilteredEmpty));
+            Raise(nameof(ShowCatalogEmpty));
             Raise(nameof(EmptyMessage));
             Raise(nameof(RowsSummary));
         };
@@ -43,6 +44,15 @@ public sealed class TweaksViewModel : WorkspaceViewModel
 
     /// <summary>Categories, with an empty first entry meaning "all".</summary>
     public ObservableCollection<string> Categories { get; } = new();
+
+    /// <summary>
+    /// The category combo's items: a stable "All categories" entry plus one item per real
+    /// category. Bound to <see cref="Category"/> by code (the selection is the code).
+    /// </summary>
+    public ObservableCollection<CategoryOption> CategoryOptions { get; } = new();
+
+    /// <summary>One category combo item.</summary>
+    public sealed record CategoryOption(string Code, string Label);
 
     /// <summary>Search text. Filtering happens locally on data already fetched once.</summary>
     public string Search
@@ -119,15 +129,34 @@ public sealed class TweaksViewModel : WorkspaceViewModel
     /// <summary>True when the selection can be staged for review.</summary>
     public bool CanAdd => _selected is not null && !string.IsNullOrEmpty(_targetState);
 
-    /// <summary>True when the current filter matched nothing.</summary>
-    public bool EmptySearchVisible => States.Count == 0;
+    /// <summary>True when a filter (search, category or supported-only) is narrowing the list.</summary>
+    public bool HasFilter =>
+        !string.IsNullOrWhiteSpace(_search) || !string.IsNullOrWhiteSpace(_category) || _onlySupported;
 
     /// <summary>
-    /// The message for an empty list, distinguishing "the backend returned no rows" from
-    /// "your filter matched none" - never a bare zero.
+    /// True when the list is empty because the current filter matched nothing. Only true for
+    /// data that was actually read: a failed or in-flight load has its own state and never
+    /// shows this message next to an error.
+    /// </summary>
+    public bool ShowFilteredEmpty =>
+        States.Count == 0
+        && _all.Count > 0
+        && HasFilter
+        && State is LoadState.Ready or LoadState.Empty;
+
+    /// <summary>True when the engine answered with a catalog that has no tweaks at all.</summary>
+    public bool ShowCatalogEmpty =>
+        States.Count == 0
+        && _all.Count == 0
+        && State is LoadState.Ready or LoadState.Empty
+        && !HasFilter;
+
+    /// <summary>
+    /// The message for an empty list, matching the reason: an empty catalog and a filter
+    /// that matched nothing are different facts and must not be confused.
     /// </summary>
     public string EmptyMessage => _all.Count == 0
-        ? Strings["Gui.Tweaks.Empty"]
+        ? Strings["Gui.Overview.Empty"]
         : Strings["Gui.Error.EmptySearch"];
 
     /// <summary>Detail pane title.</summary>
@@ -192,10 +221,12 @@ public sealed class TweaksViewModel : WorkspaceViewModel
                 if (first)
                 {
                     Categories.Clear();
-                    Categories.Add(string.Empty);
+                    CategoryOptions.Clear();
+                    CategoryOptions.Add(new CategoryOption(string.Empty, Strings["Gui.Filter.AllCategories"]));
                     foreach (var category in _all.Select(r => r.Category).Distinct().OrderBy(c => c, StringComparer.Ordinal))
                     {
                         Categories.Add(category);
+                        CategoryOptions.Add(new CategoryOption(category, category));
                     }
                 }
             },
@@ -248,8 +279,17 @@ public sealed class TweaksViewModel : WorkspaceViewModel
 
         // Keep the selection if it is still visible, otherwise clear it.
         Selected = previous is null ? null : rows.FirstOrDefault(r => r.Id == previous);
-        Raise(nameof(EmptySearchVisible));
+        Raise(nameof(ShowFilteredEmpty));
+        Raise(nameof(ShowCatalogEmpty));
         Raise(nameof(EmptyMessage));
+        Raise(nameof(HasFilter));
+    }
+
+    /// <summary>Re-publishes the properties the load state drives.</summary>
+    protected override void OnStateChanged()
+    {
+        Raise(nameof(ShowFilteredEmpty));
+        Raise(nameof(ShowCatalogEmpty));
     }
 
     /// <summary>Stages the selection into the review workspace. Applies nothing.</summary>
@@ -275,11 +315,25 @@ public sealed class ReviewViewModel : WorkspaceViewModel
     private bool _dryRun;
     private string _previewText = string.Empty;
     private bool _previewLoaded;
+    private ReviewedChange? _selectedChange;
 
     public ReviewViewModel(ShellViewModel shell)
         : base(shell)
     {
-        Results.CollectionChanged += (_, _) => Raise(nameof(HasResults));
+        Results.CollectionChanged += (_, _) => { Raise(nameof(HasResults)); RaiseEligibility(); };
+        Changes.CollectionChanged += (_, _) =>
+        {
+            Raise(nameof(HasChanges));
+            Raise(nameof(HasProtectionReducing));
+            RaiseEligibility();
+        };
+        Shell.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ShellViewModel.Connection) or nameof(ShellViewModel.Busy))
+            {
+                RaiseEligibility();
+            }
+        };
     }
 
     /// <summary>The reviewed (pending) changes. Never a result, never history.</summary>
@@ -288,8 +342,39 @@ public sealed class ReviewViewModel : WorkspaceViewModel
     /// <summary>The outcome rows of the last apply/preview.</summary>
     public ObservableCollection<ApplyResult> Results { get; } = new();
 
+    /// <summary>The row selected in the reviewed list (drives removal eligibility).</summary>
+    public ReviewedChange? SelectedChange
+    {
+        get => _selectedChange;
+        set
+        {
+            if (Set(ref _selectedChange, value))
+            {
+                RaiseEligibility();
+            }
+        }
+    }
+
     /// <summary>True once the last apply/preview produced outcome rows.</summary>
     public bool HasResults => Results.Count > 0;
+
+    /// <summary>True when the reviewed list can be previewed: rows, a live backend, no other work.</summary>
+    public bool CanPreview => HasChanges && CanRunBackendCommand;
+
+    /// <summary>True when the reviewed list can be applied: rows, a live backend, no other work.</summary>
+    public bool CanApply => HasChanges && CanRunBackendCommand;
+
+    /// <summary>True when there is a reviewed row to take off the list.</summary>
+    public bool CanRemove => _selectedChange is not null;
+
+    /// <summary>True when the reviewed list has anything to clear.</summary>
+    public bool CanClear => HasChanges;
+
+    /// <summary>True when the running operation can be asked to stop.</summary>
+    public bool CanCancel => Shell.Busy && Shell.IsConnected;
+
+    /// <summary>A backend command may run: connected, and nothing else is in flight.</summary>
+    private bool CanRunBackendCommand => Shell.IsConnected && !Shell.Busy;
 
     /// <summary>Read-only preview text for the whole reviewed list.</summary>
     public string PreviewText
@@ -326,6 +411,15 @@ public sealed class ReviewViewModel : WorkspaceViewModel
         return Task.CompletedTask;
     }
 
+    private void RaiseEligibility()
+    {
+        Raise(nameof(CanPreview));
+        Raise(nameof(CanApply));
+        Raise(nameof(CanRemove));
+        Raise(nameof(CanClear));
+        Raise(nameof(CanCancel));
+    }
+
     /// <summary>Adds one reviewed change. Returns a reason when it was refused.</summary>
     public string? Add(ReviewedChange change)
     {
@@ -338,8 +432,6 @@ public sealed class ReviewViewModel : WorkspaceViewModel
         Changes.Add(change);
         PreviewLoaded = false;
         Results.Clear();
-        Raise(nameof(HasChanges));
-        Raise(nameof(HasProtectionReducing));
         StatusText = Strings.Get("Gui.Review.Confirm", Changes.Count);
         return null;
     }
@@ -348,9 +440,12 @@ public sealed class ReviewViewModel : WorkspaceViewModel
     public void Remove(ReviewedChange change)
     {
         Changes.Remove(change);
+        if (ReferenceEquals(_selectedChange, change))
+        {
+            SelectedChange = null;
+        }
+
         PreviewLoaded = false;
-        Raise(nameof(HasChanges));
-        Raise(nameof(HasProtectionReducing));
     }
 
     /// <summary>Clears the reviewed list.</summary>
@@ -360,8 +455,7 @@ public sealed class ReviewViewModel : WorkspaceViewModel
         Results.Clear();
         PreviewText = string.Empty;
         PreviewLoaded = false;
-        Raise(nameof(HasChanges));
-        Raise(nameof(HasProtectionReducing));
+        SelectedChange = null;
     }
 
     /// <summary>
@@ -370,10 +464,17 @@ public sealed class ReviewViewModel : WorkspaceViewModel
     /// </summary>
     public async Task PreviewAsync()
     {
-        if (Changes.Count == 0)
+        if (!HasChanges)
         {
             PreviewText = Strings["Gui.Review.Empty"];
             PreviewLoaded = false;
+            StatusText = Strings["Gui.NothingPending"];
+            return;
+        }
+
+        if (!Shell.IsConnected)
+        {
+            StatusText = Shell.ConnectionError;
             return;
         }
 
@@ -452,9 +553,21 @@ public sealed class ReviewViewModel : WorkspaceViewModel
     /// </summary>
     public async Task ApplyAsync(bool restartAfterApply = false)
     {
-        if (Changes.Count == 0)
+        if (!HasChanges)
         {
             StatusText = Strings["Gui.NothingPending"];
+            return;
+        }
+
+        if (!Shell.IsConnected)
+        {
+            StatusText = Shell.ConnectionError;
+            return;
+        }
+
+        if (Shell.HasMutatingOperation)
+        {
+            StatusText = Strings["Gui.Error.Busy"];
             return;
         }
 
@@ -466,6 +579,7 @@ public sealed class ReviewViewModel : WorkspaceViewModel
 
         Results.Clear();
         ErrorText = string.Empty;
+        ErrorDetail = string.Empty;
 
         await Shell.RunMutatingAsync(async () =>
         {
@@ -482,7 +596,7 @@ public sealed class ReviewViewModel : WorkspaceViewModel
 
             if (!outcome.Ok)
             {
-                ErrorText = outcome.Message;
+                Fail(outcome.Code, outcome.Message);
                 return false;
             }
 
@@ -503,9 +617,7 @@ public sealed class ReviewViewModel : WorkspaceViewModel
 
             if (!DryRun && batch.Results.Count > 0 && batch.Results.All(r => r.Succeeded))
             {
-                Changes.Clear();
-                Raise(nameof(HasChanges));
-                Raise(nameof(HasProtectionReducing));
+                Clear();
             }
 
             return true;
@@ -518,7 +630,13 @@ public sealed class ReviewViewModel : WorkspaceViewModel
     /// </summary>
     public async Task CancelAsync()
     {
+        if (!Shell.Busy)
+        {
+            StatusText = Strings["Gui.Error.NothingToCancel"];
+            return;
+        }
+
         var stopped = await Shell.Runner.CancelActiveAsync().ConfigureAwait(true);
-        StatusText = stopped ? Strings["Tui.Busy.CancelHint"] : Strings["Gui.BackendDown"];
+        StatusText = stopped ? Strings["Tui.Busy.CancelHint"] : Shell.ConnectionError;
     }
 }

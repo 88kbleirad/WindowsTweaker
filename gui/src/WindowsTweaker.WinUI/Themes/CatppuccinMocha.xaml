@@ -111,6 +111,31 @@
         <Setter Property="Padding" Value="8,2"/>
     </Style>
 
+    <!-- The header's connection/privilege pills: compact, square, bordered. -->
+    <Style x:Key="WtStatusPill" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource WtSurface0}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource WtSurface1}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="Padding" Value="8,3"/>
+    </Style>
+
+    <!-- Section headings inside a workspace pane (Categories / Tweaks / Details ...). -->
+    <Style x:Key="WtSectionTitle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WtSubtext}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Margin" Value="0,0,0,6"/>
+    </Style>
+
+    <!-- Table column headings (the History lists). -->
+    <Style x:Key="WtColumnHeader" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{StaticResource WtSubtext}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
     <Style x:Key="WtBadgeOk" TargetType="Border" BasedOn="{StaticResource WtBadge}">
         <Setter Property="BorderBrush" Value="{StaticResource WtGreen}"/>
     </Style>

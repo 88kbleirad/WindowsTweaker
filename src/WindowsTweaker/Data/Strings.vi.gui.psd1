@@ -9,7 +9,7 @@
     # Window chrome and navigation.
     'Gui.Nav.Overview'        = 'Tổng quan'
     'Gui.Nav.Tweaks'          = 'Tinh chỉnh'
-    'Gui.Nav.Review'          = 'Duyệt'
+    'Gui.Nav.Review'          = 'Xem lại'
     'Gui.Nav.History'         = 'Lịch sử'
     'Gui.Nav.Diagnostics'     = 'Chẩn đoán'
     'Gui.Nav.Licensing'       = 'Bản quyền'
@@ -44,10 +44,10 @@
 
     # Actions.
     'Gui.Action.Preview'      = 'Xem trước'
-    'Gui.Action.AddPending'   = 'Thêm vào danh sách duyệt'
-    'Gui.Action.RemovePending' = 'Bỏ khỏi danh sách duyệt'
-    'Gui.Action.ClearPending' = 'Xóa danh sách duyệt'
-    'Gui.Action.Apply'        = 'Áp dụng các thay đổi đã duyệt'
+    'Gui.Action.AddPending'   = 'Xếp vào danh sách xem lại'
+    'Gui.Action.RemovePending' = 'Bỏ khỏi danh sách xem lại'
+    'Gui.Action.ClearPending' = 'Xóa danh sách xem lại'
+    'Gui.Action.Apply'        = 'Áp dụng các thay đổi đã xếp'
     'Gui.Action.ApplyDryRun'  = 'Xem trước (chạy khô)'
     'Gui.Action.Restore'      = 'Khôi phục thay đổi này'
     'Gui.Action.Export'       = 'Xuất'
@@ -59,9 +59,9 @@
     'Gui.Action.Inspect'      = 'Xem chi tiết'
 
     # Review workflow.
-    'Gui.Review.Title'        = 'Các thay đổi đã duyệt'
-    'Gui.Review.Empty'        = 'Chưa duyệt gì. Chọn một tinh chỉnh rồi thêm vào đây.'
-    'Gui.Review.Confirm'      = 'Áp dụng {0} thay đổi đã duyệt?'
+    'Gui.Review.Title'        = 'Các thay đổi đã xếp'
+    'Gui.Review.Empty'        = 'Chưa xếp thay đổi nào. Chọn một tinh chỉnh rồi thêm vào đây.'
+    'Gui.Review.Confirm'      = 'Áp dụng {0} thay đổi đã xếp?'
     'Gui.Review.Dependency'   = 'Phụ thuộc và xung đột được hiển thị trước khi chạy.'
     'Gui.Review.DryRunNotice' = 'Chạy khô: mọi thao tác được báo cáo và không ghi gì cả.'
     'Gui.Review.Revalidation' = 'Trạng thái đã duyệt được kiểm tra lại ngay trước khi thay đổi.'
@@ -89,7 +89,7 @@
     'Gui.Overview.Tweaks'     = 'Tinh chỉnh'
     'Gui.Overview.Interrupted' = 'Thao tác bị gián đoạn'
     'Gui.Overview.Drift'      = 'Đã đổi so với lúc áp dụng'
-    'Gui.Overview.Pending'    = 'Thay đổi đã duyệt'
+    'Gui.Overview.Pending'    = 'Thay đổi đã xếp'
     'Gui.Overview.Packs'      = 'Gói'
     'Gui.Overview.None'       = 'không có'
 
@@ -154,4 +154,32 @@
     'Gui.Error.LocalizationFailed' = 'Chuỗi giao diện chưa tải được; gói bộ máy có thể chưa đầy đủ.'
     'Gui.Error.BackendStopFailed' = 'Không thể dừng tiến trình nền một cách sạch sẽ; chưa nâng quyền.'
     'Gui.Error.InitFailed'    = 'Khởi động thất bại'
+
+    # Trạng thái kết nối, dữ liệu cũ và điều kiện chạy lệnh.
+    'Gui.Connection.Disconnected' = 'Mất kết nối'
+    'Gui.Connection.Failed'   = 'Thất bại'
+    'Gui.Error.StaleAnswer'   = 'Câu trả lời từ kết nối trước đến quá muộn và đã bị bỏ qua.'
+    'Gui.Error.Cancelled'     = 'Yêu cầu đã bị hủy.'
+    'Gui.Error.Busy'          = 'Một thao tác khác đang chạy trong phiên này.'
+    'Gui.Error.NothingToCancel' = 'Không có thao tác nào đang chạy để hủy.'
+    'Gui.Data.Stale'          = 'Dữ liệu đọc trước khi kết nối lại: hãy tải lại để cập nhật.'
+    'Gui.Filter.AllCategories' = 'Tất cả nhóm'
+    'Gui.Tweaks.EmptyAction'  = 'Xóa bộ lọc hoặc từ khóa để xem toàn bộ {0} tinh chỉnh.'
+    'Gui.Status.Running'      = 'Đang chạy...'
+
+    # Các bảng: cột Lịch sử, mục Chẩn đoán, thông tin Bản quyền.
+    'Gui.Column.Detail'       = 'Chi tiết'
+    'Gui.History.Selected'    = 'Dòng đã chọn'
+    'Gui.History.NoSelection' = 'Chọn một dòng để xem chi tiết.'
+    'Gui.Diagnostics.Environment' = 'Môi trường và tiến trình nền'
+    'Gui.Diagnostics.Raw'     = 'Chi tiết kỹ thuật'
+    'Gui.Diagnostics.Lines'   = '{0} dòng đã ghi'
+    'Gui.Diagnostics.Run'     = 'Chạy'
+    'Gui.Licensing.Product'   = 'Sản phẩm'
+    'Gui.Licensing.Channel'   = 'Kênh'
+    'Gui.Licensing.Grace'     = 'Thời gian gia hạn còn lại'
+    'Gui.Licensing.Unavailable' = 'Không có thông tin bản quyền nào được báo cáo.'
+
+    # Không gian Xem lại: đã xếp để xem lại, chưa được duyệt và chưa áp dụng.
+    'Gui.Review.Staged'       = 'Đã xếp để xem lại. Chưa áp dụng thay đổi nào.'
 }

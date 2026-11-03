@@ -11,6 +11,7 @@ namespace WindowsTweaker.Gui.Core.Tests;
 /// a directory that holds no engine, which is a real, reachable configuration (a broken or
 /// relocated install) rather than a mock.
 /// </summary>
+[Collection("bridge")]
 public sealed class LocalizationAndStartupTests
 {
     private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Tables(
@@ -293,7 +294,7 @@ public sealed class LocalizationAndStartupTests
     }
 
     [Fact]
-    public async Task RetryConnectAgainstAMissingEngineRootFailsTheSameWay()
+    public async Task ReconnectAgainstAMissingEngineRootFailsTheSameWay()
     {
         var root = Path.Combine(Path.GetTempPath(), "wt-nobackend-" + Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(root);
@@ -302,7 +303,7 @@ public sealed class LocalizationAndStartupTests
             await using var shell = new ShellViewModel(root);
             await shell.ConnectAsync();
 
-            var error = await shell.RetryConnectAsync();
+            var error = await shell.ReconnectAsync();
 
             Assert.False(string.IsNullOrEmpty(error));
             Assert.Equal(error, shell.InitializationError);

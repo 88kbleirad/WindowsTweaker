@@ -13,6 +13,22 @@ public enum Workspace
     Licensing,
 }
 
+/// <summary>Where the backend connection is, as the window renders it.</summary>
+public enum ConnectionState
+{
+    /// <summary>A session is being started (process launch + handshake).</summary>
+    Connecting,
+
+    /// <summary>A live session answered its handshake.</summary>
+    Ready,
+
+    /// <summary>No session is running: stopped by the app, or the process ended.</summary>
+    Disconnected,
+
+    /// <summary>The connection attempt failed; the reason is in <c>ConnectionError</c>.</summary>
+    Failed,
+}
+
 /// <summary>Where the backend startup sequence is.</summary>
 public enum InitializationState
 {
@@ -63,8 +79,10 @@ public abstract class WorkspaceViewModel : ObservableObject
 {
     private bool _loaded;
     private bool _busy;
+    private bool _stale;
     private string _statusText = string.Empty;
     private string _errorText = string.Empty;
+    private string _errorDetail = string.Empty;
     private LoadState _state = LoadState.Idle;
 
     /// <summary>Protected access to the backend.</summary>
@@ -101,8 +119,14 @@ public abstract class WorkspaceViewModel : ObservableObject
                 Raise(nameof(IsReady));
                 Raise(nameof(IsEmpty));
                 Raise(nameof(IsFailed));
+                OnStateChanged();
             }
         }
+    }
+
+    /// <summary>Raised for a derived workspace to re-publish the properties the state drives.</summary>
+    protected virtual void OnStateChanged()
+    {
     }
 
     /// <summary>True while a request for this workspace is in flight.</summary>
@@ -147,6 +171,49 @@ public abstract class WorkspaceViewModel : ObservableObject
     /// <summary>True when <see cref="ErrorText"/> carries something.</summary>
     public bool HasError => !string.IsNullOrEmpty(_errorText);
 
+    /// <summary>The raw technical detail behind the last failure (expandable in the UI).</summary>
+    public string ErrorDetail
+    {
+        get => _errorDetail;
+        protected set => Set(ref _errorDetail, value);
+    }
+
+    /// <summary>
+    /// True when this workspace shows data read from a connection that is no longer the
+    /// live one. The data stays visible, but the UI says so instead of passing it off as
+    /// current; reloading clears it.
+    /// </summary>
+    public bool IsStale
+    {
+        get => _stale;
+        private set
+        {
+            if (Set(ref _stale, value))
+            {
+                Raise(nameof(StaleMessage));
+            }
+        }
+    }
+
+    /// <summary>Localized explanation of <see cref="IsStale"/>.</summary>
+    public string StaleMessage => Strings["Gui.Data.Stale"];
+
+    /// <summary>
+    /// Marks the loaded data as belonging to a past connection and makes the next visit
+    /// reload it. Staged selections live in the shell's review list, which is untouched.
+    /// </summary>
+    public void MarkStale()
+    {
+        if (!Loaded)
+        {
+            return;
+        }
+
+        IsStale = true;
+        Loaded = false;
+        State = LoadState.Idle;
+    }
+
     /// <summary>Loads the workspace if it has not been loaded yet.</summary>
     public async Task EnsureLoadedAsync()
     {
@@ -168,6 +235,7 @@ public abstract class WorkspaceViewModel : ObservableObject
     public Task RetryAsync()
     {
         ErrorText = string.Empty;
+        ErrorDetail = string.Empty;
         return ReloadAsync();
     }
 
@@ -175,7 +243,12 @@ public abstract class WorkspaceViewModel : ObservableObject
     protected abstract Task LoadAsync();
 
     /// <summary>Records that a successful load produced (or did not produce) rows.</summary>
-    protected void MarkLoaded(int itemCount) => State = itemCount > 0 ? LoadState.Ready : LoadState.Empty;
+    protected void MarkLoaded(int itemCount)
+    {
+        State = itemCount > 0 ? LoadState.Ready : LoadState.Empty;
+        IsStale = false;
+        ErrorDetail = string.Empty;
+    }
 
     /// <summary>Runs a projection call and records its outcome. Returns true on success.</summary>
     protected async Task<bool> RunAsync<T>(
@@ -189,6 +262,7 @@ public abstract class WorkspaceViewModel : ObservableObject
         Busy = true;
         State = LoadState.Loading;
         ErrorText = string.Empty;
+        ErrorDetail = string.Empty;
         if (statusWhileRunning is not null)
         {
             StatusText = statusWhileRunning;
@@ -199,9 +273,7 @@ public abstract class WorkspaceViewModel : ObservableObject
             var outcome = await Shell.Runner.RunAsync(op, project, args, timeout).ConfigureAwait(true);
             if (!outcome.Ok)
             {
-                ErrorText = outcome.Message;
-                StatusText = outcome.Message;
-                State = LoadState.Failed;
+                Fail(outcome.Code, outcome.Message);
                 return false;
             }
 
@@ -212,15 +284,26 @@ public abstract class WorkspaceViewModel : ObservableObject
         {
             // A handler fault must not take the window down; it becomes a visible failure
             // with a retry, exactly like a backend error.
-            ErrorText = exception.Message;
-            StatusText = exception.Message;
-            State = LoadState.Failed;
+            Fail("HandlerFailure", exception.Message);
             return false;
         }
         finally
         {
             Busy = false;
         }
+    }
+
+    /// <summary>
+    /// Records a failure with a localized message and the raw detail kept separately, so
+    /// the panel shows words the user can read and the expandable section keeps the exact
+    /// technical answer.
+    /// </summary>
+    protected void Fail(string code, string detail)
+    {
+        ErrorDetail = string.IsNullOrWhiteSpace(detail) ? code : $"{code}: {detail}";
+        ErrorText = Shell.DescribeFailure(code, detail);
+        StatusText = ErrorText;
+        State = LoadState.Failed;
     }
 }
 
@@ -279,8 +362,24 @@ public sealed class OverviewViewModel : WorkspaceViewModel
         private set => Set(ref _reviewedCount, value);
     }
 
-    /// <summary>"113 tweaks | 10 categories" (single line, localized).</summary>
-    public string CatalogSummary => Strings.Get("Gui.Overview.CatalogCount", TweakCount, CategoryCount);
+    /// <summary>
+    /// The catalog size, or the state that stands in for it. A failed or not-yet-run load
+    /// never renders as counts, and a stale count is only shown for data that really was
+    /// read (the panel marks it stale next to it).
+    /// </summary>
+    public string CatalogSummary => State switch
+    {
+        LoadState.Ready => Strings.Get("Gui.Overview.CatalogCount", TweakCount, CategoryCount),
+        LoadState.Empty => Strings["Gui.Overview.Empty"],
+        LoadState.Loading => Strings["Gui.Overview.Loading"],
+        LoadState.Failed => Strings["Gui.Overview.NotLoaded"],
+        _ when IsStale && (TweakCount > 0 || CategoryCount > 0) =>
+            Strings.Get("Gui.Overview.CatalogCount", TweakCount, CategoryCount),
+        _ => Strings["Gui.Overview.NotLoaded"],
+    };
+
+    /// <summary>True when <see cref="CatalogSummary"/> describes the catalog (not a state).</summary>
+    public bool HasCatalogCounts => State == LoadState.Ready || (IsStale && TweakCount > 0);
 
     /// <summary>OS generation and build, from the engine's environment snapshot.</summary>
     public string OsText => Shell.Environment is { } environment
@@ -341,6 +440,13 @@ public sealed class OverviewViewModel : WorkspaceViewModel
         ReviewedCount = Shell.Review.Changes.Count;
         Loaded = true;
         RaiseEnvironment();
+    }
+
+    /// <summary>Re-publishes the properties the load state drives.</summary>
+    protected override void OnStateChanged()
+    {
+        Raise(nameof(CatalogSummary));
+        Raise(nameof(HasCatalogCounts));
     }
 
     private void RaiseEnvironment()

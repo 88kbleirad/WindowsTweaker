@@ -1968,3 +1968,295 @@ Run: `dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests/WindowsTweaker.Gui.Cor
 Nothing here was executed on Windows: the XAML markup compile, the real window, the rendered
 palette/hover/selection states, the caption bar, and the actual language switch all still
 need the manual `.github/workflows/build-winui.yml` run and a VM launch (section 25).
+
+## 28. WinUI frontend: backend lost after startup (frozen connection badge, dead workspaces)
+
+### The report
+
+After the window had been working (History had rows, Vietnamese labels were loaded):
+
+* Overview, Tweaks and Licensing showed **"The backend is not running."**;
+* the header still showed the **green** handshake badge with the handshake summary;
+* Tweaks showed the "no filter results" message **and** the backend error at the same time;
+* Review was empty but Apply looked enabled;
+* the language selector was blank although Vietnamese labels were rendered;
+* environment information appeared in the header and in two footer places;
+* History had no column headers and showed raw UTC timestamps and raw outcome codes;
+* Diagnostics showed mostly empty panels and an unexplained "diagnostics: 6".
+
+### Root cause (evidenced)
+
+`BridgeRunner.ShutdownAsync` detached the session *before* it knew the outcome, and nothing
+reconciled the shell with the runner afterwards:
+
+```csharp
+var session = _session;
+_session = null;                                  // detached first
+return await session.ShutdownAsync(allowKill);    // then attempted
+```
+
+`ShellViewModel.RelaunchElevatedAsync` (the header's **Elevate** button) calls that method and,
+when the handoff cannot be started - the user declines the UAC prompt, or the elevated copy
+fails to spawn - returns early **without setting `IsConnected = false`**:
+
+```csharp
+var outcome = await Runner.ShutdownAsync(allowKill: false);
+if (outcome != Clean && outcome != AlreadyStopped) return Strings["Gui.Error.BackendStopFailed"];
+try { ProcessElevation.StartElevated(...); }
+catch (Win32Exception) { return Strings["Gui.Error.ElevationDeclined"]; }   // <-- session already gone
+```
+
+Reproduced against the real bridge (Linux, pwsh 7; the code path is OS-independent):
+
+```text
+connected: shell.IsConnected=True runner.IsConnected=True init=Ready tweaks=113
+RelaunchElevatedAsync -> 'The elevation prompt was declined; nothing was started and this session is unchanged.'
+after the failed handoff: shell.IsConnected=False runner.IsConnected=False init=Ready
+bridge processes: 0
+next request: ok=False code='BackendDown' message='The backend is not running.'
+tweaks retry: state=Failed isEmpty=False isFailed=True emptySearchVisible=True rows=0
+overview retry: state=Failed summary='113 tweaks | 10 categories' error='The backend is not running.'
+```
+
+Every observation follows from that state:
+
+| Observed | Cause |
+|---|---|
+| "The backend is not running." everywhere | `BridgeRunner.RunAsync` returns the hardcoded English literal when `_session is null`; it is **not** localized, which is why it appeared in English in a Vietnamese UI (the engine table has `Gui.BackendDown` = "Tiến trình nền chưa chạy." for exactly this state) |
+| Green handshake badge with the live summary | `IsConnected` is a cached bool set only in `ConnectAsync`, on the process-exit event and on the close paths; the failed-handoff path never updated it, and the badge is painted by ad-hoc handlers rather than by the connection state |
+| Vietnamese labels still shown | the string tables were loaded while the session was alive; nothing localizes "the session is gone" |
+| History had rows, Tweaks had none | History had been loaded before the session was lost; the History/Diagnostics/Licensing `LoadAsync` overrides never called `MarkLoaded`, so their `State` also stayed `Loading` forever, and `EnsureLoadedAsync` never reloaded them |
+| "no filter results" **and** the error together | `EmptySearchVisible` is `States.Count == 0` and the error is a sibling element bound to `IsFailed`; nothing made them exclusive, so a failed load rendered both |
+| Apply looked enabled on an empty list | no review button had an `IsEnabled` binding at all: only `Tweaks.CanAdd`, `History.CanRestore` and `Licensing.CanActivate` were bound anywhere in the window |
+| Blank language selector | `UpdateLanguageBinding()` assigned `RootGrid.DataContext = null` then back on every `LanguageChanged`; the ComboBox's `ItemsSource` was re-evaluated while `SelectedItem` was only ever set imperatively, so a re-evaluated collection view cleared the selection and nothing restored it |
+| Environment text three times | the header bound `HeaderEnvironment`, the bottom status bar and the in-workspace strip both bound `StatusText`, and `StatusText` was set to `HeaderEnvironment` on connect |
+| Raw timestamps and outcome codes | the rows bound `Timestamp`/`Outcome` verbatim; the engine returns ISO-8601 UTC and code strings, and the terminal UI localizes them itself with `Op.<code>` - the window did not |
+| "diagnostics: 6" | `CountText` was the hardcoded English `$"diagnostics: {n}"` over the capped diagnostic tail |
+
+### Triggered by
+
+Any path that stops or loses the session after startup, plus any process death. The Elevate
+button is the reproducible one; a killed backend reproduces the same dead-workspace state
+(the process-exit event did fire and flipped the shell flag, but the workspaces still had no
+retry affordance, since the only retry lived inside the startup-failure overlay - which is
+hidden once `Initialization` reaches `Ready`).
+
+### Changes
+
+Backend lifetime (`BridgeRunner`, `BridgeSession`, `ShellViewModel`):
+
+* **One session, one owner.** `ConnectAsync` is single-flight (a semaphore), stops any
+  previous session first and is idempotent while connected, so a reconnect can never leave two
+  backend processes behind.
+* **`StopAsync(allowKill, reason)` replaces `Reset()`/`ShutdownAsync`.** It detaches the
+  session, moves the connection generation on, asks the session to quit, disposes it, and
+  reports the outcome; the caller can no longer be left holding a session the runner has
+  forgotten.
+* **`BridgeSession.DisposeAsync` now really shuts the process down.** It used to set
+  `_disposed = true` first, which made its own `ShutdownAsync` call a no-op, so a backend
+  was never asked to quit and could outlive the window. Shutdown is also idempotent and
+  `SendAsync` on a closed session raises a typed `BackendDown` failure instead of an
+  `ObjectDisposedException`.
+* **Connection generations.** Every request captures `Generation`; a result that arrives after
+  the generation moved on is rejected as `StaleConnection` instead of being applied, so the UI
+  cannot be repopulated from a connection it no longer uses.
+* **A dead session is detected on the next call as well as by the exit event**
+  (`BridgeSession` raises `Exited`; the runner also converts a `BackendDown` failure into a
+  state change), so the header cannot keep claiming a connection that is gone.
+* **Request tracing.** Every request raises `BackendActivity` (operation, request id, elapsed
+  ms, outcome code) which the shell records in the Diagnostics log, and the connection state
+  change carries the exit code plus the bounded stderr tail.
+
+Connection state and recovery (`ShellViewModel`):
+
+* `ConnectionState { Connecting, Ready, Disconnected, Failed }` mirrors the runner and is the
+  single source of truth; `IsConnected`, `ConnectionLabel`, `ConnectionError` (localized),
+  `ConnectionDetail` (raw), `RecoveryVisible` and `CanReconnect` are derived from it.
+* `ReconnectAsync()` stops whatever is left, makes **exactly one** new connection, reloads the
+  string tables and the environment, marks the already-loaded workspaces stale, reloads the
+  visible workspace's read-only data and keeps the staged review list. It never replays a
+  mutation: only read operations run, and it refuses while a mutation is in flight.
+* `RelaunchElevatedAsync` no longer reports "this session is unchanged" after stopping the
+  session: on a declined prompt or a failed spawn it reconnects and reloads, and its message
+  says what happened.
+* Localized connection errors (`Gui.BackendDown`, `Gui.Error.StaleAnswer`, `Gui.Error.Cancelled`,
+  `Gui.Error.Busy`, `Gui.Error.BackendTimeout`, `Gui.Error.BackendProtocol`,
+  `Gui.Error.RequiresElevation`, `Gui.Error.BackendExited`); the raw code, generation, exit
+  code and stderr tail are kept separately for the expandable technical section.
+* Language selection is data, not string matching: `AvailableLanguages` carries
+  `LanguageOption(Code, DisplayName)` with the name from the engine's own tables
+  (`Tui.Language.en`/`vi`) and the wire keeps the stable code; `SelectedLanguage` is bound
+  two-way, and the `DataContext` thrash that cleared the selection is gone.
+
+UI state and eligibility:
+
+* Workspaces gained `IsStale`/`MarkStale`/`StaleMessage` and a `Fail(code, detail)` path that
+  keeps the localized message and the raw detail apart.
+* Tweaks: `ShowFilteredEmpty` and `ShowCatalogEmpty` are mutually exclusive with
+  `IsLoading`/`IsFailed` and with each other (`ShowFilteredEmpty` requires data that was really
+  read plus an active filter); `EmptyMessage` distinguishes an empty catalog from an empty
+  filter match; `CategoryOptions` renders "All categories" instead of a blank entry.
+* Review: `CanPreview`, `CanApply`, `CanClear`, `CanRemove` (from a bound `SelectedChange`),
+  `CanCancel`, all bound to `IsEnabled` **and** re-checked inside `PreviewAsync`/`ApplyAsync`/
+  `CancelAsync`; an apply failure now sets the workspace failure state (not just the status
+  bar).
+* History/Diagnostics/Licensing: every `LoadAsync` calls `MarkLoaded`, every section has an
+  explicit `Not loaded / Loading / Failed / Ready` state, History rows carry local time,
+  localized `Op.*` outcome/state labels and a localized restore-capability label, plus a
+  selected-row detail block and a copyable raw section; `CanRestore` requires a live
+  connection; Diagnostics renders readable `label: value` summaries plus the exact JSON in a
+  copyable box, and `EnvironmentFacts` carries the environment/protocol/backend block that
+  used to be repeated in the header and footer.
+* Licensing: `SummarizeLicensing` now reads `Inventory.Active` (it previously looked for a
+  root-level `Active` that the engine document does not have, so the panel showed the first
+  400 characters of raw JSON), the summary lines are localized, and every command is gated on
+  the connection plus the session being idle.
+
+Design:
+
+* One compact header status area: a connection pill (state dot + localized state), a privilege
+  pill, the language selector, reduce-motion and Elevate. The repeated environment text is
+  gone; protocol/runtime/paths moved to Diagnostics; the status line appears once (the
+  in-workspace strip now carries progress only).
+* Navigation items carry Segoe Fluent/MDL2 glyphs (`E80F`, `E9F5`, `E8FB`, `E81C`, `E9D9`,
+  `E8D7` - all present in both Segoe MDL2 Assets and Segoe Fluent Icons, so Windows 11 IoT
+  LTSC renders them).
+* Tweaks has three labelled panes (Categories / Tweaks / Details) with a "next action" empty
+  state; History has column headers, local times, localized outcome badges, a selected-row
+  detail block and the restore action outside the scrolling rows; Diagnostics has one labelled
+  section per read-only operation with an explicit state, a run button and a readable summary.
+* Keep the previous section's design decisions (Catppuccin Mocha tokens, square app-owned
+  controls, monospace typography, thin borders, native WinUI controls, keyboard focus visuals).
+
+New string keys (22, in `Data/Strings.{en,vi}.gui.psd1`, both languages, plus the handshake key
+list): `Gui.Connection.Disconnected`, `Gui.Connection.Failed`, `Gui.Error.StaleAnswer`,
+`Gui.Error.Cancelled`, `Gui.Error.Busy`, `Gui.Error.NothingToCancel`, `Gui.Data.Stale`,
+`Gui.Filter.AllCategories`, `Gui.Tweaks.EmptyAction`, `Gui.Status.Running`, `Gui.Column.Detail`,
+`Gui.History.Selected`, `Gui.History.NoSelection`, `Gui.Diagnostics.Environment`,
+`Gui.Diagnostics.Raw`, `Gui.Diagnostics.Lines`, `Gui.Diagnostics.Run`, `Gui.Licensing.Product`,
+`Gui.Licensing.Channel`, `Gui.Licensing.Grace`, `Gui.Licensing.Unavailable`, `Gui.Review.Staged`.
+The gui tables went from 127 to 149 entries (the 500-entry `Import-PowerShellDataFile` limit and
+the UTF-8 BOM requirement are unchanged and verified). `Tui.Language.en`/`vi` and the `Op.*`
+outcome codes were added to the frontend key list instead of duplicating their text. The
+Vietnamese Review vocabulary was disambiguated in place (`Gui.Nav.Review` "Duyệt" -> "Xem lại",
+plus the staging verbs), and the English side now says "staged" rather than "reviewed" so
+staging is never confused with approval or application.
+
+### Regression coverage added
+
+`gui/tests/WindowsTweaker.Gui.Core.Tests/BackendLifetimeTests.cs` (7 live tests against the real
+bridge):
+
+* `BackendExitAfterAHandshakeIsDetectedAndDisablesCommands` - a handshake succeeds, the process
+  is killed; the state becomes `Disconnected`, the exit code is observed, the recovery
+  affordance appears, and Apply/Preview/Restore/Activate are all disabled; the next request
+  reports `BackendDown` (never a timeout) and no process is left behind.
+* `RetryMakesExactlyOneNewConnectionAndReloadsReadOnlyData` - with a staged review selection,
+  the process is killed, `ReconnectAsync` runs a fresh handshake, the generation advances,
+  exactly **one** process exists, the catalog and the tweak rows are reloaded, the stale marker
+  is set, and the staged selection is preserved unchanged.
+* `LateAnswerFromAReplacedConnectionIsRejected` - a slow read is started, the session is
+  replaced, and the late answer is rejected with `StaleConnection`; the new connection still
+  answers.
+* `ConnectIsIdempotentAndNeverDuplicatesTheProcess` - connecting twice while connected is a
+  no-op (same hello, one process); disposal stops the process.
+* `FailedElevationHandoffRestoresASessionInsteadOfLeavingTheWindowDead` - the reported trigger:
+  the handoff fails, and the window ends up connected again with its data reloaded.
+* `EveryAvailablePowerShellHostRunsTheWholeStartupContract` - the handshake -> `strings.get` ->
+  `catalog.list` -> `env.status` -> clean shutdown sequence is run against **every** host
+  `PowerShellLocator.Discover()` finds. On Windows that includes Windows PowerShell 5.1
+  (`powershell.exe`) as well as PowerShell 7; on Linux only pwsh exists. This is what makes the
+  5.1 claim a check rather than an assertion.
+* `LanguageSelectionRoundTripsAndTheSelectorShowsIt` - the selector's items are the engine's
+  languages with display names ("English", "Tiếng Việt") and the active language is selected;
+  switching round-trips through the engine.
+
+### Executed checks
+
+Linux (before the Windows run):
+
+* `dotnet build gui/src/WindowsTweaker.Gui.Core -c Release`: 0 warnings, 0 errors.
+* `dotnet test gui/tests/WindowsTweaker.Gui.Core.Tests -c Release`: 56/56 passed (48 existing +
+  8 in `BackendLifetimeTests`; every live test ran rather than skipped).
+* `tests/BridgeProtocol.Tests.ps1`: 3/3 - 193 declared frontend keys, all present in both merged
+  tables, no undeclared `Gui.*` key in a gui table, no duplicate.
+* `tests/Loading.Tests.ps1`: 17/17 - key parity between languages, no typographic quotes, every
+  key referenced, BOM gate.
+* `tests/GuiWinUi.Tests.ps1`: 3/3 (new) - every localization key the WinUI frontend references
+  exists in both merged tables; every `{StaticResource}` in the window resolves in the theme
+  dictionary; the navigation glyph vocabulary is declared and in use.
+* `tools/Test-Compatibility.ps1`: `COMPATIBILITY GATE PASSED` - 5.1 syntax and command gate
+  clean (0 findings over `src`, `bootstrap`, `tools`, `tests`), 64 of 64 non-ASCII files carry a
+  UTF-8 BOM, both gui tables are 149 of 500 entries.
+* C# compile check of all 19 WinUI + Gui.Core sources against the pinned Windows App SDK
+  references (`csc`): only `CS0103` for XAML-generated names, no other error code.
+* `tests/GuiWinUi.Tests.ps1` + the C# `WinUiXamlWiringTests` (new): every XAML event handler
+  exists in the code-behind, every `{Binding}` path resolves against `ShellViewModel` (the
+  window's DataContext) or a template item type (238 binding paths checked). This is what
+  caught the two `IsStale` bindings that resolved against the shell instead of the current
+  workspace.
+
+Windows (Windows 11 IoT LTSC VM, `192.168.122.123`, Windows PowerShell 5.1):
+
+* `dotnet publish gui/src/WindowsTweaker.WinUI -c Release -r win-x64 --self-contained true`
+  (the `build-winui.yml` command, `AppxPackage=false`, `WindowsPackageType=None`,
+  `WindowsAppSDKSelfContained=true`): publish succeeded, and
+  `tools/Test-WtFrontendPayload.ps1` validated the published layout: **41 required assets
+  present, architecture consistent (x64)**.
+* The same `dotnet test` suite on Windows: **56/56 passed** (8 lifetime + 48 other). The live
+  backend tests ran against Windows PowerShell 5.1 (`powershell.exe`, `5.1.26100.9444`); the
+  per-host test exercised the whole startup contract (handshake → `strings.get` →
+  `catalog.list` → `env.status` → clean shutdown) against every discovered host.
+* `WindowsTweaker.Gui.Core.Tests.BackendLifetimeTests` on Windows: 8/8 - backend exit after a
+  handshake, disconnected badge + command disabling, retry making exactly one new connection
+  and reloading data, late answers from a replaced connection rejected, idempotent connect,
+  failed-elevation handoff restoring a session, per-host startup contract, language selection
+  round-trip.
+* Bridge trace under Windows PowerShell 5.1 (`C:\wt\logs\bridge-trace-windows-powershell-5.1-20261103-153533.log`):
+  hello frame `protocol=1 bridge=wt-bridge` in 10.3 s (first 5.1 session, cold PowerShell
+  profile), 20/20 read-only workspace requests, last success `drift.get`, first failure
+  `catalog.tweaks` (a probe op the engine's allowlist does not implement - not used by the
+  frontend), clean quit (`exitCode=0`, 40 ms), 0 stderr lines.
+* Font check on the VM: every glyph the window draws (`E80F E9F5 E8FB E81C E9D9 E8D7 E72C
+  E711`) exists in `C:\Windows\Fonts\SegoeIcons.ttf` (Segoe Fluent Icons); Segoe MDL2 Assets
+  is **not** installed on this image, which is why the stack lists Segoe Fluent Icons first.
+* The Windows test run also caught a Linux-only test defect (the `/proc`-based process probes
+  could not run on Windows and one probe aimed a kill at a non-host process), which is why the
+  tests now drive the runner's own `BackendProcessId` with a PowerShell-host guard. The VM
+  power-offs observed during early runs were guest-initiated (`winlogon.exe`/SYSTEM) and also
+  occur on an unrelated schedule; the suite now runs in chunks so a restart cannot invalidate
+  a run.
+
+### Windows checks still required (not executed)
+
+* Launching the published executable and exercising the rendered window (palette,
+  hover/selection/focus states, caption bar) - the VM has no interactive session, and the
+  published UI was not launched.
+* The rendered language-switch and the ComboBox's visible selection (the binding defect that
+  caused the blank selector was fixed by removing the DataContext re-assignment; the view-model
+  round-trip and every static binding check pass, but the visual result is unverified).
+* The real UAC decline path with the actual prompt (the same code path is covered
+  deterministically by forcing the elevation seam to throw `Win32Exception(1223)`).
+
+Reproduction on the target VM (the `build-winui.yml` workflow publishes the artifact and runs
+the payload validator + the live suite; the manual steps after that):
+
+```powershell
+# 1. launch the published frontend, then click Elevate and decline the UAC prompt
+#    expected: the header pill turns Disconnected, the recovery strip appears with a
+#    localized reason, Retry reconnects and reloads, and the workspaces show their data again
+Get-Content "$env:LOCALAPPDATA\WindowsTweaker\logs\startup-*.log" -Tail 60
+# 2. exercise the bridge with Windows PowerShell 5.1 explicitly (the same contract the
+#    frontend uses), and with pwsh 7 for comparison:
+powershell.exe -NoProfile -File src\WindowsTweaker\Bridge\wt-bridge.ps1 -ModuleManifest src\WindowsTweaker\WindowsTweaker.psd1
+#    then, per line on stdin: {"id":"1","op":"strings.get","args":{}}, {"id":"2","op":"catalog.list","args":{}},
+#    {"id":"3","op":"env.status","args":{}}, {"id":"4","op":"quit","args":{}}
+# 3. run the live suite on Windows (covers powershell.exe through the per-host test):
+dotnet test gui\tests\WindowsTweaker.Gui.Core.Tests -c Release
+```
+
+Log/artifact paths: engine logs `<data root>\logs\`, the WinUI startup log
+`%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log`, the publish artifact
+`frontend-win-x64-build` from `.github/workflows/build-winui.yml`. VM-side logs for this run:
+`C:\wt\logs\bridge-trace-windows-powershell-5.1-20261103-153533.{log,json}` and
+`C:\wt\repo\frontend-build\win-x64\` (published layout).

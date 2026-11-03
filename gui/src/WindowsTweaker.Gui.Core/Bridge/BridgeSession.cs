@@ -66,6 +66,7 @@ public sealed class BridgeSession : IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, PendingRequest> _pending = new(StringComparer.Ordinal);
     private readonly Process _process;
+    private readonly int _processId;
     private readonly StreamWriter _stdin;
     private readonly Task _stdoutPump;
     private readonly Task _stderrPump;
@@ -75,10 +76,12 @@ public sealed class BridgeSession : IAsyncDisposable
     private long _nextId;
     private string _lastRequestId = string.Empty;
     private bool _disposed;
+    private int _shutdownAttempted;
 
     private BridgeSession(Process process, BridgeHello hello)
     {
         _process = process;
+        _processId = process.Id;
         Hello = hello;
         _stdin = process.StandardInput;
         _stdoutPump = Task.Run(() => PumpStdoutAsync(_lifetime.Token));
@@ -87,6 +90,15 @@ public sealed class BridgeSession : IAsyncDisposable
 
     /// <summary>The handshake the backend completed on startup.</summary>
     public BridgeHello Hello { get; }
+
+    /// <summary>
+    /// The operating-system id of the backend process this session owns. It is the
+    /// identity the UI and the tests use to reason about "this session's process" -
+    /// liveness, exit code and "is the previous one really gone" - without scanning for
+    /// processes by name. It is captured at construction, so it stays readable after the
+    /// session (and its <see cref="Process"/> handle) has been disposed.
+    /// </summary>
+    public int ProcessId => _processId;
 
     /// <summary>The id of the most recently issued request (used by the cancel action).</summary>
     public string LastRequestId => Volatile.Read(ref _lastRequestId);
@@ -311,11 +323,14 @@ public sealed class BridgeSession : IAsyncDisposable
         TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_disposed)
+        {
+            throw new BridgeException("This backend session has been closed.", ProtocolConstants.ErrorCode.BackendDown);
+        }
 
         if (!IsRunning)
         {
-            throw new BridgeException("The backend is not running.", "BackendExited");
+            throw new BridgeException("The backend is not running.", ProtocolConstants.ErrorCode.BackendDown);
         }
 
         var id = $"r{Interlocked.Increment(ref _nextId)}";
@@ -377,7 +392,14 @@ public sealed class BridgeSession : IAsyncDisposable
     /// </summary>
     public async Task<ShutdownOutcome> ShutdownAsync(bool allowKill, CancellationToken cancellationToken = default)
     {
-        if (_disposed)
+        // Exactly one shutdown attempt per session: a second caller gets AlreadyStopped
+        // instead of racing the first one on the same pipes.
+        if (Interlocked.Exchange(ref _shutdownAttempted, 1) == 1)
+        {
+            return ShutdownOutcome.AlreadyStopped;
+        }
+
+        if (_disposed || _process.HasExited)
         {
             return ShutdownOutcome.AlreadyStopped;
         }
@@ -601,14 +623,18 @@ public sealed class BridgeSession : IAsyncDisposable
     private void Report(string message) => Diagnostic?.Invoke(this, message);
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The shutdown runs <em>before</em> this session is marked disposed. Marking it first
+    /// made the shutdown call a no-op, so the process was never asked to quit and only went
+    /// away when its stdin was closed - and a backend in the middle of a long read could
+    /// outlive the window that owned it.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
         {
             return;
         }
-
-        _disposed = true;
 
         try
         {
@@ -618,6 +644,8 @@ public sealed class BridgeSession : IAsyncDisposable
         {
             // Disposal never throws for a session that is already gone.
         }
+
+        _disposed = true;
 
         _lifetime.Cancel();
         try

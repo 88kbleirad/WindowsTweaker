@@ -3,19 +3,30 @@ using System.ComponentModel;
 using System.Diagnostics;
 using WindowsTweaker.Gui.Core.Bridge;
 using WindowsTweaker.Gui.Core.Model;
+using WindowsTweaker.Gui.Core.Protocol;
 
 namespace WindowsTweaker.Gui.Core.ViewModels;
+
+/// <summary>One language the engine ships, with the name to show for it.</summary>
+/// <param name="Code">The stable identifier ("en", "vi") used on the wire.</param>
+/// <param name="DisplayName">The language's own name, from the engine's string tables.</param>
+public sealed record LanguageOption(string Code, string DisplayName);
 
 /// <summary>
 /// The window's whole state: the backend session, the workspaces, the header, the status
 /// bars and the closing rules.
 /// </summary>
 /// <remarks>
-/// The shell owns two behaviours the individual views must not re-implement:
+/// The shell owns the behaviours the individual views must not re-implement:
 /// <list type="bullet">
+/// <item><b>the connection state</b>: <see cref="Connection"/> mirrors the runner and is the
+/// single source of truth the UI renders, so a backend that goes away cannot leave the
+/// window claiming to be connected;</item>
+/// <item><b>recovery</b>: <see cref="ReconnectAsync"/> stops whatever session exists, makes
+/// exactly one new connection, reloads the read-only data and marks the previously loaded
+/// data stale - it never replays a mutation;</item>
 /// <item><b>staying responsive</b>: it subscribes to progress on the reader task and moves
-/// each update to the UI thread through <see cref="Dispatch"/>, so a view never blocks on
-/// the backend;</item>
+/// each update to the UI thread through <see cref="Dispatch"/>;</item>
 /// <item><b>safe closing</b>: <see cref="TryCloseAsync"/> refuses to abandon a mutating
 /// operation, and only ever stops the backend at a boundary.</item>
 /// </list>
@@ -32,8 +43,12 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private string _initializationError = string.Empty;
     private string _engineVersion = string.Empty;
     private InitializationState _initialization = InitializationState.Loading;
+    private ConnectionState _connection = ConnectionState.Connecting;
+    private string _connectionDetail = string.Empty;
+    private string _connectionCode = ProtocolConstants.ErrorCode.BackendDown;
+    private int _connectionExitCode;
+    private LanguageOption? _selectedLanguage;
     private bool _busy;
-    private bool _connected;
     private bool _reduceMotion;
     private string _activeRequestId = string.Empty;
     private int _activeMutating;
@@ -54,8 +69,30 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         Licensing = new LicensingViewModel(this);
 
         Runner.Progress += OnProgress;
-        Runner.Exited += OnBackendExited;
         Runner.Diagnostic += (_, message) => Diagnostics.AddDiagnostic(message);
+        Runner.Activity += (_, activity) => Diagnostics.AddActivity(activity);
+        Runner.StateChanged += (_, change) => Dispatch(() => ApplyBackendState(change));
+
+        // The staleness facts are aggregates, so they must be re-published whenever a
+        // workspace's own flag changes (a mark, or a reload that clears it).
+        foreach (var workspace in AllWorkspaces())
+        {
+            workspace.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName is nameof(WorkspaceViewModel.IsStale))
+                {
+                    Raise(nameof(HasStaleData));
+                    Raise(nameof(CurrentIsStale));
+                }
+            };
+        }
+
+        // A language switch must re-render every label, including the ones this shell
+        // composes itself (privilege, recovery, summaries, workspace paths). Raising an
+        // empty property name makes every binding re-read its source; the previous build
+        // instead reassigned the window's DataContext, which re-evaluated the language
+        // selector's item source mid-switch and left it blank.
+        Strings.LanguageChanged += (_, _) => Dispatch(() => Raise(string.Empty));
     }
 
     /// <summary>Marshals an action onto the UI thread (the app supplies the dispatcher).</summary>
@@ -63,6 +100,13 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Localized text, served by the engine.</summary>
     public LocalizationService Strings { get; }
+
+    /// <summary>
+    /// Starts the elevated copy during an elevation handoff. It is the one place the
+    /// elevated relaunch is performed, so a test can force the "the handoff could not be
+    /// started" path (declined UAC prompt) on any host instead of only where UAC exists.
+    /// </summary>
+    public Action<string, string> StartElevated { get; set; } = ProcessElevation.StartElevated;
 
     /// <summary>The backend facade.</summary>
     public BridgeRunner Runner { get; }
@@ -89,6 +133,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             if (Set(ref _current, value))
             {
                 Raise(nameof(CurrentTitle));
+                Raise(nameof(CurrentIsStale));
             }
         }
     }
@@ -104,7 +149,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         {
             if (Set(ref _environment, value))
             {
-                Raise(nameof(HeaderEnvironment));
+                RaiseEnvironmentFacts();
             }
         }
     }
@@ -117,106 +162,199 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         {
             if (Set(ref _runtime, value))
             {
-                Raise(nameof(HeaderEnvironment));
+                Raise(nameof(RuntimeSummary));
             }
         }
     }
 
-    /// <summary>Compact one-line environment summary for the header.</summary>
-    public string HeaderEnvironment
-    {
-        get
-        {
-            if (Environment is null)
-            {
-                return Strings["Gui.Starting"];
-            }
-
-            var elevated = Environment.IsAdmin ? "admin" : "standard";
-            var os = string.IsNullOrEmpty(Environment.OsVersionKey) || Environment.OsVersionKey == "Unknown"
-                ? Environment.Architecture
-                : $"{Environment.OsVersionKey} {Environment.OsBuild}";
-            return $"PS {Environment.PowerShellVersion} | {os} | {elevated}";
-        }
-    }
-
-    /// <summary>Compact one-line backend summary (host, edition, protocol).</summary>
+    /// <summary>Compact one-line backend summary (host, edition, protocol) for Diagnostics.</summary>
     public string BackendSummary
     {
         get => _backendSummary;
         private set => Set(ref _backendSummary, value);
     }
 
-    /// <summary>True while a request is in flight.</summary>
-    public bool Busy
-    {
-        get => _busy;
-        private set => Set(ref _busy, value);
-    }
+    // ---- connection state -----------------------------------------------------
 
-    /// <summary>True once the backend handshake has completed.</summary>
-    public bool IsConnected
+    /// <summary>Where the backend connection stands. The UI renders this, nothing else.</summary>
+    public ConnectionState Connection
     {
-        get => _connected;
+        get => _connection;
         private set
         {
-            if (Set(ref _connected, value))
+            if (Set(ref _connection, value))
             {
-                Raise(nameof(IsElevated));
+                RaiseConnectionFacts();
             }
         }
     }
 
-    /// <summary>True when the backend session is elevated (drives the elevation banner).</summary>
+    /// <summary>True only while a live backend session is connected.</summary>
+    public bool IsConnected => Connection == ConnectionState.Ready;
+
+    /// <summary>True while a connection attempt is in flight.</summary>
+    public bool IsConnecting => Connection == ConnectionState.Connecting;
+
+    /// <summary>True when no session is running (stopped, or the process ended).</summary>
+    public bool IsDisconnected => Connection == ConnectionState.Disconnected;
+
+    /// <summary>True when the last connection attempt failed.</summary>
+    public bool IsConnectionFailed => Connection == ConnectionState.Failed;
+
+    /// <summary>Short localized label for the connection state (the header pill).</summary>
+    public string ConnectionLabel => Connection switch
+    {
+        ConnectionState.Connecting => Strings["Gui.Starting"],
+        ConnectionState.Ready => Strings["Gui.Ready"],
+        ConnectionState.Failed => Strings["Gui.Connection.Failed"],
+        _ => Strings["Gui.Connection.Disconnected"],
+    };
+
+    /// <summary>The last failure or exit, localized, with no technical detail.</summary>
+    public string ConnectionError => DescribeFailure(_connectionCode, _connectionDetail, _connectionExitCode);
+
+    /// <summary>The raw technical detail behind the state (kept for the expandable section).</summary>
+    public string ConnectionDetail => string.IsNullOrWhiteSpace(_connectionDetail)
+        ? ConnectionError
+        : ConnectionDetailText();
+
+    /// <summary>True whenever the connection is not ready: the recovery affordance is shown.</summary>
+    public bool RecoveryVisible => Connection != ConnectionState.Ready;
+
+    /// <summary>
+    /// The exit code of the backend process behind the current state, or 0 when no process
+    /// has ended. It is part of the technical detail the Diagnostics panel shows.
+    /// </summary>
+    public int ConnectionExitCode => _connectionExitCode;
+
+    /// <summary>
+    /// True when the <em>visible</em> workspace is showing data read from a connection that
+    /// is no longer the live one. Drives the staleness badge next to the workspace title.
+    /// </summary>
+    public bool CurrentIsStale => For(Current).IsStale;
+
+    /// <summary>
+    /// True when any workspace holds data read from a connection that is gone. Drives the
+    /// note in the recovery strip; it is a fact about the data on screen, not about the
+    /// connection, so it is never shown just because the backend is down.
+    /// </summary>
+    public bool HasStaleData
+    {
+        get
+        {
+            foreach (var workspace in AllWorkspaces())
+            {
+                if (workspace.IsStale)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>True when the recovery affordance can actually do something.</summary>
+    public bool CanReconnect => !IsConnecting && !HasMutatingOperation;
+
+    /// <summary>Localized explanation shown in the recovery banner.</summary>
+    public string RecoveryMessage => Connection switch
+    {
+        ConnectionState.Connecting => Strings["Gui.Starting"],
+        ConnectionState.Ready => string.Empty,
+        ConnectionState.Failed => ConnectionError,
+        _ when _connectionExitCode != 0 => Strings.Get("Gui.Error.BackendExited", _connectionExitCode),
+        _ => Strings["Gui.BackendDown"],
+    };
+
+    /// <summary>One line describing the environment and the session (Diagnostics).</summary>
+    public string EnvironmentSummary
+    {
+        get
+        {
+            if (Environment is not { } environment)
+            {
+                return Strings["Gui.Overview.NotLoaded"];
+            }
+
+            var os = string.IsNullOrEmpty(environment.OsVersionKey) || environment.OsVersionKey == "Unknown"
+                ? environment.Architecture
+                : $"{environment.OsVersionKey} {environment.OsBuild}";
+            return $"{os} | {environment.Architecture} | {environment.Culture}";
+        }
+    }
+
+    /// <summary>PowerShell host and edition line (Diagnostics).</summary>
+    public string RuntimeSummary => Environment is { } environment
+        ? $"{environment.PowerShellVersion} ({environment.RequiredPowerShell}) | {environment.LanguageMode}"
+        : Strings["Gui.Overview.NotLoaded"];
+
+    /// <summary>Where the backend store and logs live (Diagnostics).</summary>
+    public string PathSummary => Environment is { } environment
+        ? environment.StatePath + System.Environment.NewLine + environment.LogPath
+        : Strings["Gui.Overview.NotLoaded"];
+
+    /// <summary>Pending reboot state reported by the engine (Diagnostics).</summary>
+    public string PendingRebootSummary => Environment is { } environment
+        ? (environment.PendingReboot == true ? environment.PendingRebootLabel : Strings["Common.No"])
+        : Strings["Gui.Overview.NotLoaded"];
+
+    /// <summary>The handshake's protocol/host line (Diagnostics).</summary>
+    public string ProtocolSummary => Runner.Hello is { } hello
+        ? $"protocol {hello.Protocol} | {hello.Bridge} | {hello.Edition} {hello.PowerShellVersion} | {hello.Platform}/{hello.Architecture} | {hello.Tier}"
+        : Strings["Gui.Overview.NotLoaded"];
+
+    /// <summary>True when the backend session is elevated (drives the elevation badge).</summary>
     public bool IsElevated => Environment?.IsAdmin ?? false;
+
+    /// <summary>Localized privilege label (header pill and Diagnostics).</summary>
+    public string PrivilegeLabel => IsElevated ? Strings["Gui.Overview.Admin"] : Strings["Gui.Overview.Standard"];
 
     /// <summary>
     /// True when the app host itself runs elevated. When the backend is elevated but the
-    /// app host is not, the backend can only be a child of an elevated relaunch; the
-    /// banner distinguishes the two so a user can tell whose elevation they granted.
+    /// app host is not, the backend can only be a child of an elevated relaunch; the badge
+    /// distinguishes the two so a user can tell whose elevation they granted.
     /// </summary>
     public bool IsProcessElevated => ProcessElevation.IsElevated();
 
+    // ---- languages ------------------------------------------------------------
+
+    /// <summary>The languages the engine ships, with their display names.</summary>
+    public ObservableCollection<LanguageOption> AvailableLanguages { get; } = new();
+
     /// <summary>
-    /// Relaunches the application elevated (a child that receives a UAC prompt) and
-    /// exits this copy. The backend is shut down cleanly first - never killed under a
-    /// mutation. The elevated child discovers the engine from the same root and restarts
-    /// the same session; the archived environment settings are carried over.
+    /// The language the interface is rendered in. Bound two-way by the selector, so the
+    /// selection survives the item source being refreshed and always shows what is active.
     /// </summary>
-    /// <returns>An error message when the relaunch could not be started; null on success.</returns>
-    public async Task<string?> RelaunchElevatedAsync()
+    public LanguageOption? SelectedLanguage
     {
-        if (HasMutatingOperation)
+        get => _selectedLanguage;
+        set
         {
-            return Strings["Gui.Error.BusyMutating"];
-        }
+            if (value is null || value.Code == _selectedLanguage?.Code)
+            {
+                return;
+            }
 
-        var repositoryRoot = _repositoryRoot;
-        var language = Strings.Active;
+            _selectedLanguage = value;
+            Raise();
+            _ = SetLanguageAsync(value.Code);
+        }
+    }
 
-        var outcome = await Runner.ShutdownAsync(allowKill: false).ConfigureAwait(true);
-        if (outcome != ShutdownOutcome.Clean && outcome != ShutdownOutcome.AlreadyStopped)
-        {
-            return Strings["Gui.Error.BackendStopFailed"];
-        }
+    // ---- status ---------------------------------------------------------------
 
-        try
+    /// <summary>True while a request is in flight.</summary>
+    public bool Busy
+    {
+        get => _busy;
+        private set
         {
-            ProcessElevation.StartElevated(repositoryRoot, language);
+            if (Set(ref _busy, value))
+            {
+                Raise(nameof(CanReconnect));
+            }
         }
-        catch (Win32Exception)
-        {
-            // The user declined the UAC prompt (ERROR_CANCELLED) or it failed to appear.
-            // Nothing ran, and the current session is still usable, so the app stays.
-            return Strings["Gui.Error.ElevationDeclined"];
-        }
-        catch (Exception exception)
-        {
-            return $"{Strings["Gui.Error.ElevationFailed"]}: {exception.Message}";
-        }
-
-        IsConnected = false;
-        return null;
     }
 
     /// <summary>Status line text.</summary>
@@ -285,6 +423,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     {
         Interlocked.Increment(ref _activeMutating);
         Busy = true;
+        Raise(nameof(CanReconnect));
         try
         {
             return await operation().ConfigureAwait(true);
@@ -294,6 +433,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             Interlocked.Decrement(ref _activeMutating);
             Busy = HasMutatingOperation || AnyWorkspaceBusy();
             ProgressText = string.Empty;
+            Raise(nameof(CanReconnect));
         }
     }
 
@@ -314,15 +454,17 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
     private bool AnyWorkspaceBusy() =>
         Overview.Busy || Tweaks.Busy || Review.Busy || History.Busy || Diagnostics.Busy || Licensing.Busy;
 
+    // ---- connecting -----------------------------------------------------------
+
     /// <summary>
     /// Connects the backend: starts the session, reads the handshake, then loads the
     /// string tables and the environment. Returns null on success, else the reason.
     /// </summary>
     /// <remarks>
     /// Never throws: a failure at any stage (including a fault inside a notification
-    /// handler) is recorded, reflected in <see cref="Initialization"/>, and returned so
-    /// the window can show a visible error state with a retry instead of silently keeping
-    /// the pre-load placeholders.
+    /// handler) is recorded, reflected in <see cref="Connection"/> and <see cref="Initialization"/>,
+    /// and returned so the window can show a visible error state with a retry instead of
+    /// silently keeping the pre-load placeholders.
     /// </remarks>
     public async Task<string?> ConnectAsync()
     {
@@ -339,8 +481,12 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
                 return Fail(failure);
             }
 
-            var hello = Runner.Hello!;
-            IsConnected = true;
+            var hello = Runner.Hello;
+            if (hello is null)
+            {
+                return Fail(Strings["Gui.Error.InitFailed"]);
+            }
+
             BackendSummary = $"{hello.Edition} {hello.PowerShellVersion} | protocol {hello.Protocol} | {hello.Platform}/{hello.Architecture}";
             EngineVersion = hello.ModalVersion;
             Diagnostics.AddDiagnostic($"startup: handshake ok (protocol {hello.Protocol}, {hello.Edition} {hello.PowerShellVersion})");
@@ -350,16 +496,12 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             if (strings.Ok)
             {
                 var (languages, active, tables) = strings.Value;
-                Strings.Load(languages, active, tables);
+                LoadLanguages(languages, active, tables);
                 Diagnostics.AddDiagnostic($"startup: strings loaded ({languages.Count} language(s), {tables.Count} table(s))");
-                if (!Strings.IsLoaded)
-                {
-                    Strings.LoadFailed(Strings["Gui.Error.LocalizationFailed"]);
-                }
             }
             else
             {
-                Strings.LoadFailed($"{strings.Code}: {strings.Message}");
+                Strings.LoadFailed(DescribeFailure(strings.Code, strings.Message));
                 Diagnostics.AddDiagnostic($"startup: strings.get failed ({strings.Code}) {strings.Message}");
             }
 
@@ -380,7 +522,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
                 return Fail(Strings["Gui.Error.LocalizationFailed"]);
             }
 
-            StatusText = Environment is null ? Strings["Gui.Ready"] : HeaderEnvironment;
+            StatusText = Strings["Gui.Ready"];
             Initialization = InitializationState.Ready;
             Diagnostics.AddDiagnostic("startup: ready");
             return null;
@@ -392,24 +534,236 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    /// <summary>Reconnects after a failure (the visible Retry action).</summary>
-    public Task<string?> RetryConnectAsync()
+    /// <summary>
+    /// Reconnects after a failure or a lost session: stops whatever session is left, makes
+    /// exactly one new connection with a fresh handshake, reloads the read-only data, and
+    /// marks the data each workspace already showed as stale so the UI cannot pass it off as
+    /// current. Staged review selections are kept; no mutation is ever replayed.
+    /// </summary>
+    public async Task<string?> ReconnectAsync()
     {
-        Runner.Reset();
-        IsConnected = false;
-        return ConnectAsync();
+        if (HasMutatingOperation)
+        {
+            return Strings["Gui.Error.BusyMutating"];
+        }
+
+        var previousGeneration = Runner.Generation;
+        await Runner.StopAsync(allowKill: true, reason: "reconnect").ConfigureAwait(true);
+        Diagnostics.AddDiagnostic($"connection: stopped (generation {previousGeneration} -> {Runner.Generation})");
+
+        MarkWorkspacesStale();
+        var failure = await ConnectAsync().ConfigureAwait(true);
+        if (failure is not null)
+        {
+            return failure;
+        }
+
+        Diagnostics.AddDiagnostic($"connection: reconnected (generation {Runner.Generation})");
+        await ReloadCurrentWorkspaceAsync().ConfigureAwait(true);
+        return null;
     }
+
+    /// <summary>Reloads the visible workspace's read-only data after a reconnect.</summary>
+    public async Task ReloadCurrentWorkspaceAsync()
+    {
+        var target = For(Current);
+        await RunReadAsync(async () =>
+        {
+            await target.ReloadAsync().ConfigureAwait(true);
+            return true;
+        }).ConfigureAwait(true);
+    }
+
+    /// <summary>Marks every already-loaded workspace's data as belonging to a past connection.</summary>
+    public void MarkWorkspacesStale()
+    {
+        foreach (var workspace in AllWorkspaces())
+        {
+            workspace.MarkStale();
+        }
+    }
+
+    private WorkspaceViewModel For(Workspace workspace) => workspace switch
+    {
+        Workspace.Tweaks => Tweaks,
+        Workspace.Review => Review,
+        Workspace.History => History,
+        Workspace.Diagnostics => Diagnostics,
+        Workspace.Licensing => Licensing,
+        _ => Overview,
+    };
+
+    private WorkspaceViewModel[] AllWorkspaces() =>
+        new WorkspaceViewModel[] { Overview, Tweaks, Review, History, Diagnostics, Licensing };
 
     private string Fail(string message)
     {
-        IsConnected = false;
         InitializationError = message;
         Initialization = InitializationState.Failed;
+        Connection = ConnectionState.Failed;
+        _connectionCode = ProtocolConstants.ErrorCode.BackendDown;
+        _connectionDetail = message;
         StatusText = message;
         return message;
     }
 
-    /// <summary>Navigates to a workspace, loading it on first visit.</summary>
+    // ---- connection state plumbing --------------------------------------------
+
+    /// <summary>Mirrors the runner's session state onto the shell's connection state.</summary>
+    private void ApplyBackendState(BackendStateChange change)
+    {
+        _connectionDetail = change.Detail;
+        _connectionExitCode = change.ExitCode;
+
+        switch (change.State)
+        {
+            case BackendState.Connecting:
+                Connection = ConnectionState.Connecting;
+                return;
+
+            case BackendState.Ready:
+                Connection = ConnectionState.Ready;
+                return;
+
+            case BackendState.Failed:
+                _connectionCode = ProtocolConstants.ErrorCode.BackendDown;
+                Connection = ConnectionState.Failed;
+                return;
+
+            default:
+                _connectionCode = change.ExitCode != 0
+                    ? ProtocolConstants.ErrorCode.BackendExited
+                    : ProtocolConstants.ErrorCode.BackendDown;
+                if (Connection != ConnectionState.Connecting)
+                {
+                    Connection = ConnectionState.Disconnected;
+                }
+
+                Diagnostics.AddDiagnostic($"backend: {change.Reason} (exit code {change.ExitCode})");
+                if (IsLoadedDataAtRisk() && change.ExitCode != 0)
+                {
+                    // The data on screen was read from a process that has ended: it stays
+                    // visible, but it is no longer current and must not be trusted blind.
+                    MarkWorkspacesStale();
+                }
+
+                StatusText = RecoveryMessage;
+                return;
+        }
+    }
+
+    private bool IsLoadedDataAtRisk() => Overview.Loaded || Tweaks.Loaded || History.Loaded || Diagnostics.Loaded;
+
+    /// <summary>
+    /// Turns a failure code into localized text. The engine localizes its own error
+    /// messages (it throws them through its string tables), so anything this client does not
+    /// recognize is shown verbatim; the codes this client invents are localized here.
+    /// </summary>
+    public string DescribeFailure(string code, string message) => DescribeFailure(code, message, 0);
+
+    private string DescribeFailure(string code, string message, int exitCode)
+    {
+        var detail = string.IsNullOrWhiteSpace(message) ? Strings["Gui.BackendDown"] : message;
+        return code switch
+        {
+            ProtocolConstants.ErrorCode.BackendExited when exitCode != 0 =>
+                $"{Strings.Get("Gui.Error.BackendExited", exitCode)} ({detail})",
+            ProtocolConstants.ErrorCode.BackendDown or ProtocolConstants.ErrorCode.BackendExited =>
+                Strings["Gui.BackendDown"],
+            ProtocolConstants.ErrorCode.StaleConnection => Strings["Gui.Error.StaleAnswer"],
+            ProtocolConstants.ErrorCode.Cancelled => Strings["Gui.Error.Cancelled"],
+            ProtocolConstants.ErrorCode.Timeout => Strings["Gui.Error.BackendTimeout"],
+            ProtocolConstants.ErrorCode.Busy => Strings["Gui.Error.Busy"],
+            ProtocolConstants.ErrorCode.RequiresElevation => Strings["Gui.Error.RequiresElevation"],
+            "ProjectionFailed" => Strings.Get("Gui.Error.BackendProtocol", detail),
+            _ => detail,
+        };
+    }
+
+    private string ConnectionDetailText()
+    {
+        var lines = new List<string>
+        {
+            $"code={_connectionCode}",
+            $"generation={Runner.Generation}",
+            $"exit={_connectionExitCode}",
+            _connectionDetail,
+        };
+
+        var stderr = Runner.StderrTail;
+        if (!string.IsNullOrWhiteSpace(stderr) && !stderr.Contains(_connectionDetail, StringComparison.Ordinal))
+        {
+            lines.Add(stderr);
+        }
+
+        return string.Join(System.Environment.NewLine, lines.Where(line => !string.IsNullOrWhiteSpace(line)).ToArray());
+    }
+
+    private void RaiseConnectionFacts()
+    {
+        Raise(nameof(IsConnected));
+        Raise(nameof(IsConnecting));
+        Raise(nameof(IsDisconnected));
+        Raise(nameof(IsConnectionFailed));
+        Raise(nameof(ConnectionLabel));
+        Raise(nameof(ConnectionError));
+        Raise(nameof(ConnectionDetail));
+        Raise(nameof(RecoveryVisible));
+        Raise(nameof(RecoveryMessage));
+        Raise(nameof(ConnectionExitCode));
+        Raise(nameof(CanReconnect));
+        Raise(nameof(PrivilegeLabel));
+        Raise(nameof(ConnectedCommandsEnabled));
+    }
+
+    /// <summary>True when commands that need the backend may run.</summary>
+    public bool ConnectedCommandsEnabled => IsConnected;
+
+    private void RaiseEnvironmentFacts()
+    {
+        Raise(nameof(IsElevated));
+        Raise(nameof(PrivilegeLabel));
+        Raise(nameof(EnvironmentSummary));
+        Raise(nameof(RuntimeSummary));
+        Raise(nameof(PathSummary));
+        Raise(nameof(PendingRebootSummary));
+    }
+
+    private void LoadLanguages(
+        IReadOnlyList<string> languages,
+        string active,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> tables)
+    {
+        Strings.Load(languages, active, tables);
+
+        AvailableLanguages.Clear();
+        foreach (var code in Strings.Languages)
+        {
+            // The name comes from the engine's tables (Tui.Language.<code>); a language
+            // without a shipped name shows its stable code rather than a raw key.
+            var name = Strings.Get($"Tui.Language.{code}");
+            AvailableLanguages.Add(new LanguageOption(code, name.StartsWith('[') ? code : name));
+        }
+
+        SyncSelectedLanguage();
+    }
+
+    /// <summary>Points the selector at the active language without echoing a switch back.</summary>
+    private void SyncSelectedLanguage()
+    {
+        var match = AvailableLanguages.FirstOrDefault(option => option.Code == Strings.Active);
+        if (match is null)
+        {
+            return;
+        }
+
+        _selectedLanguage = match;
+        Raise(nameof(SelectedLanguage));
+    }
+
+    // ---- workspace navigation -------------------------------------------------
+
+    /// <summary>Navigates to a workspace, loading it on first visit (or after a reconnect).</summary>
     public async Task NavigateAsync(Workspace workspace)
     {
         Current = workspace;
@@ -440,14 +794,80 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
         if (!outcome.Ok)
         {
-            StatusText = outcome.Message;
+            StatusText = DescribeFailure(outcome.Code, outcome.Message);
+            SyncSelectedLanguage();
             return;
         }
 
         Strings.SetActive(language);
+        SyncSelectedLanguage();
         Raise(nameof(CurrentTitle));
-        StatusText = HeaderEnvironment;
+        StatusText = Strings["Gui.Ready"];
     }
+
+    // ---- elevation ------------------------------------------------------------
+
+    /// <summary>
+    /// Relaunches the application elevated (a child that receives a UAC prompt) and
+    /// exits this copy. The backend is shut down cleanly first - never killed under a
+    /// mutation - and, when the handoff cannot be started, the session is brought back so
+    /// the window the user keeps working in is connected again.
+    /// </summary>
+    /// <returns>An error message when the relaunch could not be started; null on success.</returns>
+    public async Task<string?> RelaunchElevatedAsync()
+    {
+        if (HasMutatingOperation)
+        {
+            return Strings["Gui.Error.BusyMutating"];
+        }
+
+        var repositoryRoot = _repositoryRoot;
+        var language = Strings.Active;
+
+        var previousGeneration = Runner.Generation;
+        var outcome = await Runner.StopAsync(allowKill: false, reason: "elevation handoff").ConfigureAwait(true);
+        if (outcome != ShutdownOutcome.Clean && outcome != ShutdownOutcome.AlreadyStopped)
+        {
+            // The old session is gone either way, and the message must not claim otherwise:
+            // report it and put a working session back under the window that stays open.
+            var restored = await ConnectAsync().ConfigureAwait(true);
+            return restored is null
+                ? Strings["Gui.Error.BackendStopFailed"]
+                : $"{Strings["Gui.Error.BackendStopFailed"]} {DescribeFailure(ProtocolConstants.ErrorCode.BackendDown, restored)}";
+        }
+
+        Diagnostics.AddDiagnostic($"elevation: session stopped (generation {previousGeneration} -> {Runner.Generation})");
+
+        try
+        {
+            StartElevated(repositoryRoot, language);
+        }
+        catch (Win32Exception)
+        {
+            // The user declined the UAC prompt (ERROR_CANCELLED) or it failed to appear.
+            // Nothing ran, so this copy must keep a working backend: the elevated child was
+            // never started, and the previous session was deliberately stopped.
+            var restored = await ConnectAsync().ConfigureAwait(true);
+            if (restored is not null)
+            {
+                return $"{Strings["Gui.Error.ElevationDeclined"]} {restored}";
+            }
+
+            await ReloadCurrentWorkspaceAsync().ConfigureAwait(true);
+            return Strings["Gui.Error.ElevationDeclined"];
+        }
+        catch (Exception exception)
+        {
+            var restored = await ConnectAsync().ConfigureAwait(true);
+            var message = $"{Strings["Gui.Error.ElevationFailed"]}: {exception.Message}";
+            return restored is null ? message : $"{message} {restored}";
+        }
+
+        Connection = ConnectionState.Disconnected;
+        return null;
+    }
+
+    // ---- closing --------------------------------------------------------------
 
     /// <summary>
     /// Prepares to close the window. Returns <c>true</c> when it is safe to close now;
@@ -461,8 +881,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             return false;
         }
 
-        await Runner.ShutdownAsync(allowKill: true).ConfigureAwait(true);
-        IsConnected = false;
+        await Runner.StopAsync(allowKill: true, reason: "window closed").ConfigureAwait(true);
         return true;
     }
 
@@ -480,8 +899,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
 
         // The backend refuses to exit while a task is running, so a short grace is given
         // and the outcome is reported rather than assumed.
-        await Runner.ShutdownAsync(allowKill: false).ConfigureAwait(true);
-        IsConnected = false;
+        await Runner.StopAsync(allowKill: false, reason: "cancel and close").ConfigureAwait(true);
         return true;
     }
 
@@ -494,8 +912,7 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
             await Task.Delay(200).ConfigureAwait(true);
         }
 
-        await Runner.ShutdownAsync(allowKill: !HasMutatingOperation).ConfigureAwait(true);
-        IsConnected = false;
+        await Runner.StopAsync(allowKill: !HasMutatingOperation, reason: "wait and close").ConfigureAwait(true);
     }
 
     /// <summary>Records the request id of the newest operation (used by cancel).</summary>
@@ -518,16 +935,6 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         });
     }
 
-    private void OnBackendExited(object? sender, int exitCode)
-    {
-        Dispatch(() =>
-        {
-            IsConnected = false;
-            StatusText = Strings.Get("Gui.Error.BackendExited", exitCode);
-            Diagnostics.AddDiagnostic($"backend exited with code {exitCode}");
-        });
-    }
-
     /// <summary>The resource key of a workspace's navigation label.</summary>
     public static string NavKey(Workspace workspace) => workspace switch
     {
@@ -538,6 +945,18 @@ public sealed class ShellViewModel : ObservableObject, IAsyncDisposable
         Workspace.Diagnostics => "Gui.Nav.Diagnostics",
         Workspace.Licensing => "Gui.Nav.Licensing",
         _ => "Gui.Nav.Overview",
+    };
+
+    /// <summary>The Segoe Fluent/MDL2 glyph for a workspace, present on Windows 10 and 11.</summary>
+    public static string NavGlyph(Workspace workspace) => workspace switch
+    {
+        Workspace.Overview => "\uE80F",   // Home
+        Workspace.Tweaks => "\uE9F5",     // DeveloperTools / sliders
+        Workspace.Review => "\uE8FB",     // Accept / review
+        Workspace.History => "\uE81C",    // History
+        Workspace.Diagnostics => "\uE9D9", // Diagnostic
+        Workspace.Licensing => "\uE8D7",  // Certificate
+        _ => "\uE80F",
     };
 
     /// <inheritdoc />

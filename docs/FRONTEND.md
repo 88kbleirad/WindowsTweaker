@@ -89,29 +89,56 @@ public API through the bridge and renders the engine's structured answers:
 - Pending selections, running operations, results and history are four distinct state
   slots in the view models and are never merged.
 
-## Startup behavior
+## Connection and recovery
 
 The window is created and activated before the backend is connected. Engine discovery is
-non-fatal: if the packaged engine folder is missing (or the resolved root has no module),
-the window still opens and reports the missing-engine state; the only exception is a
-PowerShell host that cannot be found or a handshake that fails, which shows a visible
-"backend down" panel with the reason and a retry button. The backend is never waited on
-synchronously during startup, and a backend failure never takes the window down.
+non-fatal: if the packaged engine folder is missing (or the resolved root has no module), the
+window still opens and reports the state; the backend is never waited on synchronously during
+startup, and a backend failure never takes the window down.
 
-Startup has three explicit states (`Loading`, `Ready`, `Failed`) and each workspace has its
-own four (`Idle`, `Loading`, `Ready`/`Empty`, `Failed`):
+`BridgeRunner` owns exactly one backend session and is the single source of truth for whether
+it is usable. The shell mirrors it as one of four explicit states — `Connecting`, `Ready`,
+`Disconnected`, `Failed` — and the header renders only that state, so a session that is lost
+after startup can never leave the window claiming to be connected:
 
-* a failure at any startup stage — including a fault raised inside a notification handler —
-  is written to the startup diagnostics and rendered as a failure panel with a Retry that
-  reconnects, never as a silently half-initialized window;
-* a workspace whose request fails shows the reason and its own Retry; a request that
-  succeeds with nothing in it says so, and is never presented as "0 things" from a failure;
-* the interface text, the language list and every localized label refresh when the tables
-  are loaded and when the language changes (the localization service raises the indexer
-  notification and keeps its language list observable).
+* connecting is single-flight and idempotent, and it stops any previous session first: there
+  is never more than one backend process;
+* every request carries the connection generation that issued it; an answer that arrives after
+  the generation moved on is rejected as stale instead of being applied;
+* a backend that dies is detected by its exit event *and* by the next call, so the header, the
+  recovery strip and every command's eligibility update immediately;
+* `ReconnectAsync` stops whatever is left, makes exactly one new connection, redoes the
+  handshake, reloads the string tables, the environment and the visible workspace's read-only
+  data, marks the data read from the previous connection as stale, and keeps the staged review
+  list. It never replays a mutation.
+* the recovery strip (state, localized reason, raw technical detail, Retry) is visible whenever
+  the connection is not ready — including long after startup, which the previous build could
+  not report at all.
 
-Startup stages and any unhandled exception chain are recorded under
-`%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log` (see BUILD-WINUI.md).
+Startup has three explicit states (`Loading`, `Ready`, `Failed`) and each workspace has its own
+five (`Idle`, `Loading`, `Ready`, `Empty`, `Failed`) plus a staleness marker:
+
+* the states are mutually exclusive in the UI: a failed load never renders an "empty filter"
+  message, a loading panel never renders a result, and a workspace that never loaded says so;
+* a workspace whose request fails shows the localized reason, the raw detail in a copyable
+  section and its own Retry; a request that succeeds with nothing in it says so;
+* commands carry their real preconditions (`IsEnabled` bound to `CanApply`/`CanPreview`/
+  `CanClear`/`CanRemove`/`CanRestore`/`CanActivate`/`CanReconnect` ...) and re-check them inside
+  the handler, so a command is never merely greyed out;
+* connection errors are localized from the error *code*, and the raw engine message, exit code,
+  generation and stderr tail are kept separately for the technical detail section. Engine error
+  messages arrive already localized (the engine throws them through its own tables);
+* the interface text, the language options (stable codes with the engine's own display names)
+  and every localized label refresh when the tables are loaded and when the language changes
+  (the localization service raises the indexer notification and keeps its language list
+  observable; the selector's selection is bound, so it is never blank; a language switch raises
+  an all-properties notification on the shell instead of reassigning the window's DataContext,
+  which is what cleared the selection before).
+
+Startup stages, unhandled exception chains and every request (operation, request id, elapsed
+milliseconds, outcome code) are recorded under
+`%LOCALAPPDATA%\WindowsTweaker\logs\startup-*.log` (see BUILD-WINUI.md) and in the
+Diagnostics workspace.
 
 ## Appearance
 
@@ -121,7 +148,14 @@ the merged `Themes/CatppuccinMocha.xaml` dictionary: square app-owned controls
 face, and per-state overrides for lists, combos, buttons, inputs, check boxes, scrollbars,
 dialogs and tooltips. The navigation selection is a Mocha surface with a thin blue accent
 indicator, never the default saturated fill. The caption bar is Mocha with readable buttons
-when the OS supports title-bar customisation. See section 27 of VALIDATION.md.
+when the OS supports title-bar customisation. Navigation entries carry Segoe Fluent/MDL2
+glyphs present on Windows 10/11 IoT LTSC (no missing-glyph boxes).
+
+The header is one compact status area — a connection pill (state dot + localized state), a
+privilege pill, the language selector, reduce-motion and Elevate. Environment, protocol and
+runtime details live in Diagnostics and are not repeated in the header or the footers; the
+status line appears once, and the in-workspace strip carries progress only. See sections 27
+and 28 of VALIDATION.md.
 
 ## Elevation
 

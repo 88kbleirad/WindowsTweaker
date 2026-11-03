@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using WindowsTweaker.Gui.Core.Model;
 
 namespace WindowsTweaker.Gui.Core.ViewModels;
@@ -16,22 +17,31 @@ namespace WindowsTweaker.Gui.Core.ViewModels;
 public sealed class HistoryViewModel : WorkspaceViewModel
 {
     private bool _showOperations;
-    private HistoryRow? _selectedRow;
-    private InterruptedOperation? _selectedInterrupted;
+    private HistoryDisplayRow? _selectedRow;
+    private OperationDisplayRow? _selectedOperation;
+    private InterruptedDisplayRow? _selectedInterrupted;
 
     public HistoryViewModel(ShellViewModel shell)
         : base(shell)
     {
+        // Command eligibility depends on the connection and the shell's busy flag.
+        Shell.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ShellViewModel.Connection) or nameof(ShellViewModel.Busy))
+            {
+                Raise(nameof(CanRestore));
+            }
+        };
     }
 
     /// <summary>Completed (and failed) history rows, newest first.</summary>
-    public ObservableCollection<HistoryRow> Rows { get; } = new();
+    public ObservableCollection<HistoryDisplayRow> Rows { get; } = new();
 
     /// <summary>Journal operation rows, newest first.</summary>
-    public ObservableCollection<OperationRow> Operations { get; } = new();
+    public ObservableCollection<OperationDisplayRow> Operations { get; } = new();
 
     /// <summary>Operations that started and never finished.</summary>
-    public ObservableCollection<InterruptedOperation> Interrupted { get; } = new();
+    public ObservableCollection<InterruptedDisplayRow> Interrupted { get; } = new();
 
     /// <summary>Target comparison for the selected interrupted operation.</summary>
     public ObservableCollection<InterruptedTarget> InterruptedTargets { get; } = new();
@@ -44,7 +54,7 @@ public sealed class HistoryViewModel : WorkspaceViewModel
     }
 
     /// <summary>Selected history row.</summary>
-    public HistoryRow? SelectedRow
+    public HistoryDisplayRow? SelectedRow
     {
         get => _selectedRow;
         set
@@ -52,13 +62,31 @@ public sealed class HistoryViewModel : WorkspaceViewModel
             if (Set(ref _selectedRow, value))
             {
                 Raise(nameof(CanRestore));
+                Raise(nameof(HasSelection));
                 Raise(nameof(SelectedSummary));
+                Raise(nameof(SelectedRaw));
+            }
+        }
+    }
+
+    /// <summary>Selected journal operation row.</summary>
+    public OperationDisplayRow? SelectedOperation
+    {
+        get => _selectedOperation;
+        set
+        {
+            if (Set(ref _selectedOperation, value))
+            {
+                Raise(nameof(CanRestore));
+                Raise(nameof(HasSelection));
+                Raise(nameof(SelectedSummary));
+                Raise(nameof(SelectedRaw));
             }
         }
     }
 
     /// <summary>Selected interrupted operation.</summary>
-    public InterruptedOperation? SelectedInterrupted
+    public InterruptedDisplayRow? SelectedInterrupted
     {
         get => _selectedInterrupted;
         set
@@ -66,30 +94,105 @@ public sealed class HistoryViewModel : WorkspaceViewModel
             if (Set(ref _selectedInterrupted, value))
             {
                 Raise(nameof(CanRestore));
+                Raise(nameof(HasSelection));
                 Raise(nameof(SelectedSummary));
+                Raise(nameof(SelectedRaw));
                 _ = LoadInterruptedTargetsAsync();
             }
         }
     }
 
+    /// <summary>True when any row is selected (drives the "select a row" hint).</summary>
+    public bool HasSelection =>
+        SelectedRow is not null || SelectedOperation is not null || SelectedInterrupted is not null;
+
     /// <summary>True when the selection can be restored.</summary>
     public bool CanRestore =>
-        _selectedRow is { RolledBack: false, Irreversible: false } ||
-        _selectedInterrupted is { CanRestore: true };
+        Shell.IsConnected && !Shell.Busy &&
+        (SelectedRow is { Source: { RolledBack: false, Irreversible: false } } ||
+         SelectedInterrupted is { Source: { CanRestore: true } });
 
     /// <summary>Short description of the selection.</summary>
     public string SelectedSummary
     {
         get
         {
-            if (_selectedRow is not null)
+            var lines = new List<string>();
+            if (SelectedRow is { } row)
             {
-                return $"{_selectedRow.TweakId} -> {_selectedRow.State} ({_selectedRow.Outcome})";
+                lines.Add($"{Strings["Gui.Column.Time"]}: {row.Time}");
+                lines.Add($"{Strings["Gui.Column.Tweak"]}: {row.TweakId}");
+                lines.Add($"{Strings["Gui.Column.State"]}: {row.State}");
+                lines.Add($"{Strings["Gui.Column.Outcome"]}: {row.Outcome}");
+                if (row.Detail.Length > 0)
+                {
+                    lines.Add($"{Strings["Gui.Column.Detail"]}: {row.Detail}");
+                }
+
+                return string.Join(Environment.NewLine, lines);
             }
 
-            if (_selectedInterrupted is not null)
+            if (SelectedOperation is { } operation)
             {
-                return $"{_selectedInterrupted.TweakId} - {_selectedInterrupted.Stage}";
+                lines.Add($"{Strings["Gui.Column.Time"]}: {operation.Time}");
+                lines.Add($"{Strings["Gui.Column.Tweak"]}: {operation.TweakId}");
+                lines.Add($"{Strings["Gui.Column.Operation"]}: {operation.Source.OperationId}");
+                lines.Add($"{Strings["Gui.Column.State"]}: {operation.Stage}");
+                lines.Add($"{Strings["Gui.Column.Outcome"]}: {operation.Outcome}");
+                lines.Add($"{Strings["Gui.Column.Source"]}: {operation.Origin}");
+                if (operation.Detail.Length > 0)
+                {
+                    lines.Add($"{Strings["Gui.Column.Detail"]}: {operation.Detail}");
+                }
+
+                return string.Join(Environment.NewLine, lines);
+            }
+
+            if (SelectedInterrupted is { } interrupted)
+            {
+                lines.Add($"{Strings["Gui.Column.Time"]}: {interrupted.Time}");
+                lines.Add($"{Strings["Gui.Column.Tweak"]}: {interrupted.TweakId}");
+                lines.Add($"{Strings["Gui.Column.State"]}: {interrupted.Stage}");
+                if (interrupted.Detail.Length > 0)
+                {
+                    lines.Add($"{Strings["Gui.Column.Detail"]}: {interrupted.Detail}");
+                }
+
+                foreach (var target in interrupted.Source.Targets)
+                {
+                    if (!string.IsNullOrEmpty(target.Label))
+                    {
+                        lines.Add($"{Strings["Gui.Column.Target"]}: {target.Label}");
+                    }
+
+                    lines.Add($"{Strings["Gui.Column.Value"]}: {target.Intended} -> {target.Live}");
+                }
+
+                return string.Join(Environment.NewLine, lines);
+            }
+
+            return string.Empty;
+        }
+    }
+
+    /// <summary>Raw technical text of the selection (the source row, for copying).</summary>
+    public string SelectedRaw
+    {
+        get
+        {
+            if (SelectedRow is { } row)
+            {
+                return row.Source.ToString();
+            }
+
+            if (SelectedOperation is { } operation)
+            {
+                return operation.Source.ToString();
+            }
+
+            if (SelectedInterrupted is { } interrupted)
+            {
+                return interrupted.Source.ToString();
             }
 
             return string.Empty;
@@ -99,32 +202,60 @@ public sealed class HistoryViewModel : WorkspaceViewModel
     /// <inheritdoc />
     protected override async Task LoadAsync()
     {
-        await RunAsync("history.list", Projections.History, rows =>
-        {
-            Rows.Clear();
-            foreach (var row in rows)
+        var ok = await RunAsync(
+            "history.list",
+            Projections.History,
+            rows =>
             {
-                Rows.Add(row);
-            }
-        }, new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 200 }).ConfigureAwait(true);
+                Rows.Clear();
+                foreach (var row in rows)
+                {
+                    Rows.Add(FromHistory(row));
+                }
+            },
+            new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 200 }).ConfigureAwait(true);
 
-        await RunAsync("journal.operation", Projections.Operations, rows =>
+        if (!ok)
         {
-            Operations.Clear();
-            foreach (var row in rows)
-            {
-                Operations.Add(row);
-            }
-        }, new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 200 }).ConfigureAwait(true);
+            Loaded = true;
+            return;
+        }
 
-        await RunAsync("history.interrupted", Projections.Interrupted, rows =>
-        {
-            Interrupted.Clear();
-            foreach (var row in rows)
+        ok = await RunAsync(
+            "journal.operation",
+            Projections.Operations,
+            rows =>
             {
-                Interrupted.Add(row);
-            }
-        }).ConfigureAwait(true);
+                Operations.Clear();
+                foreach (var row in rows)
+                {
+                    Operations.Add(FromOperation(row));
+                }
+            },
+            new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 200 }).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            Loaded = true;
+            return;
+        }
+
+        ok = await RunAsync(
+            "history.interrupted",
+            Projections.Interrupted,
+            rows =>
+            {
+                Interrupted.Clear();
+                foreach (var row in rows)
+                {
+                    Interrupted.Add(FromInterrupted(row));
+                }
+            }).ConfigureAwait(true);
+
+        if (ok)
+        {
+            MarkLoaded(Rows.Count + Operations.Count + Interrupted.Count);
+        }
 
         Loaded = true;
     }
@@ -137,7 +268,7 @@ public sealed class HistoryViewModel : WorkspaceViewModel
             return;
         }
 
-        foreach (var target in _selectedInterrupted.Targets)
+        foreach (var target in _selectedInterrupted.Source.Targets)
         {
             InterruptedTargets.Add(target);
         }
@@ -149,7 +280,7 @@ public sealed class HistoryViewModel : WorkspaceViewModel
             Projections.Interrupted,
             rows =>
             {
-                var match = rows.FirstOrDefault(r => r.OperationId == _selectedInterrupted.OperationId);
+                var match = rows.FirstOrDefault(r => r.OperationId == _selectedInterrupted.Source.OperationId);
                 if (match is null)
                 {
                     return;
@@ -172,11 +303,17 @@ public sealed class HistoryViewModel : WorkspaceViewModel
     /// </summary>
     public async Task RestoreAsync(bool force = false)
     {
-        var id = _selectedRow?.TweakId ?? _selectedInterrupted?.TweakId;
-        var historyId = _selectedRow?.OperationId ?? _selectedInterrupted?.OperationId ?? string.Empty;
+        var id = SelectedRow?.TweakId ?? SelectedInterrupted?.TweakId;
+        var historyId = SelectedRow?.Source.OperationId ?? SelectedInterrupted?.Source.OperationId ?? string.Empty;
         if (string.IsNullOrEmpty(historyId))
         {
             StatusText = Strings["Gui.Error.NoSelection"];
+            return;
+        }
+
+        if (!Shell.IsConnected)
+        {
+            StatusText = Shell.ConnectionError;
             return;
         }
 
@@ -228,7 +365,66 @@ public sealed class HistoryViewModel : WorkspaceViewModel
 
         StatusText = outcome.Ok ? outcome.Value ?? path : outcome.Message;
     }
+
+    /// <summary>Formats an ISO-8601 UTC timestamp as a local date/time; raw on parse failure.</summary>
+    private static string FormatTime(string timestamp)
+    {
+        if (DateTimeOffset.TryParse(timestamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+        {
+            return parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        }
+
+        return timestamp;
+    }
+
+    /// <summary>Renders an engine outcome/stage code through the engine's own vocabulary.</summary>
+    private string LocalizeOp(string code)
+    {
+        var text = Strings.Get("Op." + code);
+        return text.StartsWith("[", StringComparison.Ordinal) ? code : text;
+    }
+
+    /// <summary>Renders a tweak state code only when the engine has a State.* label for it.</summary>
+    private string LocalizeState(string code)
+    {
+        var text = Strings.Get("State." + code);
+        return text.StartsWith("[", StringComparison.Ordinal) ? code : text;
+    }
+
+    private HistoryDisplayRow FromHistory(HistoryRow row) => new(
+        FormatTime(row.Timestamp),
+        row.TweakId,
+        LocalizeState(row.State),
+        LocalizeOp(row.Outcome),
+        string.Join("; ", row.Messages.Where(m => !string.IsNullOrEmpty(m))),
+        row);
+
+    private OperationDisplayRow FromOperation(OperationRow row) => new(
+        FormatTime(row.Timestamp),
+        row.TweakId,
+        LocalizeOp(row.Stage),
+        LocalizeOp(row.Outcome),
+        row.Origin,
+        string.Join("; ", row.Messages.Where(m => !string.IsNullOrEmpty(m))),
+        row);
+
+    private InterruptedDisplayRow FromInterrupted(InterruptedOperation operation) => new(
+        FormatTime(operation.Timestamp),
+        operation.TweakId,
+        LocalizeOp(operation.Stage),
+        operation.CanRestore ? Strings["Common.Yes"] : Strings["Common.No"],
+        string.Join("; ", operation.Targets.Select(t => t.Label).Where(l => !string.IsNullOrEmpty(l))),
+        operation);
 }
+
+/// <summary>One history row as the panel renders it (localized, local time).</summary>
+public sealed record HistoryDisplayRow(string Time, string TweakId, string State, string Outcome, string Detail, HistoryRow Source);
+
+/// <summary>One journal operation row as the panel renders it.</summary>
+public sealed record OperationDisplayRow(string Time, string TweakId, string Stage, string Outcome, string Origin, string Detail, OperationRow Source);
+
+/// <summary>One interrupted operation as the panel renders it.</summary>
+public sealed record InterruptedDisplayRow(string Time, string TweakId, string Stage, string CanRestoreLabel, string Detail, InterruptedOperation Source);
 
 /// <summary>The diagnostics workspace: read-only reporting and monitoring.</summary>
 /// <remarks>
@@ -237,21 +433,35 @@ public sealed class HistoryViewModel : WorkspaceViewModel
 /// </remarks>
 public sealed class DiagnosticsViewModel : WorkspaceViewModel
 {
+    private readonly SectionState _report = new();
+    private readonly SectionState _scan = new();
+    private readonly SectionState _monitor = new();
+    private readonly SectionState _devices = new();
+    private readonly SectionState _power = new();
+    private readonly SectionState _privacy = new();
+    private readonly SectionState _quarantine = new();
+    private readonly SectionState _setup = new();
     private RuntimeStatus? _runtime;
-    private string _reportText = string.Empty;
     private string _scanPath = string.Empty;
-    private string _scanResult = string.Empty;
-    private string _monitorResult = string.Empty;
-    private string _deviceResult = string.Empty;
-    private string _powerResult = string.Empty;
-    private string _privacyResult = string.Empty;
-    private string _quarantineResult = string.Empty;
-    private string _setupResult = string.Empty;
     private readonly ObservableCollection<string> _diagnostics = new();
 
     public DiagnosticsViewModel(ShellViewModel shell)
         : base(shell)
     {
+        // The environment/protocol facts are owned by the shell; rebuild the readable list
+        // when the shell refreshes them so the panel is never stale.
+        Shell.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ShellViewModel.Environment)
+                or nameof(ShellViewModel.Runtime)
+                or nameof(ShellViewModel.EngineVersion)
+                or nameof(ShellViewModel.BackendSummary))
+            {
+                RebuildEnvironmentFacts();
+            }
+        };
+
+        RebuildEnvironmentFacts();
     }
 
     /// <summary>Runtime profile and capability table (read-only).</summary>
@@ -261,11 +471,46 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         private set => Set(ref _runtime, value);
     }
 
-    /// <summary>The generated diagnostics report, as JSON text.</summary>
+    // ---- report ----
+
+    /// <summary>The report section's state.</summary>
+    public LoadState ReportState => _report.State;
+
+    /// <summary>Localized status line for the report section.</summary>
+    public string ReportStatusText => StatusTextFor(_report);
+
+    /// <summary>The generated diagnostics report, readable.</summary>
+    public string ReportSummary => SummarizeText(_report);
+
+    /// <summary>The generated diagnostics report, exact JSON.</summary>
+    public string ReportRaw => _report.Raw;
+
+    /// <summary>The generated diagnostics report, as JSON text (kept for existing bindings).</summary>
     public string ReportText
     {
-        get => _reportText;
-        private set => Set(ref _reportText, value);
+        get => _report.Raw;
+        private set => _report.Raw = value;
+    }
+
+    // ---- scan ----
+
+    /// <summary>The scan section's state.</summary>
+    public LoadState ScanState => _scan.State;
+
+    /// <summary>Localized status line for the scan section.</summary>
+    public string ScanStatusText => StatusTextFor(_scan);
+
+    /// <summary>The directory scan result, readable.</summary>
+    public string ScanSummary => SummarizeText(_scan);
+
+    /// <summary>The directory scan result, exact JSON.</summary>
+    public string ScanRaw => _scan.Raw;
+
+    /// <summary>The directory scan result (kept for existing bindings).</summary>
+    public string ScanResult
+    {
+        get => _scan.Raw;
+        private set => _scan.Raw = value;
     }
 
     /// <summary>Directory to scan.</summary>
@@ -275,60 +520,140 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         set => Set(ref _scanPath, value);
     }
 
-    /// <summary>Directory scan result.</summary>
-    public string ScanResult
-    {
-        get => _scanResult;
-        private set => Set(ref _scanResult, value);
-    }
+    // ---- monitor ----
 
-    /// <summary>Monitoring cycle result.</summary>
+    /// <summary>The monitor section's state.</summary>
+    public LoadState MonitorState => _monitor.State;
+
+    /// <summary>Localized status line for the monitor section.</summary>
+    public string MonitorStatusText => StatusTextFor(_monitor);
+
+    /// <summary>The monitoring cycle result, readable.</summary>
+    public string MonitorSummary => SummarizeText(_monitor);
+
+    /// <summary>The monitoring cycle result, exact JSON.</summary>
+    public string MonitorRaw => _monitor.Raw;
+
+    /// <summary>The monitoring cycle result (kept for existing bindings).</summary>
     public string MonitorResult
     {
-        get => _monitorResult;
-        private set => Set(ref _monitorResult, value);
+        get => _monitor.Raw;
+        private set => _monitor.Raw = value;
     }
 
-    /// <summary>Device inventory summary.</summary>
+    // ---- devices ----
+
+    /// <summary>The devices section's state.</summary>
+    public LoadState DeviceState => _devices.State;
+
+    /// <summary>Localized status line for the devices section.</summary>
+    public string DeviceStatusText => StatusTextFor(_devices);
+
+    /// <summary>The device inventory summary, readable.</summary>
+    public string DeviceSummary => SummarizeText(_devices);
+
+    /// <summary>The device inventory summary, exact JSON.</summary>
+    public string DeviceRaw => _devices.Raw;
+
+    /// <summary>The device inventory summary (kept for existing bindings).</summary>
     public string DeviceResult
     {
-        get => _deviceResult;
-        private set => Set(ref _deviceResult, value);
+        get => _devices.Raw;
+        private set => _devices.Raw = value;
     }
 
-    /// <summary>Power settings summary.</summary>
+    // ---- power ----
+
+    /// <summary>The power section's state.</summary>
+    public LoadState PowerState => _power.State;
+
+    /// <summary>Localized status line for the power section.</summary>
+    public string PowerStatusText => StatusTextFor(_power);
+
+    /// <summary>The power settings summary, readable.</summary>
+    public string PowerSummary => SummarizeText(_power);
+
+    /// <summary>The power settings summary, exact JSON.</summary>
+    public string PowerRaw => _power.Raw;
+
+    /// <summary>The power settings summary (kept for existing bindings).</summary>
     public string PowerResult
     {
-        get => _powerResult;
-        private set => Set(ref _powerResult, value);
+        get => _power.Raw;
+        private set => _power.Raw = value;
     }
 
-    /// <summary>Privacy activity summary.</summary>
+    // ---- privacy ----
+
+    /// <summary>The privacy section's state.</summary>
+    public LoadState PrivacyState => _privacy.State;
+
+    /// <summary>Localized status line for the privacy section.</summary>
+    public string PrivacyStatusText => StatusTextFor(_privacy);
+
+    /// <summary>The privacy activity summary, readable.</summary>
+    public string PrivacySummary => SummarizeText(_privacy);
+
+    /// <summary>The privacy activity summary, exact JSON.</summary>
+    public string PrivacyRaw => _privacy.Raw;
+
+    /// <summary>The privacy activity summary (kept for existing bindings).</summary>
     public string PrivacyResult
     {
-        get => _privacyResult;
-        private set => Set(ref _privacyResult, value);
+        get => _privacy.Raw;
+        private set => _privacy.Raw = value;
     }
 
-    /// <summary>Quarantine summary.</summary>
+    // ---- quarantine ----
+
+    /// <summary>The quarantine section's state.</summary>
+    public LoadState QuarantineState => _quarantine.State;
+
+    /// <summary>Localized status line for the quarantine section.</summary>
+    public string QuarantineStatusText => StatusTextFor(_quarantine);
+
+    /// <summary>The quarantine summary, readable.</summary>
+    public string QuarantineSummary => SummarizeText(_quarantine);
+
+    /// <summary>The quarantine summary, exact JSON.</summary>
+    public string QuarantineRaw => _quarantine.Raw;
+
+    /// <summary>The quarantine summary (kept for existing bindings).</summary>
     public string QuarantineResult
     {
-        get => _quarantineResult;
-        private set => Set(ref _quarantineResult, value);
+        get => _quarantine.Raw;
+        private set => _quarantine.Raw = value;
     }
 
-    /// <summary>Setup plan summary.</summary>
+    // ---- setup ----
+
+    /// <summary>The setup section's state.</summary>
+    public LoadState SetupState => _setup.State;
+
+    /// <summary>Localized status line for the setup section.</summary>
+    public string SetupStatusText => StatusTextFor(_setup);
+
+    /// <summary>The setup plans summary, readable.</summary>
+    public string SetupSummary => SummarizeText(_setup);
+
+    /// <summary>The setup plans summary, exact JSON.</summary>
+    public string SetupRaw => _setup.Raw;
+
+    /// <summary>The setup plans summary (kept for existing bindings).</summary>
     public string SetupResult
     {
-        get => _setupResult;
-        private set => Set(ref _setupResult, value);
+        get => _setup.Raw;
+        private set => _setup.Raw = value;
     }
+
+    /// <summary>The environment/protocol block, as localized "label: value" lines.</summary>
+    public ObservableCollection<string> EnvironmentFacts { get; } = new();
 
     /// <summary>Bounded tail of backend diagnostics (never unbounded, never on the UI thread).</summary>
     public ObservableCollection<string> Diagnostics => _diagnostics;
 
-    /// <summary>"diagnostics: N" (bounded tail count).</summary>
-    public string CountText => $"diagnostics: {_diagnostics.Count}";
+    /// <summary>Localized count of the recorded backend activity lines.</summary>
+    public string CountText => Strings.Get("Gui.Diagnostics.Lines", _diagnostics.Count);
 
     /// <summary>Appends one diagnostic line, keeping the tail bounded.</summary>
     public void AddDiagnostic(string message)
@@ -345,19 +670,57 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         });
     }
 
+    /// <summary>Appends one backend activity line to the tail (technical text).</summary>
+    public void AddActivity(BackendActivity activity)
+    {
+        var code = activity.Ok ? "ok" : (string.IsNullOrEmpty(activity.Code) ? activity.Message : activity.Code);
+        AddDiagnostic($"{activity.Operation} {activity.RequestId} {activity.ElapsedMs} ms -> {code}");
+    }
+
     /// <inheritdoc />
     protected override async Task LoadAsync()
     {
         Runtime = Shell.Runtime;
 
-        await RunAsync(
+        BeginSection(_report, Strings["Gui.Diagnostics.Report"]);
+        var ok = await RunAsync(
             "diagnostics.report",
             element => element.GetRawText(),
-            text => ReportText = text,
+            text => SucceedSection(_report, text),
             timeout: TimeSpan.FromMinutes(3),
             statusWhileRunning: Strings["Gui.Diagnostics.Report"]).ConfigureAwait(true);
 
+        if (!ok)
+        {
+            FailSection(_report, ErrorText);
+        }
+
+        RaiseSection("Report");
+        if (ok)
+        {
+            MarkLoaded(1);
+        }
+
         Loaded = true;
+    }
+
+    /// <summary>Runs the diagnostics report (read-only).</summary>
+    public async Task ReportAsync()
+    {
+        BeginSection(_report, Strings["Gui.Diagnostics.Report"]);
+        var ok = await RunAsync(
+            "diagnostics.report",
+            element => element.GetRawText(),
+            text => SucceedSection(_report, text),
+            timeout: TimeSpan.FromMinutes(3),
+            statusWhileRunning: Strings["Gui.Diagnostics.Report"]).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_report, ErrorText);
+        }
+
+        RaiseSection("Report");
     }
 
     /// <summary>Runs the read-only directory scan.</summary>
@@ -366,64 +729,301 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
         if (string.IsNullOrWhiteSpace(_scanPath))
         {
             ErrorText = Strings["Worker.Reason.RootInvalid"];
+            FailSection(_scan, ErrorText);
+            RaiseSection("Scan");
             return;
         }
 
-        await RunAsync(
+        BeginSection(_scan, Strings.Get("Disk.Scanning", _scanPath));
+        var ok = await RunAsync(
             "scan.directory",
             element => element.GetRawText(),
-            text => ScanResult = text,
+            text => SucceedSection(_scan, text),
             new Dictionary<string, object?>(StringComparer.Ordinal) { ["path"] = _scanPath },
             TimeSpan.FromMinutes(10),
             statusWhileRunning: Strings.Get("Disk.Scanning", _scanPath)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_scan, ErrorText);
+        }
+
+        RaiseSection("Scan");
     }
 
     /// <summary>Runs one read-only monitoring cycle.</summary>
-    public Task MonitorAsync() => RunAsync(
-        "monitor.cycle",
-        element => element.GetRawText(),
-        text => MonitorResult = text,
-        timeout: TimeSpan.FromMinutes(10),
-        statusWhileRunning: Strings["Gui.Diagnostics.Monitor"]);
+    public async Task MonitorAsync()
+    {
+        BeginSection(_monitor, Strings["Gui.Diagnostics.Monitor"]);
+        var ok = await RunAsync(
+            "monitor.cycle",
+            element => element.GetRawText(),
+            text => SucceedSection(_monitor, text),
+            timeout: TimeSpan.FromMinutes(10),
+            statusWhileRunning: Strings["Gui.Diagnostics.Monitor"]).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_monitor, ErrorText);
+        }
+
+        RaiseSection("Monitor");
+    }
 
     /// <summary>Reads the device inventory.</summary>
-    public Task DevicesAsync() => RunAsync(
-        "inventory.devices",
-        element => element.GetRawText(),
-        text => DeviceResult = ReportAvailability(element: text),
-        timeout: TimeSpan.FromMinutes(3));
+    public async Task DevicesAsync()
+    {
+        BeginSection(_devices, Strings["Gui.Diagnostics.Devices"]);
+        var ok = await RunAsync(
+            "inventory.devices",
+            element => element.GetRawText(),
+            text => SucceedSection(_devices, text),
+            timeout: TimeSpan.FromMinutes(3)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_devices, ErrorText);
+        }
+
+        RaiseSection("Devices");
+    }
 
     /// <summary>Reads the power settings.</summary>
-    public Task PowerAsync() => RunAsync(
-        "power.settings",
-        element => element.GetRawText(),
-        text => PowerResult = ReportAvailability(element: text),
-        timeout: TimeSpan.FromMinutes(3));
+    public async Task PowerAsync()
+    {
+        BeginSection(_power, Strings["Gui.Diagnostics.Power"]);
+        var ok = await RunAsync(
+            "power.settings",
+            element => element.GetRawText(),
+            text => SucceedSection(_power, text),
+            timeout: TimeSpan.FromMinutes(3)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_power, ErrorText);
+        }
+
+        RaiseSection("Power");
+    }
 
     /// <summary>Reads the privacy activity view.</summary>
-    public Task PrivacyAsync() => RunAsync(
-        "privacy.activity",
-        element => element.GetRawText(),
-        text => PrivacyResult = ReportAvailability(element: text),
-        timeout: TimeSpan.FromMinutes(3));
+    public async Task PrivacyAsync()
+    {
+        BeginSection(_privacy, Strings["Gui.Diagnostics.Privacy"]);
+        var ok = await RunAsync(
+            "privacy.activity",
+            element => element.GetRawText(),
+            text => SucceedSection(_privacy, text),
+            timeout: TimeSpan.FromMinutes(3)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_privacy, ErrorText);
+        }
+
+        RaiseSection("Privacy");
+    }
 
     /// <summary>Reads the quarantine summary.</summary>
-    public Task QuarantineAsync() => RunAsync(
-        "quarantine.summary",
-        element => element.GetRawText(),
-        text => QuarantineResult = text,
-        timeout: TimeSpan.FromMinutes(3));
+    public async Task QuarantineAsync()
+    {
+        BeginSection(_quarantine, Strings["Gui.Diagnostics.Quarantine"]);
+        var ok = await RunAsync(
+            "quarantine.summary",
+            element => element.GetRawText(),
+            text => SucceedSection(_quarantine, text),
+            timeout: TimeSpan.FromMinutes(3)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            FailSection(_quarantine, ErrorText);
+        }
+
+        RaiseSection("Quarantine");
+    }
 
     /// <summary>Lists setup plans.</summary>
-    public Task SetupAsync() => RunAsync(
-        "setup.list",
-        element => element.GetRawText(),
-        text => SetupResult = text,
-        timeout: TimeSpan.FromMinutes(3));
+    public async Task SetupAsync()
+    {
+        BeginSection(_setup, Strings["Gui.Diagnostics.SetupPlans"]);
+        var ok = await RunAsync(
+            "setup.list",
+            element => element.GetRawText(),
+            text => SucceedSection(_setup, text),
+            timeout: TimeSpan.FromMinutes(3)).ConfigureAwait(true);
 
-    /// <summary>When the host cannot answer (not Windows), says so instead of showing `{}`.</summary>
-    private string ReportAvailability(string element) =>
-        element is "{}" or "[]" or "" ? Strings["Gui.Diagnostics.Unavailable"] : element;
+        if (!ok)
+        {
+            FailSection(_setup, ErrorText);
+        }
+
+        RaiseSection("Setup");
+    }
+
+    // ---- section plumbing ----
+
+    /// <summary>Marks a section as loading and clears its previous result.</summary>
+    private static void BeginSection(SectionState section, string status)
+    {
+        section.State = LoadState.Loading;
+        section.StatusText = status;
+        section.Raw = string.Empty;
+    }
+
+    /// <summary>Records a successful section result.</summary>
+    private static void SucceedSection(SectionState section, string raw)
+    {
+        section.Raw = raw ?? string.Empty;
+        section.State = LoadState.Ready;
+        section.StatusText = string.Empty;
+    }
+
+    /// <summary>Records a section failure; never leaves the panel blank.</summary>
+    private static void FailSection(SectionState section, string localized)
+    {
+        section.State = LoadState.Failed;
+        section.StatusText = localized ?? string.Empty;
+    }
+
+    /// <summary>Re-publishes the bound properties of one section.</summary>
+    private void RaiseSection(string prefix)
+    {
+        Raise(prefix + "State");
+        Raise(prefix + "StatusText");
+        Raise(prefix + "Summary");
+        Raise(prefix + "Raw");
+    }
+
+    /// <summary>The localized status line a section's state renders.</summary>
+    private string StatusTextFor(SectionState section) => section.State switch
+    {
+        LoadState.Idle => Strings["Gui.Overview.NotLoaded"],
+        LoadState.Loading => Strings["Gui.Overview.Loading"],
+        LoadState.Failed => string.IsNullOrEmpty(section.StatusText) ? Strings["Gui.Connection.Failed"] : section.StatusText,
+        _ => Strings["Gui.Ready"],
+    };
+
+    /// <summary>The readable form of a section's stored JSON (unavailable when empty).</summary>
+    private string SummarizeText(SectionState section)
+    {
+        var raw = section.Raw;
+        if (string.IsNullOrWhiteSpace(raw) || raw is "{}" or "[]")
+        {
+            return Strings["Gui.Diagnostics.Unavailable"];
+        }
+
+        return Summarize(raw);
+    }
+
+    private void RebuildEnvironmentFacts()
+    {
+        EnvironmentFacts.Clear();
+        var facts = new List<string>
+        {
+            $"{Strings["Gui.Overview.Os"]}: {Shell.EnvironmentSummary}",
+            $"{Strings["Gui.Overview.PowerShell"]}: {Shell.RuntimeSummary}",
+            $"{Strings["Gui.Overview.Privilege"]}: {Shell.PrivilegeLabel}",
+            $"{Strings["Gui.Overview.Engine"]}: {(string.IsNullOrEmpty(Shell.EngineVersion) ? Strings["Gui.Overview.NotLoaded"] : Shell.EngineVersion)}",
+            $"{Strings["Gui.Restart"]}: {Shell.PendingRebootSummary}",
+            $"{Strings["Gui.Header.Backend"]}: {Shell.BackendSummary}",
+        };
+
+        var pathLines = Shell.PathSummary.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+        if (pathLines.Length >= 2)
+        {
+            facts.Add($"{Strings["Gui.Diagnostics.StatePath"]}: {pathLines[0]}");
+            facts.Add($"{Strings["Gui.Diagnostics.LogPath"]}: {pathLines[1]}");
+        }
+        else if (pathLines.Length == 1)
+        {
+            facts.Add($"{Strings["Gui.Diagnostics.StatePath"]}: {pathLines[0]}");
+        }
+
+        foreach (var fact in facts)
+        {
+            EnvironmentFacts.Add(fact);
+        }
+    }
+
+    /// <summary>Turns a JSON object into up to ~12 "label: value" lines.</summary>
+    private static string Summarize(string json)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+            {
+                return json;
+            }
+
+            var lines = new List<string>();
+            AppendSummary(root, string.Empty, lines);
+            return string.Join(Environment.NewLine, lines);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return json;
+        }
+    }
+
+    private static void AppendSummary(System.Text.Json.JsonElement element, string prefix, List<string> lines)
+    {
+        if (lines.Count >= SummaryLineCap)
+        {
+            return;
+        }
+
+        switch (element.ValueKind)
+        {
+            case System.Text.Json.JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (lines.Count >= SummaryLineCap)
+                    {
+                        return;
+                    }
+
+                    var path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
+                    AppendSummary(property.Value, path, lines);
+                }
+
+                break;
+
+            case System.Text.Json.JsonValueKind.Array:
+                lines.Add($"{prefix}: {element.GetArrayLength()} item(s)");
+                break;
+
+            case System.Text.Json.JsonValueKind.String:
+                lines.Add($"{prefix}: {element.GetString()}");
+                break;
+
+            case System.Text.Json.JsonValueKind.Number:
+                lines.Add($"{prefix}: {element.GetRawText()}");
+                break;
+
+            case System.Text.Json.JsonValueKind.True:
+            case System.Text.Json.JsonValueKind.False:
+                lines.Add($"{prefix}: {element.GetRawText()}");
+                break;
+
+            default:
+                lines.Add($"{prefix}: {element.GetRawText()}");
+                break;
+        }
+    }
+
+    private const int SummaryLineCap = 12;
+
+    /// <summary>The mutable state of one diagnostics section.</summary>
+    private sealed class SectionState
+    {
+        public LoadState State { get; set; } = LoadState.Idle;
+
+        public string StatusText { get; set; } = string.Empty;
+
+        public string Raw { get; set; } = string.Empty;
+    }
 }
 
 /// <summary>The licensing workspace: read-only status plus the explicit external tool.</summary>
@@ -434,26 +1034,39 @@ public sealed class DiagnosticsViewModel : WorkspaceViewModel
 /// </remarks>
 public sealed class LicensingViewModel : WorkspaceViewModel
 {
-    private string _statusText = string.Empty;
     private string _editionText = string.Empty;
     private ActivationMethod? _selectedMethod;
     private ExternalToolStatus? _toolStatus;
     private string _lastOutcome = string.Empty;
+    private string _licensingRaw = string.Empty;
 
     public LicensingViewModel(ShellViewModel shell)
         : base(shell)
     {
+        StatusText = Strings["Gui.Overview.NotLoaded"];
+
+        // Command eligibility depends on the connection and the shell's busy flag.
+        Shell.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(ShellViewModel.Connection) or nameof(ShellViewModel.Busy))
+            {
+                Raise(nameof(CanRunCommand));
+                Raise(nameof(CanActivate));
+                Raise(nameof(CanDownload));
+                Raise(nameof(CanRemove));
+                Raise(nameof(CanRequestSlmgr));
+            }
+        };
     }
 
     /// <summary>Activation methods offered by the pinned external tool.</summary>
     public ObservableCollection<ActivationMethod> Methods { get; } = new();
 
-    /// <summary>Windows licensing status, as the engine reports it.</summary>
-    public string LicensingStatus
-    {
-        get => _statusText;
-        private set => Set(ref _statusText, value);
-    }
+    /// <summary>Windows licensing status, as the engine reports it (localized lines).</summary>
+    public string LicensingStatus => SummarizeLicensing(_licensingRaw);
+
+    /// <summary>The raw licensing diagnostics document (for the expandable section).</summary>
+    public string LicensingRaw => _licensingRaw;
 
     /// <summary>Installed edition.</summary>
     public string EditionText
@@ -485,15 +1098,21 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             if (Set(ref _toolStatus, value))
             {
                 Raise(nameof(CanActivate));
+                Raise(nameof(ToolStatusText));
             }
         }
     }
 
-    /// <summary>Outcome of the last explicit action.</summary>
+    /// <summary>The external tool's status, as a localized label plus the reported value.</summary>
+    public string ToolStatusText => _toolStatus is { } tool
+        ? $"{Strings["Gui.Licensing.Tool"]}: {tool.Status}{(string.IsNullOrEmpty(tool.Path) ? string.Empty : $" ({tool.Path})")}"
+        : Strings["Gui.Overview.NotLoaded"];
+
+    /// <summary>Outcome of the last explicit action (the engine's own text).</summary>
     public string LastOutcome
     {
         get => _lastOutcome;
-        private set => Set(ref _lastOutcome, value);
+        set => Set(ref _lastOutcome, value);
     }
 
     /// <summary>Duration model and documented switches of the selected method.</summary>
@@ -508,16 +1127,44 @@ public sealed class LicensingViewModel : WorkspaceViewModel
                 Strings.Get("Gui.Licensing.Duration", _selectedMethod.DurationModel),
             }.Where(line => !string.IsNullOrEmpty(line)));
 
+    /// <summary>True when the shell can run a command right now.</summary>
+    public bool CanRunCommand => Shell.IsConnected && !Shell.Busy;
+
     /// <summary>True when the verified tool copy exists and a method is selected.</summary>
-    public bool CanActivate => _selectedMethod is not null && _toolStatus?.Ready == true;
+    public bool CanActivate => CanRunCommand && _selectedMethod is not null && _toolStatus?.Ready == true;
+
+    /// <summary>True when the tool can be downloaded.</summary>
+    public bool CanDownload => CanRunCommand;
+
+    /// <summary>True when the tool copy can be removed.</summary>
+    public bool CanRemove => CanRunCommand;
+
+    /// <summary>True when the installed licence can be requested.</summary>
+    public bool CanRequestSlmgr => CanRunCommand;
 
     /// <inheritdoc />
     protected override async Task LoadAsync()
     {
-        var licensing = await Shell.Runner.RunAsync("licensing.diagnostics", e => e.GetRawText(), timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
-        LicensingStatus = licensing.Ok ? SummarizeLicensing(licensing.Value ?? string.Empty) : licensing.Message;
+        StatusText = Strings["Gui.Overview.Loading"];
 
-        await RunAsync(
+        var ok = await RunAsync(
+            "licensing.diagnostics",
+            element => element.GetRawText(),
+            raw =>
+            {
+                _licensingRaw = raw ?? string.Empty;
+                Raise(nameof(LicensingRaw));
+                Raise(nameof(LicensingStatus));
+            },
+            timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            Loaded = true;
+            return;
+        }
+
+        ok = await RunAsync(
             "exttool.methods",
             Projections.ExternalToolMethods,
             value =>
@@ -533,39 +1180,116 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             },
             timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
 
-        await RunAsync("exttool.status", Projections.ExternalToolStatus, status => ToolStatus = status, timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+        if (!ok)
+        {
+            Loaded = true;
+            return;
+        }
 
+        ok = await RunAsync(
+            "exttool.status",
+            Projections.ExternalToolStatus,
+            status => ToolStatus = status,
+            timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+
+        if (!ok)
+        {
+            Loaded = true;
+            return;
+        }
+
+        MarkLoaded(Methods.Count);
+        StatusText = Strings["Gui.Ready"];
         Loaded = true;
     }
 
-    private static string SummarizeLicensing(string raw)
+    /// <summary>Renders the active licensing record as localized label/value lines.</summary>
+    private string SummarizeLicensing(string raw)
     {
-        // The diagnostics object is a large nested document; the view shows a compact form
-        // rather than re-implementing the engine's own rendering.
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return Strings["Gui.Licensing.Unavailable"];
+        }
+
         try
         {
             using var document = System.Text.Json.JsonDocument.Parse(raw);
             var root = document.RootElement;
-            var active = root.TryGetProperty("Active", out var activeElement) ? activeElement : default;
-            if (active.ValueKind == System.Text.Json.JsonValueKind.Object)
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                !root.TryGetProperty("Inventory", out var inventory) ||
+                inventory.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                !inventory.TryGetProperty("Active", out var active) ||
+                active.ValueKind != System.Text.Json.JsonValueKind.Object)
             {
-                var name = active.TryGetProperty("Name", out var nameElement) ? nameElement.ToString() : string.Empty;
-                var status = active.TryGetProperty("Status", out var statusElement) ? statusElement.ToString() : string.Empty;
-                var code = active.TryGetProperty("StatusCode", out var codeElement) ? codeElement.ToString() : string.Empty;
-                return $"{name} | {status} ({code})";
+                return Strings["Gui.Licensing.Unavailable"];
             }
+
+            var lines = new List<string>();
+
+            var product = JString(active, "ProductName");
+            if (product.Length > 0)
+            {
+                lines.Add($"{Strings["Gui.Licensing.Product"]}: {product}");
+            }
+
+            var status = JString(active, "LicenseStatus");
+            if (status.Length > 0)
+            {
+                lines.Add($"{Strings["Gui.Status"]}: {status}");
+            }
+
+            var channel = JString(active, "LicenseChannel");
+            if (channel.Length > 0)
+            {
+                lines.Add($"{Strings["Gui.Licensing.Channel"]}: {channel}");
+            }
+
+            if (active.TryGetProperty("GraceRemaining", out var grace) && grace.ValueKind == System.Text.Json.JsonValueKind.Number)
+            {
+                lines.Add($"{Strings["Gui.Licensing.Grace"]}: {grace.GetInt32().ToString(CultureInfo.InvariantCulture)}");
+            }
+            else
+            {
+                lines.Add($"{Strings["Gui.Licensing.Grace"]}: {Strings["Common.None"]}");
+            }
+
+            return lines.Count > 0 ? string.Join(Environment.NewLine, lines) : Strings["Gui.Licensing.Unavailable"];
         }
         catch (System.Text.Json.JsonException)
         {
-            // Fall through to the raw text.
+            return Strings["Gui.Licensing.Unavailable"];
+        }
+    }
+
+    private static string JString(System.Text.Json.JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
+    /// <summary>
+    /// Refuses a command at the command layer when the shell cannot run it. Returns true
+    /// when the command must stop without touching the backend.
+    /// </summary>
+    private bool RefuseIfNotEligible()
+    {
+        if (CanRunCommand)
+        {
+            return false;
         }
 
-        return raw.Length > 400 ? raw[..400] : raw;
+        StatusText = Shell.IsConnected ? Strings["Gui.Error.Busy"] : Shell.ConnectionError;
+        LastOutcome = StatusText;
+        return true;
     }
 
     /// <summary>Selects the activation method (persisted by the engine, refused if unknown).</summary>
     public async Task SetMethodAsync(string methodId)
     {
+        if (RefuseIfNotEligible())
+        {
+            return;
+        }
+
         var outcome = await Shell.Runner.RunAsync(
             "exttool.setmethod",
             element => element.ValueKind == System.Text.Json.JsonValueKind.True,
@@ -578,6 +1302,11 @@ public sealed class LicensingViewModel : WorkspaceViewModel
     /// <summary>Downloads and verifies the pinned external tool (explicit action).</summary>
     public async Task DownloadToolAsync(bool latest = false)
     {
+        if (RefuseIfNotEligible())
+        {
+            return;
+        }
+
         ErrorText = string.Empty;
         await Shell.RunMutatingAsync(async () =>
         {
@@ -602,6 +1331,11 @@ public sealed class LicensingViewModel : WorkspaceViewModel
     /// <summary>Removes the downloaded tool copy (files only; no licensing state changes).</summary>
     public async Task RemoveToolAsync()
     {
+        if (RefuseIfNotEligible())
+        {
+            return;
+        }
+
         await Shell.RunMutatingAsync(async () =>
         {
             var outcome = await Shell.Runner.RunAsync("exttool.remove", element => element.GetRawText(), timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
@@ -618,9 +1352,15 @@ public sealed class LicensingViewModel : WorkspaceViewModel
     /// </summary>
     public async Task ActivateAsync()
     {
+        if (RefuseIfNotEligible())
+        {
+            return;
+        }
+
         if (_selectedMethod is null)
         {
-            ErrorText = Strings["Gui.Licensing.NoMethod"];
+            StatusText = Strings["Gui.Licensing.NoMethod"];
+            LastOutcome = StatusText;
             return;
         }
 
@@ -641,12 +1381,26 @@ public sealed class LicensingViewModel : WorkspaceViewModel
             return true;
         }).ConfigureAwait(true);
 
-        await RunAsync("licensing.diagnostics", e => e.GetRawText(), raw => LicensingStatus = SummarizeLicensing(raw ?? string.Empty), timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
+        await RunAsync(
+            "licensing.diagnostics",
+            element => element.GetRawText(),
+            raw =>
+            {
+                _licensingRaw = raw ?? string.Empty;
+                Raise(nameof(LicensingRaw));
+                Raise(nameof(LicensingStatus));
+            },
+            timeout: TimeSpan.FromMinutes(2)).ConfigureAwait(true);
     }
 
     /// <summary>Requests activation with the installed licence (slmgr /ato). Privileged.</summary>
     public async Task RequestSlmgrAsync()
     {
+        if (RefuseIfNotEligible())
+        {
+            return;
+        }
+
         await Shell.RunMutatingAsync(async () =>
         {
             var outcome = await Shell.Runner.RunAsync("slmgr.request", element => element.GetRawText(), timeout: TimeSpan.FromMinutes(10)).ConfigureAwait(true);

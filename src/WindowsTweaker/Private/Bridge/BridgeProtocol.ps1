@@ -547,6 +547,44 @@ function Get-WtBridgeGuiStringKeys
         'Tui.Keys.Busy'
         'Cli.NotAdmin'
         'Cli.Subtitle'
+        # Language names: the selector shows each language in its own words while the wire
+        # keeps the stable code (en/vi).
+        'Tui.Language.en'
+        'Tui.Language.vi'
+        # Outcome codes as the engine reports them in history and journal rows; the window
+        # renders these as badges instead of showing the raw code.
+        'Op.succeeded'
+        'Op.failed'
+        'Op.skipped'
+        'Op.unsupported'
+        'Op.unchanged'
+        'Op.dryrun'
+        'Op.review-required'
+        'Op.partial'
+        # Connection states, stale data and command eligibility.
+        'Gui.Connection.Disconnected'
+        'Gui.Connection.Failed'
+        'Gui.Error.StaleAnswer'
+        'Gui.Error.Cancelled'
+        'Gui.Error.Busy'
+        'Gui.Error.NothingToCancel'
+        'Gui.Data.Stale'
+        'Gui.Filter.AllCategories'
+        'Gui.Tweaks.EmptyAction'
+        'Gui.Status.Running'
+        # Panel labels: history columns, diagnostics sections, licensing facts, staging.
+        'Gui.Column.Detail'
+        'Gui.History.Selected'
+        'Gui.History.NoSelection'
+        'Gui.Diagnostics.Environment'
+        'Gui.Diagnostics.Raw'
+        'Gui.Diagnostics.Lines'
+        'Gui.Diagnostics.Run'
+        'Gui.Licensing.Product'
+        'Gui.Licensing.Channel'
+        'Gui.Licensing.Grace'
+        'Gui.Licensing.Unavailable'
+        'Gui.Review.Staged'
     )
 }
 

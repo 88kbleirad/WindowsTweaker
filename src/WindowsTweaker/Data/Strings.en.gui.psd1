@@ -45,10 +45,10 @@
 
     # Actions.
     'Gui.Action.Preview'      = 'Preview'
-    'Gui.Action.AddPending'   = 'Add to review'
-    'Gui.Action.RemovePending' = 'Remove from review'
-    'Gui.Action.ClearPending' = 'Clear review'
-    'Gui.Action.Apply'        = 'Apply reviewed changes'
+    'Gui.Action.AddPending'   = 'Stage for review'
+    'Gui.Action.RemovePending' = 'Unstage'
+    'Gui.Action.ClearPending' = 'Clear staged'
+    'Gui.Action.Apply'        = 'Apply staged changes'
     'Gui.Action.ApplyDryRun'  = 'Preview (dry run)'
     'Gui.Action.Restore'      = 'Restore this change'
     'Gui.Action.Export'       = 'Export'
@@ -60,9 +60,9 @@
     'Gui.Action.Inspect'      = 'Inspect'
 
     # Review workflow.
-    'Gui.Review.Title'        = 'Reviewed changes'
-    'Gui.Review.Empty'        = 'Nothing reviewed yet. Pick a tweak and add it here.'
-    'Gui.Review.Confirm'      = 'Apply {0} reviewed change(s)?'
+    'Gui.Review.Title'        = 'Staged changes'
+    'Gui.Review.Empty'        = 'Nothing staged yet. Pick a tweak and add it here.'
+    'Gui.Review.Confirm'      = 'Apply {0} staged change(s)?'
     'Gui.Review.Dependency'   = 'Dependencies and conflicts are shown before anything runs.'
     'Gui.Review.DryRunNotice' = 'Dry run: every operation is reported and nothing is written.'
     'Gui.Review.Revalidation' = 'The reviewed state is re-checked right before the change.'
@@ -90,7 +90,7 @@
     'Gui.Overview.Tweaks'     = 'Tweaks'
     'Gui.Overview.Interrupted' = 'Interrupted operations'
     'Gui.Overview.Drift'      = 'Changed since applied'
-    'Gui.Overview.Pending'    = 'Reviewed changes'
+    'Gui.Overview.Pending'    = 'Staged changes'
     'Gui.Overview.Packs'      = 'Packs'
     'Gui.Overview.None'       = 'none'
 
@@ -155,4 +155,32 @@
     'Gui.Error.LocalizationFailed' = 'The interface text did not load; the engine payload may be incomplete.'
     'Gui.Error.BackendStopFailed' = 'The backend could not be stopped cleanly; nothing was elevated.'
     'Gui.Error.InitFailed'    = 'Startup failed'
+
+    # Connection states, stale data and command eligibility.
+    'Gui.Connection.Disconnected' = 'Disconnected'
+    'Gui.Connection.Failed'   = 'Failed'
+    'Gui.Error.StaleAnswer'   = 'An answer from a previous connection arrived too late and was discarded.'
+    'Gui.Error.Cancelled'     = 'The request was cancelled.'
+    'Gui.Error.Busy'          = 'Another operation is already running in this session.'
+    'Gui.Error.NothingToCancel' = 'Nothing is running to cancel.'
+    'Gui.Data.Stale'          = 'Read before the backend was reconnected: reload to refresh it.'
+    'Gui.Filter.AllCategories' = 'All categories'
+    'Gui.Tweaks.EmptyAction'  = 'Clear the filter or the search to see all {0} tweaks.'
+    'Gui.Status.Running'      = 'Working...'
+
+    # Panels: History columns, Diagnostics sections, Licensing facts.
+    'Gui.Column.Detail'       = 'Detail'
+    'Gui.History.Selected'    = 'Selected row'
+    'Gui.History.NoSelection' = 'Select a row to see its details.'
+    'Gui.Diagnostics.Environment' = 'Environment and backend'
+    'Gui.Diagnostics.Raw'     = 'Technical detail'
+    'Gui.Diagnostics.Lines'   = '{0} recorded line(s)'
+    'Gui.Diagnostics.Run'     = 'Run'
+    'Gui.Licensing.Product'   = 'Product'
+    'Gui.Licensing.Channel'   = 'Channel'
+    'Gui.Licensing.Grace'     = 'Grace remaining'
+    'Gui.Licensing.Unavailable' = 'No licensing information was reported.'
+
+    # Review workspace: staged for review, not approved and not applied.
+    'Gui.Review.Staged'       = 'Staged for review. Nothing has been applied yet.'
 }

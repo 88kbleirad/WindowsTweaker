@@ -63,21 +63,10 @@ public sealed partial class MainWindow : Window
 
         RootGrid.DataContext = _shell;
 
-        // The environment text updates through the shell's bindings; the header badges
-        // listen to the properties the shell raises.
+        // The header, the recovery strip and every label are driven by the shell's
+        // bindings; only the two things bindings cannot express (the status dot's brush and
+        // the results panel's visibility) are handled here.
         _shell.PropertyChanged += OnShellPropertyChanged;
-        _shell.Strings.LanguageChanged += (_, _) => UpdateLanguageBinding();
-
-        // The language list is an observable collection mutated in place by the shell's
-        // LocalizationService, so the selector fills in when the tables arrive (the XAML
-        // binds ItemsSource to Strings.Languages).
-        LanguageCombo.SelectionChanged += (_, _) =>
-        {
-            if (LanguageCombo.SelectedItem is string language && language != _shell.Strings.Active)
-            {
-                _ = _shell.SetLanguageAsync(language);
-            }
-        };
 
         ReduceMotionBox.IsChecked = _shell.ReduceMotion;
         ReduceMotionBox.Click += (_, _) => _shell.ReduceMotion = ReduceMotionBox.IsChecked == true;
@@ -99,7 +88,7 @@ public sealed partial class MainWindow : Window
         };
 
         Closed += OnClosed;
-        _shell.Runner.Exited += (_, _) => _shell.Dispatch(() => UpdateBackendBadge());
+        UpdateConnectionPill();
 
         // Connect then load the overview; the window stays responsive and a failure at any
         // stage becomes a visible state with a retry.
@@ -279,19 +268,18 @@ public sealed partial class MainWindow : Window
             var failure = await _shell.ConnectAsync();
             if (failure is not null)
             {
+                // The connection state drives the recovery strip; the reason is already
+                // localized and on screen, so nothing is painted from here.
                 StartupDiagnostics.Error($"startup failed: {failure}", new InvalidOperationException(failure));
-                ShowStartupFailure(failure, showRetry: true);
                 return;
             }
 
             await AfterConnectAsync();
-            HideStartupFailure();
             StartupDiagnostics.Stage("backend connected, handshake + localization done");
         }
         catch (Exception exception)
         {
             StartupDiagnostics.Error("startup threw", exception);
-            ShowStartupFailure(exception.Message, showRetry: true);
         }
     }
 
@@ -304,30 +292,10 @@ public sealed partial class MainWindow : Window
             await _shell.SetLanguageAsync(App.ArgumentLanguage);
         }
 
-        // The item source is the observable language list, so it fills in when the tables
-        // arrive; the selection is set once the list is populated.
-        LanguageCombo.SelectedItem = _shell.Strings.Active;
+        // The selector is bound to the shell's language options, so the active language is
+        // shown without anything here having to match strings.
         await _shell.NavigateAsync(Workspace.Overview);
         NavList.SelectedIndex = (int)Workspace.Overview;
-        UpdateBackendBadge();
-    }
-
-    private void ShowStartupFailure(string detail, bool showRetry)
-    {
-        StartupFailurePanel.Visibility = Visibility.Visible;
-        WorkspaceHost.Visibility = Visibility.Collapsed;
-        StartupFailureDetail.Text = detail;
-        RetryBackendButton.Visibility = showRetry ? Visibility.Visible : Visibility.Collapsed;
-        EnvironmentText.Text = _shell.Strings.IsLoaded
-            ? _shell.Strings["Gui.BackendDown"]
-            : "Backend unavailable";
-    }
-
-    private void HideStartupFailure()
-    {
-        StartupFailurePanel.Visibility = Visibility.Collapsed;
-        WorkspaceHost.Visibility = Visibility.Visible;
-        RetryBackendButton.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>Retries one workspace's load after a visible failure.</summary>
@@ -355,49 +323,96 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>Runs one Diagnostics section's read-only operation.</summary>
+    private async void DiagnosticsSection_Click(object sender, RoutedEventArgs e)
+    {
+        var section = (sender as FrameworkElement)?.Tag as string;
+        StartupDiagnostics.Stage($"diagnostics section requested: {section}");
+
+        try
+        {
+            switch (section)
+            {
+                case "scan":
+                    await _shell.Diagnostics.ScanAsync();
+                    break;
+                case "monitor":
+                    await _shell.Diagnostics.MonitorAsync();
+                    break;
+                case "devices":
+                    await _shell.Diagnostics.DevicesAsync();
+                    break;
+                case "power":
+                    await _shell.Diagnostics.PowerAsync();
+                    break;
+                case "privacy":
+                    await _shell.Diagnostics.PrivacyAsync();
+                    break;
+                case "quarantine":
+                    await _shell.Diagnostics.QuarantineAsync();
+                    break;
+                case "setup":
+                    await _shell.Diagnostics.SetupAsync();
+                    break;
+                case "report":
+                default:
+                    await _shell.Diagnostics.ReportAsync();
+                    break;
+            }
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Error($"diagnostics section failed: {section}", exception);
+        }
+    }
+
+    /// <summary>Shows or hides a read-only, copyable technical detail box.</summary>
+    private static void ToggleDetailBox(TextBox box, Button button)
+    {
+        box.Visibility = box.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (box.Visibility == Visibility.Visible)
+        {
+            button.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void ConnectionDetail_Click(object sender, RoutedEventArgs e) =>
+        ToggleDetailBox(ConnectionDetailBox, ConnectionDetailButton);
+
+    private void HistoryDetail_Click(object sender, RoutedEventArgs e) =>
+        ToggleDetailBox(HistoryDetailBox, HistoryDetailButton);
+
+    private void ReportDetail_Click(object sender, RoutedEventArgs e) =>
+        ToggleDetailBox(ReportDetailBox, (Button)sender);
+
     private async void RetryBackend_Click(object sender, RoutedEventArgs e)
     {
-        StartupFailurePanel.Visibility = Visibility.Collapsed;
-        WorkspaceHost.Visibility = Visibility.Visible;
         StartupDiagnostics.Stage("startup retry requested");
-        var failure = await _shell.RetryConnectAsync();
+        var failure = await _shell.ReconnectAsync();
         if (failure is not null)
         {
             StartupDiagnostics.Error($"retry failed: {failure}", new InvalidOperationException(failure));
-            ShowStartupFailure(failure, showRetry: true);
             return;
         }
 
         try
         {
             await AfterConnectAsync();
-            HideStartupFailure();
         }
         catch (Exception exception)
         {
             StartupDiagnostics.Error("retry post-connect threw", exception);
-            ShowStartupFailure(exception.Message, showRetry: true);
         }
     }
 
     private void OnShellPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ShellViewModel.HeaderEnvironment))
+        if (e.PropertyName == nameof(ShellViewModel.Connection))
         {
-            EnvironmentText.Text = _shell.HeaderEnvironment;
-        }
-        else if (e.PropertyName == nameof(ShellViewModel.BackendSummary))
-        {
-            BackendText.Text = _shell.BackendSummary;
-            UpdateBackendBadge();
+            UpdateConnectionPill();
         }
         else if (e.PropertyName == nameof(ShellViewModel.IsElevated))
         {
-            ElevationBadge.Visibility = _shell.IsElevated ? Visibility.Visible : Visibility.Collapsed;
-            ElevationText.Text = _shell.IsElevated
-                ? _shell.Strings["Tui.Header.Admin"]
-                : _shell.Strings["Tui.Header.Standard"];
-
             UpdateElevateButton();
         }
         else if (e.PropertyName == nameof(ShellViewModel.IsProcessElevated))
@@ -406,32 +421,44 @@ public sealed partial class MainWindow : Window
         }
         else if (e.PropertyName == nameof(ShellViewModel.CurrentTitle))
         {
-            WorkspaceTitle.Text = _shell.CurrentTitle;
+            // The workspace title is bound; nothing to do here.
         }
     }
 
-    private void UpdateLanguageBinding()
+    /// <summary>Paints the connection pill's dot from the connection state.</summary>
+    private void UpdateConnectionPill()
     {
-        // Re-evaluate the binding source so localized labels re-render.
-        RootGrid.DataContext = null;
-        RootGrid.DataContext = _shell;
-        WorkspaceTitle.Text = _shell.CurrentTitle;
-        EnvironmentText.Text = _shell.HeaderEnvironment;
-    }
-
-    private void UpdateBackendBadge()
-    {
-        BackendText.Text = _shell.IsConnected ? _shell.BackendSummary : _shell.Strings["Gui.BackendDown"];
-
-        // The badge styles live in the application resource dictionary (App.xaml merges
-        // Themes/CatppuccinMocha.xaml). Looking them up in a grid's own, empty dictionary
-        // threw during the handshake notification and aborted the whole startup sequence;
-        // the lookup is now against the real dictionary and never throws.
-        var style = TryFindStyle(_shell.IsConnected ? "WtBadgeOk" : "WtBadgeError");
-        if (style is not null)
+        var brush = _shell.Connection switch
         {
-            BackendBadge.Style = style;
+            ConnectionState.Ready => TryFindBrush("WtGreen"),
+            ConnectionState.Connecting => TryFindBrush("WtYellow"),
+            ConnectionState.Failed => TryFindBrush("WtRed"),
+            _ => TryFindBrush("WtSurface2"),
+        };
+
+        if (brush is not null)
+        {
+            ConnectionDot.Background = brush;
         }
+    }
+
+    /// <summary>Looks a brush up in the application resources; returns null when absent.</summary>
+    private static Brush? TryFindBrush(string key)
+    {
+        try
+        {
+            var resources = Application.Current?.Resources;
+            if (resources is not null && resources.TryGetValue(key, out var value))
+            {
+                return value as Brush;
+            }
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.Error($"brush lookup failed for '{key}'", exception);
+        }
+
+        return null;
     }
 
     /// <summary>Looks a style up in the application resources; returns null when absent.</summary>
@@ -552,6 +579,9 @@ public sealed partial class MainWindow : Window
         {
             switch (_shell.Current)
             {
+                case Workspace.Overview:
+                    await _shell.Overview.RetryAsync();
+                    break;
                 case Workspace.Tweaks:
                     await _shell.Tweaks.RefreshAsync();
                     break;
@@ -605,9 +635,11 @@ public sealed partial class MainWindow : Window
 
     private async void Apply_Click(object sender, RoutedEventArgs e)
     {
-        if (_shell.Review.Changes.Count == 0)
+        if (!_shell.Review.CanApply)
         {
-            _shell.StatusText = _shell.Strings["Gui.NothingPending"];
+            _shell.StatusText = _shell.Review.HasChanges
+                ? _shell.ConnectionError
+                : _shell.Strings["Gui.NothingPending"];
             return;
         }
 
@@ -647,9 +679,9 @@ public sealed partial class MainWindow : Window
 
     private void HistoryMode_Changed(object sender, RoutedEventArgs e)
     {
-        HistoryList.Visibility = HistoryModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        JournalList.Visibility = JournalModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        InterruptedList.Visibility = InterruptedModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        HistoryMode.Visibility = HistoryModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        JournalMode.Visibility = JournalModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        InterruptedMode.Visibility = InterruptedModeRadio.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void Restore_Click(object sender, RoutedEventArgs e)
@@ -657,18 +689,18 @@ public sealed partial class MainWindow : Window
         await _shell.History.RestoreAsync();
     }
 
-    private async void Scan_Click(object sender, RoutedEventArgs e) => await _shell.Diagnostics.ScanAsync();
-
-    private async void Monitor_Click(object sender, RoutedEventArgs e) => await _shell.Diagnostics.MonitorAsync();
-
-    private async void Devices_Click(object sender, RoutedEventArgs e) => await _shell.Diagnostics.DevicesAsync();
-
     private async void DownloadTool_Click(object sender, RoutedEventArgs e) => await _shell.Licensing.DownloadToolAsync();
 
     private async void RemoveTool_Click(object sender, RoutedEventArgs e) => await _shell.Licensing.RemoveToolAsync();
 
     private async void Activate_Click(object sender, RoutedEventArgs e)
     {
+        if (!_shell.Licensing.CanActivate)
+        {
+            _shell.Licensing.LastOutcome = _shell.ConnectionError;
+            return;
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = RootGrid.XamlRoot,
